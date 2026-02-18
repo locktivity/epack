@@ -1,0 +1,15 @@
+Evidence Pack: <PATH>
+────────────────────────────────────
+
+  Stream:        test/golden-inspect
+  Pack Digest:   sha256:<DIGEST>
+  Generated At:  <TIMESTAMP>
+  Spec Version:  1.0
+
+Artifacts (2)
+  artifacts/config.json  16 B  -
+  artifacts/data.json    20 B  -
+
+Attestations (0)
+  none
+

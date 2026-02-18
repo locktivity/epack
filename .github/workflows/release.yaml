@@ -1,0 +1,290 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: read-all
+
+jobs:
+  # Run tests before building
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests (core)
+        run: go test -race ./...
+
+      - name: Run tests (full)
+        run: go test -race -tags components ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.9.0
+          args: --build-tags components
+
+      - name: Verify import boundary
+        run: make lint-boundary
+
+  # Compute build arguments (version, commit - no colons allowed!)
+  args:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ldflags.outputs.version }}
+      commit: ${{ steps.ldflags.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: ldflags
+        run: |
+          echo "version=$(git describe --tags --always --dirty | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  # Build epack (full version with components) - SLSA Level 3
+  build-epack:
+    needs: [test, args]
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
+    with:
+      go-version-file: go.mod
+      config-file: .slsa-goreleaser/epack-${{ matrix.os }}-${{ matrix.arch }}.yml
+      evaluated-envs: "VERSION:${{ needs.args.outputs.version }},COMMIT:${{ needs.args.outputs.commit }}"
+
+  # Build epack-core (minimal version: no components) - SLSA Level 3
+  build-epack-core:
+    needs: [test, args]
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
+    with:
+      go-version-file: go.mod
+      config-file: .slsa-goreleaser/epack-core-${{ matrix.os }}-${{ matrix.arch }}.yml
+      evaluated-envs: "VERSION:${{ needs.args.outputs.version }},COMMIT:${{ needs.args.outputs.commit }}"
+
+  # Create GitHub Release with all artifacts
+  release:
+    needs: [args, build-epack, build-epack-core]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          # Find and move all binaries and attestations
+          find artifacts -type f \( -name "epack-*" -o -name "*.intoto.jsonl" \) -exec mv {} release/ \;
+          # Create checksums
+          cd release
+          sha256sum * > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Update Homebrew tap with new version and checksums
+  homebrew:
+    needs: [args, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: locktivity
+          repositories: homebrew-tap
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: locktivity/homebrew-tap
+          token: ${{ steps.app-token.outputs.token }}
+          path: homebrew-tap
+
+      - name: Download release checksums
+        run: |
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/checksums.txt" -o checksums.txt
+          cat checksums.txt
+
+      - name: Update formulas
+        env:
+          VERSION: ${{ needs.args.outputs.version }}
+        run: |
+          # Extract checksums (binaries are named epack-os-arch, not archives)
+          EPACK_DARWIN_ARM64=$(grep "epack-darwin-arm64$" checksums.txt | awk '{print $1}')
+          EPACK_DARWIN_AMD64=$(grep "epack-darwin-amd64$" checksums.txt | awk '{print $1}')
+          EPACK_LINUX_ARM64=$(grep "epack-linux-arm64$" checksums.txt | awk '{print $1}')
+          EPACK_LINUX_AMD64=$(grep "epack-linux-amd64$" checksums.txt | awk '{print $1}')
+
+          EPACK_CORE_DARWIN_ARM64=$(grep "epack-core-darwin-arm64$" checksums.txt | awk '{print $1}')
+          EPACK_CORE_DARWIN_AMD64=$(grep "epack-core-darwin-amd64$" checksums.txt | awk '{print $1}')
+          EPACK_CORE_LINUX_ARM64=$(grep "epack-core-linux-arm64$" checksums.txt | awk '{print $1}')
+          EPACK_CORE_LINUX_AMD64=$(grep "epack-core-linux-amd64$" checksums.txt | awk '{print $1}')
+
+          # Generate epack formula
+          cat > homebrew-tap/Formula/epack.rb << 'FORMULA'
+          class Epack < Formula
+            desc "CLI for creating and verifying evidence packs (full: components)"
+            homepage "https://github.com/locktivity/epack"
+            license "Apache-2.0"
+            version "VERSION_PLACEHOLDER"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/locktivity/epack/releases/download/vVERSION_PLACEHOLDER/epack-darwin-arm64"
+                sha256 "SHA_DARWIN_ARM64"
+                def install
+                  bin.install "epack-darwin-arm64" => "epack"
+                end
+              end
+              on_intel do
+                url "https://github.com/locktivity/epack/releases/download/vVERSION_PLACEHOLDER/epack-darwin-amd64"
+                sha256 "SHA_DARWIN_AMD64"
+                def install
+                  bin.install "epack-darwin-amd64" => "epack"
+                end
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/locktivity/epack/releases/download/vVERSION_PLACEHOLDER/epack-linux-arm64"
+                sha256 "SHA_LINUX_ARM64"
+                def install
+                  bin.install "epack-linux-arm64" => "epack"
+                end
+              end
+              on_intel do
+                url "https://github.com/locktivity/epack/releases/download/vVERSION_PLACEHOLDER/epack-linux-amd64"
+                sha256 "SHA_LINUX_AMD64"
+                def install
+                  bin.install "epack-linux-amd64" => "epack"
+                end
+              end
+            end
+
+            test do
+              system "#{bin}/epack", "version"
+            end
+          end
+          FORMULA
+
+          # Replace placeholders in epack formula
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" homebrew-tap/Formula/epack.rb
+          sed -i "s/SHA_DARWIN_ARM64/${EPACK_DARWIN_ARM64}/g" homebrew-tap/Formula/epack.rb
+          sed -i "s/SHA_DARWIN_AMD64/${EPACK_DARWIN_AMD64}/g" homebrew-tap/Formula/epack.rb
+          sed -i "s/SHA_LINUX_ARM64/${EPACK_LINUX_ARM64}/g" homebrew-tap/Formula/epack.rb
+          sed -i "s/SHA_LINUX_AMD64/${EPACK_LINUX_AMD64}/g" homebrew-tap/Formula/epack.rb
+
+          # Generate epack-core formula
+          cat > homebrew-tap/Formula/epack-core.rb << 'FORMULA'
+          class EpackCore < Formula
+            desc "CLI for creating and verifying evidence packs (core: no components)"
+            homepage "https://github.com/locktivity/epack"
+            license "Apache-2.0"
+            version "VERSION_PLACEHOLDER"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/locktivity/epack/releases/download/vVERSION_PLACEHOLDER/epack-core-darwin-arm64"
+                sha256 "SHA_DARWIN_ARM64"
+                def install
+                  bin.install "epack-core-darwin-arm64" => "epack-core"
+                end
+              end
+              on_intel do
+                url "https://github.com/locktivity/epack/releases/download/vVERSION_PLACEHOLDER/epack-core-darwin-amd64"
+                sha256 "SHA_DARWIN_AMD64"
+                def install
+                  bin.install "epack-core-darwin-amd64" => "epack-core"
+                end
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/locktivity/epack/releases/download/vVERSION_PLACEHOLDER/epack-core-linux-arm64"
+                sha256 "SHA_LINUX_ARM64"
+                def install
+                  bin.install "epack-core-linux-arm64" => "epack-core"
+                end
+              end
+              on_intel do
+                url "https://github.com/locktivity/epack/releases/download/vVERSION_PLACEHOLDER/epack-core-linux-amd64"
+                sha256 "SHA_LINUX_AMD64"
+                def install
+                  bin.install "epack-core-linux-amd64" => "epack-core"
+                end
+              end
+            end
+
+            test do
+              system "#{bin}/epack-core", "version"
+            end
+          end
+          FORMULA
+
+          # Replace placeholders in epack-core formula
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" homebrew-tap/Formula/epack-core.rb
+          sed -i "s/SHA_DARWIN_ARM64/${EPACK_CORE_DARWIN_ARM64}/g" homebrew-tap/Formula/epack-core.rb
+          sed -i "s/SHA_DARWIN_AMD64/${EPACK_CORE_DARWIN_AMD64}/g" homebrew-tap/Formula/epack-core.rb
+          sed -i "s/SHA_LINUX_ARM64/${EPACK_CORE_LINUX_ARM64}/g" homebrew-tap/Formula/epack-core.rb
+          sed -i "s/SHA_LINUX_AMD64/${EPACK_CORE_LINUX_AMD64}/g" homebrew-tap/Formula/epack-core.rb
+
+      - name: Commit and push
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/
+          git commit -m "epack ${{ needs.args.outputs.version }}"
+          git push

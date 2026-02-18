@@ -1,0 +1,8 @@
+[
+  {
+    "type": "embedded",
+    "path": "artifacts/data.json",
+    "digest": "sha256:<DIGEST>",
+    "size": 14
+  }
+]

@@ -1,0 +1,208 @@
+// Package sigstore provides Sigstore signature verification for epack components.
+package sigstore
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/locktivity/epack/internal/digest"
+	"github.com/sigstore/sigstore-go/pkg/bundle"
+	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
+	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/verify"
+)
+
+// DigestPrefix is the hash algorithm prefix for digests.
+// Deprecated: Use digest.Parse() for format validation instead.
+const DigestPrefix = "sha256:"
+
+// ComputeDigest computes sha256 digest of a file.
+// Uses internal/digest package for consistent formatting.
+func ComputeDigest(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("opening file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	d, err := digest.FromReader(f)
+	if err != nil {
+		return "", fmt.Errorf("hashing file: %w", err)
+	}
+
+	return d.String(), nil
+}
+
+// VerifyDigest checks that a file matches the expected digest.
+// SECURITY: Uses constant-time comparison via digest.Equal to prevent timing attacks.
+func VerifyDigest(path, expected string) error {
+	actual, err := ComputeDigest(path)
+	if err != nil {
+		return err
+	}
+
+	actualDigest, err := digest.Parse(actual)
+	if err != nil {
+		return fmt.Errorf("invalid computed digest: %w", err)
+	}
+	expectedDigest, err := digest.Parse(expected)
+	if err != nil {
+		return fmt.Errorf("invalid expected digest format: %w", err)
+	}
+
+	if !actualDigest.Equal(expectedDigest) {
+		return fmt.Errorf("digest mismatch: expected %s, got %s", expected, actual)
+	}
+	return nil
+}
+
+// Result contains verified signer identity from Sigstore bundle.
+type Result struct {
+	Issuer              string
+	SourceRepositoryURI string
+	SourceRepositoryRef string
+}
+
+// ExpectedIdentity specifies the expected source identity for signature verification.
+// When provided to VerifyBundle, the signature MUST come from this identity.
+type ExpectedIdentity struct {
+	// SourceRepositoryURI is the expected repository (e.g., "https://github.com/owner/repo")
+	SourceRepositoryURI string
+	// SourceRepositoryRef is the expected ref (e.g., "refs/tags/v1.0.0")
+	SourceRepositoryRef string
+}
+
+// LockedSigner captures required source signer identity claims.
+type LockedSigner struct {
+	Issuer              string `yaml:"issuer"`
+	Subject             string `yaml:"subject,omitempty"` // Certificate subject (e.g., workflow path)
+	SourceRepositoryURI string `yaml:"source_repository_uri"`
+	SourceRepositoryRef string `yaml:"source_repository_ref"`
+}
+
+// VerifyBundle verifies a Sigstore bundle against an artifact.
+// Returns the verified signer identity claims.
+//
+// If expected is non-nil, the signature MUST come from the specified source repository
+// and ref. This prevents accepting signatures from arbitrary repositories.
+//
+// If expected is nil, the function verifies signature validity but does NOT enforce
+// identity binding. The caller MUST validate the returned claims themselves.
+// This mode should only be used when initially locking a component.
+func VerifyBundle(bundlePath, artifactPath string, expected *ExpectedIdentity) (*Result, error) {
+	// Load the bundle
+	b, err := bundle.LoadJSONFromPath(bundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("loading sigstore bundle: %w", err)
+	}
+
+	// Get trusted root from TUF (Sigstore public good instance)
+	trustedRoot, err := root.FetchTrustedRoot()
+	if err != nil {
+		return nil, fmt.Errorf("fetching trusted root: %w", err)
+	}
+
+	// Create verifier
+	sev, err := verify.NewVerifier(
+		trustedRoot,
+		verify.WithSignedCertificateTimestamps(1),
+		verify.WithObserverTimestamps(1),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("creating verifier: %w", err)
+	}
+
+	// Open artifact for verification
+	artifact, err := os.Open(artifactPath)
+	if err != nil {
+		return nil, fmt.Errorf("opening artifact: %w", err)
+	}
+	defer func() { _ = artifact.Close() }()
+
+	// Build verification policy
+	var policy verify.PolicyBuilder
+	if expected != nil {
+		// SECURE: Enforce identity binding - signature MUST come from expected source
+		// Create certificate identity with extension matching for SourceRepositoryURI
+		sanMatcher, err := verify.NewSANMatcher("", "") // Don't restrict SAN
+		if err != nil {
+			return nil, fmt.Errorf("creating SAN matcher: %w", err)
+		}
+		issuerMatcher, err := verify.NewIssuerMatcher("", "") // Don't restrict issuer
+		if err != nil {
+			return nil, fmt.Errorf("creating issuer matcher: %w", err)
+		}
+		// Use Extensions struct to match SourceRepositoryURI
+		extensions := certificate.Extensions{
+			SourceRepositoryURI: expected.SourceRepositoryURI,
+			SourceRepositoryRef: expected.SourceRepositoryRef,
+		}
+		certID, err := verify.NewCertificateIdentity(sanMatcher, issuerMatcher, extensions)
+		if err != nil {
+			return nil, fmt.Errorf("creating certificate identity: %w", err)
+		}
+		policy = verify.NewPolicy(
+			verify.WithArtifact(artifact),
+			verify.WithCertificateIdentity(certID),
+		)
+	} else {
+		// INSECURE: No identity enforcement - only use for initial locking
+		// Caller MUST validate returned claims themselves
+		policy = verify.NewPolicy(
+			verify.WithArtifact(artifact),
+			verify.WithoutIdentitiesUnsafe(),
+		)
+	}
+
+	// Verify the bundle
+	result, err := sev.Verify(b, policy)
+	if err != nil {
+		return nil, fmt.Errorf("sigstore verification failed: %w", err)
+	}
+
+	// Extract identity claims from certificate
+	cert := result.Signature.Certificate
+	if cert == nil {
+		return nil, fmt.Errorf("no certificate in verification result")
+	}
+
+	// Extract OIDC claims from certificate extensions
+	issuer := cert.Issuer
+	sourceRepoURI := cert.SourceRepositoryURI
+	sourceRepoRef := cert.SourceRepositoryRef
+
+	if issuer == "" {
+		return nil, fmt.Errorf("certificate missing issuer claim")
+	}
+
+	// Note: When expected is non-nil, both SourceRepositoryURI and SourceRepositoryRef
+	// are enforced by the certificate identity policy above. The sigstore-go library
+	// validates that the certificate extensions match the expected values.
+
+	return &Result{
+		Issuer:              issuer,
+		SourceRepositoryURI: sourceRepoURI,
+		SourceRepositoryRef: sourceRepoRef,
+	}, nil
+}
+
+// MatchSigner checks that verification result matches expected signer.
+func MatchSigner(result *Result, expected *LockedSigner) error {
+	if expected == nil {
+		return fmt.Errorf("no expected signer to match against")
+	}
+
+	if result.Issuer != expected.Issuer {
+		return fmt.Errorf("issuer mismatch: expected %q, got %q", expected.Issuer, result.Issuer)
+	}
+	if result.SourceRepositoryURI != expected.SourceRepositoryURI {
+		return fmt.Errorf("source_repository_uri mismatch: expected %q, got %q",
+			expected.SourceRepositoryURI, result.SourceRepositoryURI)
+	}
+	if result.SourceRepositoryRef != expected.SourceRepositoryRef {
+		return fmt.Errorf("source_repository_ref mismatch: expected %q, got %q",
+			expected.SourceRepositoryRef, result.SourceRepositoryRef)
+	}
+
+	return nil
+}

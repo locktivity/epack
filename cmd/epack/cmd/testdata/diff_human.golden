@@ -1,0 +1,23 @@
+Comparing evidence packs
+────────────────────────────────────
+
+  Pack 1: <PATH>
+           Stream: test/v1
+           Digest: sha256:<DIGEST>...
+
+  Pack 2: <PATH>
+           Stream: test/v2
+           Digest: sha256:<DIGEST>...
+
+Added (1)
+  + artifacts/d.json
+
+Removed (1)
+  - artifacts/a.json
+
+Changed (1)
+  ~ artifacts/b.json
+
+  Use --artifact <path> to see content differences
+
+Summary: 1 added, 1 removed, 1 changed, 1 unchanged

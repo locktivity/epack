@@ -1,0 +1,48 @@
+// {{.BinaryName}} is an epack remote adapter built with the Component SDK.
+package main
+
+import (
+	"fmt"
+
+	"github.com/locktivity/epack/componentsdk"
+)
+
+const Version = "0.1.0"
+
+func main() {
+	componentsdk.RunRemote(componentsdk.RemoteSpec{
+		Name:        "{{.Name}}",
+		Version:     Version,
+		Description: "TODO: Describe this remote adapter",
+		Features: componentsdk.RemoteFeatures{
+			PrepareFinalize: true,
+			Pull:            true,
+		},
+	}, &handler{})
+}
+
+type handler struct{}
+
+func (h *handler) PushPrepare(req componentsdk.PushPrepareRequest) (*componentsdk.PushPrepareResponse, error) {
+	// TODO: Implement push preparation
+	// Return upload instructions (URL, headers, method)
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (h *handler) PushFinalize(req componentsdk.PushFinalizeRequest) (*componentsdk.PushFinalizeResponse, error) {
+	// TODO: Implement push finalization
+	// Confirm upload and return release URL
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (h *handler) PullPrepare(req componentsdk.PullPrepareRequest) (*componentsdk.PullPrepareResponse, error) {
+	// TODO: Implement pull preparation
+	// Return download URL and expected digest
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (h *handler) PullFinalize(req componentsdk.PullFinalizeRequest) (*componentsdk.PullFinalizeResponse, error) {
+	// TODO: Implement pull finalization
+	// Confirm download success
+	return nil, fmt.Errorf("not implemented")
+}

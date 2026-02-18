@@ -1,0 +1,28 @@
+{
+  "pack1": {
+    "path": "<PATH>",
+    "stream": "test/v1",
+    "pack_digest": "sha256:<DIGEST>"
+  },
+  "pack2": {
+    "path": "<PATH>",
+    "stream": "test/v2",
+    "pack_digest": "sha256:<DIGEST>"
+  },
+  "added": [
+    "artifacts/c.json"
+  ],
+  "removed": [
+    "artifacts/a.json"
+  ],
+  "changed": [
+    "artifacts/b.json"
+  ],
+  "unchanged": [],
+  "summary": {
+    "added_count": 1,
+    "removed_count": 1,
+    "changed_count": 1,
+    "unchanged_count": 0
+  }
+}

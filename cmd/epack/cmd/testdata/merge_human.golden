@@ -1,0 +1,4 @@
+Merged 2 packs into <PATH>
+  Stream: test/golden-merge
+  Use 'epack inspect <PATH> to view contents
+  Use 'epack sign <PATH> to sign the merged pack

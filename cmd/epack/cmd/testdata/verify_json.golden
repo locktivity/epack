@@ -1,0 +1,11 @@
+{
+  "artifact_count": 1,
+  "artifact_errors": null,
+  "attestation_count": 0,
+  "attestation_errors": null,
+  "embedded_errors": null,
+  "pack_digest": "sha256:<DIGEST>",
+  "pack_digest_error": "",
+  "stream": "test/golden-verify-json",
+  "verified": true
+}

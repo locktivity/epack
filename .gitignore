@@ -1,0 +1,20 @@
+# Build output
+/epack
+*.exe
+
+# Go cache
+.gocache/
+
+# Test artifacts
+*.pack
+*.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

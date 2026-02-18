@@ -1,0 +1,39 @@
+// {{.BinaryName}} is an epack collector built with the Component SDK.
+package main
+
+import (
+	"time"
+
+	"github.com/locktivity/epack/componentsdk"
+)
+
+const Version = "0.1.0"
+
+func main() {
+	componentsdk.RunCollector(componentsdk.CollectorSpec{
+		Name:        "{{.Name}}",
+		Version:     Version,
+		Description: "TODO: Describe what this collector gathers",
+	}, run)
+}
+
+func run(ctx componentsdk.CollectorContext) error {
+	// Access configuration
+	config := ctx.Config()
+	_ = config // TODO: Use config values
+
+	// Access secrets from environment
+	// apiToken := ctx.Secret("API_TOKEN")
+
+	// TODO: Implement your collection logic here
+	// Example: fetch data from an API
+
+	// Emit collected evidence
+	data := map[string]any{
+		"collected_at": time.Now().UTC().Format(time.RFC3339),
+		"source":       ctx.Name(),
+		"items":        []any{},
+	}
+
+	return ctx.Emit(data)
+}

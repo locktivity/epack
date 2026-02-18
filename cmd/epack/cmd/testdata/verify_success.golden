@@ -1,0 +1,8 @@
+Verifying pack......
+[OK] Verification passed: <PATH>
+
+  Stream:        test/golden-verify
+  Pack Digest:   sha256:0d486c84d36c...
+  Artifacts:     1 verified
+  Attestations:  skipped (--integrity-only)
+

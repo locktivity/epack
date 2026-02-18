@@ -1,0 +1,12 @@
+Comparing evidence packs
+────────────────────────────────────
+
+  Pack 1: <PATH>
+           Stream: test/v1
+           Digest: sha256:<DIGEST>...
+
+  Pack 2: <PATH>
+           Stream: test/v1
+           Digest: sha256:<DIGEST>...
+
+Packs are identical

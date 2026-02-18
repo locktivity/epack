@@ -1,0 +1,48 @@
+epack - Evidence Pack Builder
+
+Quick Start:
+
+  # Create a new project
+  epack new my-pipeline
+
+  # Or initialize in existing directory
+  epack init
+
+  # Run collectors and build a pack
+  epack collect
+
+  # Sign the pack (opens browser for authentication)
+  epack sign evidence.pack
+
+  # Verify pack integrity and attestations
+  epack verify evidence.pack
+
+  # Push pack to a remote registry
+  epack push locktivity evidence.pack
+
+  # Pull pack from a remote registry
+  epack pull locktivity
+
+Commands:
+  new        Create a new evidence pack project
+  init       Initialize epack in current directory
+  collect    Run collectors and build evidence pack
+  install    Lock and sync dependencies
+  lock       Lock collector and tool dependencies
+  sync       Install collectors and tools from lockfile
+  build      Build an evidence pack from artifacts
+  sign       Sign an evidence pack
+  verify     Verify pack integrity and attestations
+  inspect    Show pack contents and metadata
+  list       List pack artifacts, attestations, or sources
+  extract    Extract artifacts from a pack
+  merge      Merge multiple packs into one
+  diff       Compare two packs
+  push       Push pack to a remote registry
+  pull       Pull pack from a remote registry
+  status     Show project status
+  jobs       List background jobs
+  collector  Run collectors
+  tool       Run tools on evidence packs
+
+Run epack <command> --help for detailed usage.

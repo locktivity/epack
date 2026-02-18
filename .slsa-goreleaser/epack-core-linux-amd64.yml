@@ -1,0 +1,14 @@
+version: 1
+env:
+  - CGO_ENABLED=0
+flags:
+  - -trimpath
+ldflags:
+  - "-s"
+  - "-w"
+  - "-X github.com/locktivity/epack/internal/version.Version={{ .Env.VERSION }}"
+  - "-X github.com/locktivity/epack/internal/version.Commit={{ .Env.COMMIT }}"
+goos: linux
+goarch: amd64
+main: ./cmd/epack
+binary: epack-core-linux-amd64

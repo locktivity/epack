@@ -1,0 +1,21 @@
+## Basic Usage
+
+```yaml
+{{.ConfigSection}}:
+  {{.Name}}:
+    source: OWNER/{{.BinaryName}}@v1
+```
+
+## With Configuration
+
+```yaml
+{{.ConfigSection}}:
+  {{.Name}}:
+    source: OWNER/{{.BinaryName}}@v1
+    config:
+      example_option: "value"
+```
+
+## Example Output
+
+TODO: Show example output or results from this {{.Kind}}.

@@ -1,0 +1,33 @@
+// {{.BinaryName}} is an epack utility built with the Component SDK.
+package main
+
+import (
+	"fmt"
+
+	"github.com/locktivity/epack/componentsdk"
+)
+
+const Version = "0.1.0"
+
+func main() {
+	componentsdk.RunUtility(componentsdk.UtilitySpec{
+		Name:        "{{.Name}}",
+		Version:     Version,
+		Description: "TODO: Describe what this utility does",
+		Usage:       "{{.BinaryName}} [options] <args>",
+		Examples: []string{
+			"{{.BinaryName}} example.pack",
+		},
+	}, run)
+}
+
+func run(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("no arguments provided")
+	}
+
+	// TODO: Implement your utility logic here
+	fmt.Printf("Processing: %v\n", args)
+
+	return nil
+}

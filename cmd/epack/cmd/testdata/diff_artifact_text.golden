@@ -1,0 +1,8 @@
+Artifact artifacts/readme.txt
+────────────────────────────────────
+
+  Line 1
+- Line 2
++ Line 2 modified
+  Line 3
++ Line 4

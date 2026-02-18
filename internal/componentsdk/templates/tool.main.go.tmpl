@@ -1,0 +1,40 @@
+// {{.BinaryName}} is an epack tool built with the Component SDK.
+package main
+
+import (
+	"github.com/locktivity/epack/componentsdk"
+)
+
+const Version = "0.1.0"
+
+func main() {
+	componentsdk.RunTool(componentsdk.ToolSpec{
+		Name:         "{{.Name}}",
+		Version:      Version,
+		Description:  "TODO: Describe what this tool does",
+		RequiresPack: true,
+		Network:      false,
+	}, run)
+}
+
+func run(ctx componentsdk.ToolContext) error {
+	pack := ctx.Pack()
+
+	// TODO: Implement your tool logic here
+	// Example: iterate over artifacts
+	for _, artifact := range pack.Artifacts() {
+		data, err := pack.ReadArtifact(artifact.Path)
+		if err != nil {
+			continue
+		}
+
+		// Process artifact data...
+		_ = data
+	}
+
+	// Write output
+	result := map[string]any{
+		"message": "Tool executed successfully",
+	}
+	return ctx.WriteOutput("output.json", result)
+}

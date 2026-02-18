@@ -1,0 +1,9 @@
+{
+  "merged_by": "test-system",
+  "path": "<PATH>",
+  "source_packs": [
+    "<PATH>",
+    "<PATH>"
+  ],
+  "stream": "test/golden-merge"
+}

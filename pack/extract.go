@@ -1,0 +1,266 @@
+package pack
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+
+	"github.com/locktivity/epack/internal/safefile"
+)
+
+// SafeExtractAll returns ExtractOptions configured for secure extraction.
+// This is the recommended way to configure extraction for production use.
+//
+// Features:
+//   - Extracts all artifacts to the specified directory
+//   - Pre-verifies pack integrity before extraction
+//   - Fails if files already exist (no overwrite)
+//
+// Example:
+//
+//	p, _ := pack.Open("evidence.pack")
+//	result, err := p.Extract(pack.SafeExtractAll("/tmp/output"))
+func SafeExtractAll(outputDir string) ExtractOptions {
+	return ExtractOptions{
+		OutputDir:           outputDir,
+		All:                 true,
+		Force:               false, // Don't overwrite existing files
+		SkipPreVerification: false, // Verify integrity first
+	}
+}
+
+// ExtractOptions configures artifact extraction behavior.
+type ExtractOptions struct {
+	// OutputDir is the directory to extract artifacts to.
+	OutputDir string
+
+	// Paths specifies specific artifact paths to extract.
+	// If empty and All is false, returns an error.
+	Paths []string
+
+	// All extracts all artifacts when true.
+	All bool
+
+	// Filter is a glob pattern to match artifact paths.
+	// Only artifacts matching the pattern are extracted.
+	Filter string
+
+	// Force overwrites existing files when true.
+	Force bool
+
+	// SkipPreVerification skips VerifyIntegrity() before extraction.
+	// By default (when false), Extract runs VerifyIntegrity() to ensure
+	// the pack_digest matches the canonical artifact list, preventing
+	// attacks where extra artifacts are injected into the ZIP.
+	//
+	// Set to true only for performance when you've already verified the pack.
+	SkipPreVerification bool
+}
+
+// ExtractResult contains information about extracted artifacts.
+type ExtractResult struct {
+	// Extracted is the list of file paths that were extracted.
+	Extracted []string
+}
+
+// Extract extracts artifacts from the pack to the filesystem.
+//
+// The extraction is performed safely:
+//   - Path traversal attacks are rejected
+//   - Symlinks in the output path are rejected
+//   - Directory creation is race-safe (fd-based on Unix)
+//   - File writes use O_NOFOLLOW to prevent symlink attacks
+//   - Per-operation read budget prevents DoS via decompression bombs
+//   - Pack integrity verified before extraction (unless SkipPreVerification is set)
+//
+// By default, VerifyIntegrity() is called before extraction to ensure
+// pack_digest matches the canonical artifact list. This prevents attacks
+// where an attacker injects extra artifacts not in the original manifest.
+// Set SkipPreVerification=true only if you've already verified the pack.
+func (p *Pack) Extract(opts ExtractOptions) (*ExtractResult, error) {
+	// SECURITY: Verify pack integrity before extraction by default.
+	// This catches injected artifacts not in the canonical list.
+	if !opts.SkipPreVerification {
+		if err := p.VerifyIntegrity(); err != nil {
+			return nil, fmt.Errorf("integrity verification failed: %w", err)
+		}
+	}
+
+	if opts.OutputDir == "" {
+		opts.OutputDir = "."
+	}
+
+	// Resolve to absolute path FIRST, before any file operations
+	// This ensures we're working with a canonical path
+	absOutputDir, err := filepath.Abs(opts.OutputDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving output directory: %w", err)
+	}
+
+	// Validate and create output directory using symlink-safe operations
+	// We use the parent of absOutputDir as the trusted base, and create
+	// the output directory (last component) using safefile.MkdirAll.
+	// This prevents symlink-based attacks where an attacker swaps a
+	// parent directory component to redirect writes.
+	parentDir := filepath.Dir(absOutputDir)
+	if parentDir == "" {
+		parentDir = "/"
+	}
+
+	// Validate the parent directory exists and is not a symlink
+	parentInfo, err := os.Lstat(parentDir)
+	if err != nil {
+		return nil, fmt.Errorf("output parent directory does not exist: %w", err)
+	}
+	if parentInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refusing to extract: parent directory %s is a symlink", parentDir)
+	}
+
+	// Create output directory using safefile (symlink-safe)
+	if err := safefile.MkdirAll(parentDir, absOutputDir); err != nil {
+		return nil, fmt.Errorf("creating output directory: %w", err)
+	}
+
+	// Determine which artifacts to extract
+	toExtract, err := p.selectArtifacts(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(toExtract) == 0 {
+		return &ExtractResult{}, nil
+	}
+
+	// SECURITY: Create a per-operation read budget.
+	// This ensures each Extract operation gets its own budget, preventing:
+	// - Prior operations from exhausting budget for subsequent operations
+	// - Long-running processes hitting cumulative limits
+	budget := NewReadBudget()
+
+	// Extract each artifact
+	var extracted []string
+	for _, a := range toExtract {
+		if a.Type != "embedded" {
+			continue
+		}
+
+		outPath, err := p.extractArtifactWithBudget(absOutputDir, a, opts.Force, budget)
+		if err != nil {
+			return nil, err
+		}
+
+		extracted = append(extracted, outPath)
+	}
+
+	return &ExtractResult{Extracted: extracted}, nil
+}
+
+// selectArtifacts determines which artifacts to extract based on options.
+func (p *Pack) selectArtifacts(opts ExtractOptions) ([]Artifact, error) {
+	manifest := p.Manifest()
+
+	if opts.All {
+		// Return defensive copy to prevent callers from modifying internal state
+		return slices.Clone(manifest.Artifacts), nil
+	}
+
+	if opts.Filter != "" {
+		var matched []Artifact
+		for _, a := range manifest.Artifacts {
+			if matchPath(a.Path, opts.Filter) {
+				matched = append(matched, a)
+			}
+		}
+		return matched, nil
+	}
+
+	if len(opts.Paths) > 0 {
+		pathSet := make(map[string]bool)
+		for _, p := range opts.Paths {
+			pathSet[p] = true
+		}
+
+		var selected []Artifact
+		for _, a := range manifest.Artifacts {
+			if pathSet[a.Path] {
+				selected = append(selected, a)
+			}
+		}
+
+		// Check for paths not found
+		for _, reqPath := range opts.Paths {
+			found := false
+			for _, a := range manifest.Artifacts {
+				if a.Path == reqPath {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("artifact not found: %s", reqPath)
+			}
+		}
+
+		return selected, nil
+	}
+
+	return nil, fmt.Errorf("specify artifact paths, All=true, or Filter pattern")
+}
+
+// extractArtifactWithBudget extracts a single artifact with budget tracking.
+func (p *Pack) extractArtifactWithBudget(absOutputDir string, a Artifact, force bool, budget *ReadBudget) (string, error) {
+	// Validate and join path safely
+	// Validate the artifact path is safe and get the absolute output path
+	outPath, err := safefile.ValidatePath(absOutputDir, a.Path)
+	if err != nil {
+		return "", fmt.Errorf("unsafe artifact path %s: %w", a.Path, err)
+	}
+
+	// Read artifact data with integrity verification and budget tracking
+	data, err := p.ReadArtifactWithBudget(a.Path, budget)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", a.Path, err)
+	}
+
+	// TOCTOU-safe write using fd-pinned operations.
+	// When force=false, use WriteFileExclusive which atomically fails
+	// if the file already exists (via O_EXCL on Unix, CREATE_NEW on Windows).
+	// This prevents the race between existence check and file creation.
+	//
+	// Note: We pass a.Path (the relative path) to WriteFile, not outPath (the absolute path).
+	// WriteFile expects a relative path and will join it with baseDir internally.
+	if force {
+		// Force mode: use WriteFile which will overwrite existing files.
+		// This keeps directory fd pinned from creation through file write,
+		// preventing parent symlink swaps.
+		if err := safefile.WriteFile(absOutputDir, a.Path, data); err != nil {
+			return "", fmt.Errorf("writing %s: %w", outPath, err)
+		}
+	} else {
+		// Non-force mode: use exclusive write to atomically fail if file exists.
+		// This eliminates the TOCTOU race between existence check and file creation.
+		if err := safefile.WriteFileExclusive(absOutputDir, a.Path, data); err != nil {
+			if err == safefile.ErrFileExists {
+				return "", fmt.Errorf("file already exists: %s (use Force=true to overwrite)", outPath)
+			}
+			return "", fmt.Errorf("writing %s: %w", outPath, err)
+		}
+	}
+
+	return outPath, nil
+}
+
+// matchPath checks if a path matches a glob pattern.
+// It matches against both the full path and the base name.
+func matchPath(path, pattern string) bool {
+	// Try matching the full path
+	if matched, _ := filepath.Match(pattern, path); matched {
+		return true
+	}
+	// Try matching just the filename
+	if matched, _ := filepath.Match(pattern, filepath.Base(path)); matched {
+		return true
+	}
+	return false
+}

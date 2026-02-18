@@ -1,0 +1,59 @@
+# {{.BinaryName}}
+
+An epack {{.Kind}} built with the [Component SDK](https://github.com/locktivity/epack).
+
+See [docs/](docs/) for usage documentation.
+
+## Development
+
+```bash
+# Build
+go build -o {{.BinaryName}} .
+
+# Run locally (with epack SDK)
+epack sdk run ./{{.BinaryName}}
+
+# Watch mode: auto-rebuild on file changes
+epack sdk run --watch .
+
+# Run conformance tests
+epack sdk test ./{{.BinaryName}}
+```
+
+### Manual Testing
+
+```bash
+# Test capabilities
+./{{.BinaryName}} --capabilities
+
+# Run conformance tests directly
+go install github.com/locktivity/epack/cmd/epack-conformance@latest
+epack-conformance {{.Kind}} ./{{.BinaryName}}
+```
+
+## Testing
+
+```bash
+go test ./...
+```
+
+## Release
+
+Tag a version to trigger the release workflow:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The GitHub Action will:
+1. Run tests and conformance checks
+2. Build multi-platform binaries (linux/darwin, amd64/arm64)
+3. Generate [SLSA Level 3](https://slsa.dev/spec/v1.0/levels#build-l3) provenance attestations
+4. Publish to GitHub Releases
+
+All release binaries include cryptographic provenance that proves they were built from this repository's CI pipeline.
+
+## License
+
+TODO: Add license

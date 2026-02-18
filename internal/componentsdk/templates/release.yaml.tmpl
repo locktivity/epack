@@ -1,0 +1,103 @@
+# Release workflow for {{.BinaryName}}
+# Triggers on version tags (v*) and builds with SLSA Level 3 provenance
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: read-all
+
+jobs:
+  # Run tests and conformance checks before building
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test -race ./...
+
+      - name: Build
+        run: go build -o {{.BinaryName}} .
+
+      - name: Run conformance tests
+        run: |
+          go install github.com/locktivity/epack/cmd/epack-conformance@latest
+          epack-conformance {{.Kind}} ./{{.BinaryName}} --level standard
+
+  # Compute build arguments (version)
+  args:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{"{{"}} steps.ldflags.outputs.version {{"}}"}}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: ldflags
+        run: |
+          echo "version=$(git describe --tags --always --dirty | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+
+  # Build binaries with SLSA Level 3 provenance
+  build:
+    needs: [test, args]
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
+    with:
+      go-version-file: go.mod
+      config-file: .slsa-goreleaser/{{.BinaryName}}-${{"{{"}} matrix.os {{"}}"}}-${{"{{"}} matrix.arch {{"}}"}}.yml
+      evaluated-envs: "VERSION:${{"{{"}} needs.args.outputs.version {{"}}"}}"
+
+  # Create GitHub Release with all artifacts
+  release:
+    needs: [args, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          # Find and move all binaries and attestations
+          find artifacts -type f \( -name "{{.BinaryName}}-*" -o -name "*.intoto.jsonl" \) -exec mv {} release/ \;
+          # Create checksums
+          cd release
+          sha256sum * > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}

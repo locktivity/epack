@@ -1,0 +1,10 @@
+{
+  "count": 2,
+  "dry_run": true,
+  "output": "<PATH>",
+  "total_size": 36,
+  "would_extract": [
+    "artifacts/config.json",
+    "artifacts/data.json"
+  ]
+}

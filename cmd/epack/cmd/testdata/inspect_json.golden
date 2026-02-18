@@ -1,0 +1,18 @@
+{
+  "spec_version": "1.0",
+  "stream": "test/golden-inspect-json",
+  "pack_digest": "sha256:<DIGEST>",
+  "generated_at": "<TIMESTAMP>",
+  "artifact_count": 1,
+  "attestation_count": 0,
+  "sources": [],
+  "artifacts": [
+    {
+      "type": "embedded",
+      "path": "artifacts/config.json",
+      "digest": "sha256:<DIGEST>",
+      "size": 16
+    }
+  ],
+  "attestations": null
+}

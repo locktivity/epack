@@ -1,0 +1,133 @@
+# Example epack.yaml configuration
+#
+# Copy this file to epack.yaml and customize for your environment:
+#   cp epack.example.yaml epack.yaml
+#
+# Or use interactive setup:
+#   epack init
+
+# Stream identifies this evidence collection.
+# Use different streams for different audiences (e.g., acme/prod, acme/public).
+stream: myorg/prod
+
+# Platforms to build lockfile for (optional).
+# Defaults to current platform if not specified.
+# platforms:
+#   - linux/amd64
+#   - linux/arm64
+#   - darwin/amd64
+#   - darwin/arm64
+
+collectors:
+  # GitHub organization security posture
+  github:
+    source: locktivity/epack-collector-github@v1
+    config:
+      organization: myorg
+      # include_patterns:
+      #   - "*"
+      # exclude_patterns:
+      #   - "*-archive"
+      #   - "test-*"
+    # Secrets are env vars passed to the collector.
+    # Only listed secrets are passed - collectors can't access other env vars.
+    # Reserved prefixes (EPACK_, LD_, DYLD_, _) are blocked.
+    secrets:
+      - GITHUB_TOKEN
+
+  # AWS security configuration (coming soon)
+  # aws:
+  #   source: locktivity/epack-collector-aws@v1
+  #   config:
+  #     regions: us-east-1,us-west-2
+  #   secrets:
+  #     - AWS_ACCESS_KEY_ID
+  #     - AWS_SECRET_ACCESS_KEY
+  #     - AWS_SESSION_TOKEN
+
+  # Okta identity posture (coming soon)
+  # okta:
+  #   source: locktivity/epack-collector-okta@v1
+  #   config:
+  #     domain: myorg.okta.com
+  #   secrets:
+  #     - OKTA_API_TOKEN
+
+# Tools process existing packs (analysis, queries, etc.)
+# tools:
+#   ai:
+#     source: locktivity/epack-tool-ai@v1
+#     config:
+#       model: gpt-4
+#     secrets:
+#       - OPENAI_API_KEY
+#   policy:
+#     source: locktivity/epack-tool-policy@v1
+
+# Remotes are registries for pushing/pulling packs.
+# Each remote is implemented by an adapter binary (epack-remote-<adapter>).
+# Adapters can be installed via source (managed) or binary (external).
+remotes:
+  # Locktivity remote (primary registry) - managed via source
+  locktivity:
+    source: locktivity/epack-remote-locktivity@v1
+    # adapter: locktivity  # Optional - inferred from source if not set
+    target:
+      workspace: myorg
+      environment: prod
+    # Endpoint is optional - adapter uses default if not specified.
+    # endpoint: https://registry.locktivity.com
+    auth:
+      mode: device_code  # Options: device_code, oidc, api_key
+      # profile: default  # Optional named credential profile
+    # verify:
+    #   pack: true      # Verify pack integrity before upload
+    #   strict: true    # Fail on warnings
+    release:
+      labels: [monthly]
+      # notes: "Monthly evidence release"
+      source:
+        git:
+          sha_env: GITHUB_SHA
+          repo_env: GITHUB_REPOSITORY
+        ci:
+          run_url_env: GITHUB_RUN_URL
+    runs:
+      sync: true         # Sync run ledgers after push (default true)
+      # paths:           # Globs to find result.json files
+      #   - .epack/runs/**/result.json
+      # require_success: false  # Fail push if run sync fails
+
+  # Filesystem remote (for local testing) - using external binary
+  # filesystem:
+  #   binary: /usr/local/bin/epack-remote-filesystem
+  #   adapter: filesystem
+  #   target:
+  #     dir: ./published
+  #   runs:
+  #     sync: false
+
+  # S3 remote - adapter-only mode (discovered from PATH)
+  # s3:
+  #   adapter: s3
+  #   target:
+  #     bucket: my-evidence-bucket
+  #   runs:
+  #     sync: false
+
+# Per-environment overrides
+environments:
+  staging:
+    remotes:
+      locktivity:
+        target:
+          environment: staging
+        release:
+          labels: [staging]
+  prod:
+    remotes:
+      locktivity:
+        target:
+          environment: prod
+        release:
+          labels: [prod, soc2]

@@ -1,0 +1,5 @@
+Building pack......
+[OK]  Pack created
+Created <PATH>
+  Stream: test/golden-build
+  Use 'epack inspect <PATH> to view contents

@@ -1,0 +1,16 @@
+Would merge 2 pack(s) into <PATH>
+
+  Stream: test/golden-dryrun
+  Merged by: test-operator
+
+Source packs:
+  <PATH>
+    Stream: org/stream1
+    Artifacts: 1 (17 B)
+  <PATH>
+    Stream: org/stream2
+    Artifacts: 1 (17 B)
+
+Result:
+  Total artifacts: 2
+  Total size: 34 B

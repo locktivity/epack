@@ -1,0 +1,25 @@
+{
+  "dry_run": true,
+  "include_attestations": true,
+  "output": "<PATH>",
+  "source_packs": [
+    {
+      "artifacts": 1,
+      "attestations": 0,
+      "path": "<PATH>",
+      "size": 17,
+      "stream": "org/stream1"
+    },
+    {
+      "artifacts": 1,
+      "attestations": 0,
+      "path": "<PATH>",
+      "size": 17,
+      "stream": "org/stream2"
+    }
+  ],
+  "stream": "test/golden-dryrun",
+  "total_artifacts": 2,
+  "total_attestations": 0,
+  "total_size": 34
+}
