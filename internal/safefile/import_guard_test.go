@@ -42,6 +42,11 @@ func TestFileIOImportGuard(t *testing.T) {
 			Recursive: true,
 			ExemptPackages: []string{
 				"internal/safefile",
+				// sync package creates .epack base directory with os.MkdirAll.
+				// This is safe because the path is derived from workDir (trusted),
+				// not from untrusted input. The directory serves as the security
+				// boundary for safefile operations on untrusted paths within.
+				"internal/component/sync",
 			},
 		},
 	)

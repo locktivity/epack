@@ -139,6 +139,12 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
+	// Ensure base directory exists for component installation.
+	// This is done early so safefile.MkdirAll can use it as the security boundary.
+	if err := os.MkdirAll(s.BaseDir, 0755); err != nil {
+		return nil, fmt.Errorf("creating base directory: %w", err)
+	}
+
 	// Validate option combinations
 	if opts.Frozen && opts.InsecureSkipVerify {
 		return nil, fmt.Errorf("cannot combine --frozen with --insecure-skip-verify")
