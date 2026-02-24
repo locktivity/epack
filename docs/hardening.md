@@ -11,7 +11,20 @@ Security impact:
 - `epack-core` removes downloader + subprocess execution paths entirely.
 - No component binaries can be installed, synced, or executed.
 
-## 2. Treat Components as Untrusted Code
+## 2. Understand Component Verification
+
+Source-based components (those with `source:` in config) are verified with SLSA Level 3 provenance:
+
+- **Sigstore signature** must come from the declared GitHub repository
+- **Certificate issuer** must be GitHub Actions OIDC
+- **Binary digest** must match the lockfile
+- **Signer identity** must match what was recorded at lock time
+
+This verification happens automatically during `epack sync`. See [Concepts: SLSA Level 3 Verification](concepts.md#slsa-level-3-verification) for details.
+
+**External binaries** (those with `binary:` in config) are only digest-verified, not signature-verified.
+
+## 3. Treat Components as Untrusted Code
 
 Collectors, tools, remotes, and utilities are all third-party binaries. When using `epack` (full):
 
@@ -30,7 +43,7 @@ Collectors, tools, remotes, and utilities are all third-party binaries. When usi
 | Remotes | Registry credentials, network access | Scoped auth tokens, TLS enforcement |
 | Utilities | User data access, arbitrary file operations | Install only from trusted sources |
 
-## 3. Enforce Reproducibility
+## 4. Enforce Reproducibility
 
 - Commit `epack.yaml` and `epack.lock.yaml`.
 - Specify all CI platforms in `epack.yaml`:
@@ -48,7 +61,7 @@ Collectors, tools, remotes, and utilities are all third-party binaries. When usi
   - `epack collector run --frozen`
 - Require lockfile updates through code review.
 
-## 4. Keep Unsafe Flags Disabled
+## 5. Keep Unsafe Flags Disabled
 
 Do not use these except for short-lived local debugging:
 
@@ -59,7 +72,7 @@ Do not use these except for short-lived local debugging:
 
 If used temporarily, remove immediately and rotate any potentially exposed credentials.
 
-## 5. Harden Runtime Environment
+## 6. Harden Runtime Environment
 
 - Pin explicit `PATH` in automation.
 - Store credentials in scoped CI secrets, not shell history or dotfiles.
@@ -67,13 +80,13 @@ If used temporarily, remove immediately and rotate any potentially exposed crede
 - Only list necessary secrets in `epack.yaml` - collectors can't access env vars not explicitly listed.
 - Use specific credential names (e.g., `GITHUB_TOKEN`) rather than broad names that might be reused.
 
-## 6. Verify Before Trusting Artifacts
+## 7. Verify Before Trusting Artifacts
 
 - Always run `epack verify` before consuming third-party packs.
 - Use identity constraints (`--issuer`, `--subject`) in policy-driven environments.
 - Reject packs that fail integrity checks or violate expected identity.
 
-## 7. Secure Remote Adapter Transport
+## 8. Secure Remote Adapter Transport
 
 ### file:// URLs require file_root
 
@@ -101,7 +114,7 @@ remotes:
 
 Note: Authentication headers are never sent over HTTP.
 
-## 8. Component Catalog and Installation
+## 9. Component Catalog and Installation
 
 The catalog is for discovery and display only. Execution decisions come from lockfiles.
 
@@ -117,14 +130,14 @@ The catalog is for discovery and display only. Execution decisions come from loc
 - Run `epack utility list` to audit installed utilities
 - Remove unused utilities with `epack utility remove <name>`
 
-## 9. Recommended Workflow Split
+## 10. Recommended Workflow Split
 
 - **Collection stage**: full `epack` on isolated runner (`epack collect --frozen`).
 - **Tool analysis stage**: full `epack` in sandboxed environment for policy checks.
 - **Review/sign stage**: restricted environment with signer controls.
 - **Consumer/verification stage**: `epack-core` in CI and audit tooling.
 
-## 10. Local Development vs CI
+## 11. Local Development vs CI
 
 - **Local development**: Use `epack collect` (auto-locks, auto-syncs).
 - **CI pipelines**: Use `epack collect --frozen` (strict verification, no network downloads).

@@ -211,6 +211,46 @@ This ensures:
 - **Verification**: Digests are checked before execution
 - **Auditability**: You can review exactly what runs
 
+## SLSA Level 3 Verification
+
+When you install a component via `source:`, epack verifies [SLSA Level 3](https://slsa.dev/spec/v1.0/levels) provenance through Sigstore:
+
+```
+┌─────────────────┐     download     ┌─────────────────────────────────────┐
+│  GitHub Release │─────────────────►│  Binary + .sigstore.json bundle    │
+└─────────────────┘                  └──────────────────┬──────────────────┘
+                                                        │
+                                     ┌──────────────────▼──────────────────┐
+                                     │         Sigstore Verification       │
+                                     │  1. Validate signature via TUF root │
+                                     │  2. Check certificate issuer (OIDC) │
+                                     │  3. Match source repository URI     │
+                                     │  4. Match source repository ref     │
+                                     │  5. Compare to lockfile signer      │
+                                     │  6. Verify binary digest            │
+                                     └──────────────────┬──────────────────┘
+                                                        │
+                                     ┌──────────────────▼──────────────────┐
+                                     │         Execution allowed           │
+                                     └─────────────────────────────────────┘
+```
+
+**What this proves:**
+
+| Claim | Verification |
+|-------|--------------|
+| Binary came from declared source repo | Certificate `SourceRepositoryURI` must match |
+| Binary was built at declared version | Certificate `SourceRepositoryRef` must match tag |
+| Binary was built by GitHub Actions | Certificate issuer is `https://token.actions.githubusercontent.com` |
+| Binary wasn't tampered with | SHA-256 digest matches lockfile |
+| Signer identity is consistent | Matches signer recorded at lock time |
+
+**This requires component authors to:**
+1. Use the [SLSA GitHub Generator](https://github.com/slsa-framework/slsa-github-generator) in their release workflow
+2. Attach `.sigstore.json` bundles to their GitHub releases
+
+Components without Sigstore bundles will fail verification unless you pass `--insecure-skip-verify` (not recommended).
+
 ## TOCTOU-Safe Execution
 
 epack prevents time-of-check to time-of-use (TOCTOU) attacks:
