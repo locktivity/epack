@@ -17,16 +17,16 @@ import (
 // Uses the central HTTP timeout limit for consistency.
 const FetchTimeout = limits.DefaultHTTPTimeout
 
-// DefaultCatalogURL is the default catalog URL (placeholder until registry is implemented).
-const DefaultCatalogURL = "https://registry.locktivity.com/catalog.json"
+// DefaultCatalogURL is the default catalog URL.
+const DefaultCatalogURL = "https://registry.epack.dev/catalog.json"
 
 // trustedCatalogHosts is the allowlist of hosts that can serve the tool catalog.
 // SECURITY: Catalog data influences discovery/display (not execution), but restricting
 // sources prevents attackers from serving malicious catalog data via redirects or
 // user-provided URLs.
 var trustedCatalogHosts = map[string]bool{
-	"registry.locktivity.com": true,
-	"locktivity.com":          true,
+	"registry.epack.dev": true,
+	"epack.dev":          true,
 }
 
 // isLoopbackHost returns true if the hostname is localhost or 127.0.0.1.

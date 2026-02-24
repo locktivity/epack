@@ -322,7 +322,7 @@ func TestFetchCatalogSecurity(t *testing.T) {
 		// This test verifies that trusted hosts pass validation
 		// (will fail with network error, but that's after URL validation)
 		_, err := FetchCatalog(context.Background(), FetchOptions{
-			URL: "https://registry.locktivity.com/catalog.json",
+			URL: "https://registry.epack.dev/catalog.json",
 			HTTPClient: &http.Client{
 				Transport: &http.Transport{},
 				Timeout:   1 * time.Millisecond, // Very short timeout to fail fast

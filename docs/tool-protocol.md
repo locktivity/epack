@@ -628,8 +628,8 @@ Configuration (reserved, not implemented):
 ```yaml
 # epack.yaml
 registries:
-  - name: locktivity
-    url: https://registry.locktivity.com
+  - name: epack
+    url: https://registry.epack.dev
     priority: 1
   - name: github
     priority: 2
@@ -637,7 +637,7 @@ registries:
 tool_policy:
   mode: strict  # or "permissive"
   allow:
-    - "locktivity/*"
+    - "epack/*"
   deny:
     - "*-snapshot"
 ```
