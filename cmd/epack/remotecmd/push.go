@@ -3,8 +3,10 @@
 package remotecmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/component/config"
@@ -122,6 +124,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 	var currentSpinner *output.Spinner
 	var progressBar *output.ProgressBar
 
+	// Track duration
+	startTime := time.Now()
+
 	// Build options with step callbacks for multi-step progress
 	opts := push.Options{
 		Remote:                remoteName,
@@ -218,22 +223,38 @@ func runPush(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	out.Success("Pushed to %s", remoteName)
-	out.Print("  Release: %s\n", result.Release.ReleaseID)
+	duration := time.Since(startTime)
+
+	out.Print("\n✓ Pushed to %s in %s\n", remoteName, formatPushDuration(duration))
+	out.Print("\nRelease:\n")
+	out.Print("  • ID:      %s\n", result.Release.ReleaseID)
 	if result.Release.CanonicalRef != "" {
-		out.Print("  Ref: %s\n", result.Release.CanonicalRef)
-	}
-	if viewURL, ok := result.Links["view"]; ok {
-		out.Print("  View: %s\n", viewURL)
-	}
-	if shareURL, ok := result.Links["share"]; ok {
-		out.Print("  Share: %s\n", shareURL)
+		out.Print("  • Ref:     %s\n", result.Release.CanonicalRef)
 	}
 	if len(result.SyncedRuns) > 0 {
-		out.Print("  Runs synced: %d\n", len(result.SyncedRuns))
+		out.Print("  • Runs:    %d synced\n", len(result.SyncedRuns))
+	}
+	if viewURL, ok := result.Links["view"]; ok {
+		out.Print("\nView:  %s\n", viewURL)
+	}
+	if shareURL, ok := result.Links["share"]; ok {
+		out.Print("Share: %s\n", shareURL)
 	}
 
 	return nil
+}
+
+// formatPushDuration formats a duration into a human-readable string.
+func formatPushDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	mins := int(d.Minutes())
+	secs := d.Seconds() - float64(mins*60)
+	return fmt.Sprintf("%dm%.1fs", mins, secs)
 }
 
 // runPushDryRun shows what would be pushed without actually pushing.

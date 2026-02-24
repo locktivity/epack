@@ -16,6 +16,7 @@ import (
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/internal/netpolicy"
+	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/progress"
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/remote"
@@ -278,7 +279,7 @@ func Pull(ctx context.Context, opts Options) (*Result, error) {
 	)
 
 	writer := &ReceiptWriter{
-		BaseDir: filepath.Join(filepath.Dir(absOutputPath)+".epack", "receipts", "pull"),
+		BaseDir: filepath.Join(packpath.SidecarDir(absOutputPath), "receipts", "pull"),
 	}
 	receiptPath, err := writer.Write(receipt)
 	if err != nil {

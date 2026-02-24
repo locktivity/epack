@@ -14,6 +14,7 @@ import (
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/execsafe"
+	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/platformpath"
 	"github.com/locktivity/epack/internal/toolprotocol"
@@ -196,7 +197,7 @@ func dispatchVerifiedTool(ctx context.Context, out Output, toolName string, tool
 	// Check runtime dependencies before execution
 	// Only check if we have a pack (packless runs skip dependency checking)
 	if absPackPath != "" && caps != nil {
-		packSidecar := absPackPath + ".epack"
+		packSidecar := packpath.SidecarDir(absPackPath)
 		if errs := toolprotocol.CheckDependencies(caps, packSidecar); len(errs) > 0 {
 			return writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
 				componenttypes.ExitDependencyMissing, componenttypes.ErrCodeDependencyMissing,
@@ -262,7 +263,10 @@ func dispatchVerifiedTool(ctx context.Context, out Output, toolName string, tool
 
 	// Process result.json (validate or backfill)
 	// Use toolVersion from capabilities (with fallback to locked.Version set above)
-	wrapperExitCode := processToolResult(out, toolName, runID, runDir, absPackPath, startedAt, completedAt, toolExitCode, toolVersion, execErr)
+	wrapperExitCode, result := processToolResult(out, toolName, runID, runDir, absPackPath, startedAt, completedAt, toolExitCode, toolVersion, execErr)
+
+	// Print run summary (respects quiet mode)
+	printRunSummary(out, result, runDir, flags.QuietMode)
 
 	if wrapperExitCode != 0 {
 		return &errors.Error{Code: errors.InvalidInput, Exit: wrapperExitCode, Message: fmt.Sprintf("tool exited with code %d", wrapperExitCode)}
@@ -294,7 +298,7 @@ func determineBaseDir(flags WrapperFlags, absPackPath string) (string, bool, err
 		return flags.OutputDir, absPackPath != "", nil
 	}
 	if absPackPath != "" {
-		return absPackPath + ".epack", true, nil
+		return packpath.SidecarDir(absPackPath), true, nil
 	}
 	baseDir, err := getPacklessRunDir()
 	if err != nil {

@@ -3,8 +3,10 @@
 package remotecmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/component/config"
@@ -141,6 +143,9 @@ func runPull(cmd *cobra.Command, args []string) error {
 	var currentSpinner *output.Spinner
 	var progressBar *output.ProgressBar
 
+	// Track duration
+	startTime := time.Now()
+
 	// Build options with step callbacks for multi-step progress
 	opts := pull.Options{
 		Remote:                remoteName,
@@ -231,23 +236,38 @@ func runPull(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	out.Success("Pulled from %s", remoteName)
-	out.Print("  Output:   %s\n", result.OutputPath)
-	out.Print("  Stream:   %s\n", result.Pack.Stream)
-	out.Print("  Size:     %s\n", output.FormatBytes(result.Pack.SizeBytes))
+	duration := time.Since(startTime)
+
+	out.Print("\n✓ Pulled from %s in %s\n", remoteName, formatPullDuration(duration))
+	out.Print("\nPack:\n")
+	out.Print("  • Stream:  %s\n", result.Pack.Stream)
+	out.Print("  • Size:    %s\n", output.FormatBytes(result.Pack.SizeBytes))
 	if result.Pack.Version != "" {
-		out.Print("  Version:  %s\n", result.Pack.Version)
+		out.Print("  • Version: %s\n", result.Pack.Version)
 	}
 	if result.Pack.ReleaseID != "" {
-		out.Print("  Release:  %s\n", result.Pack.ReleaseID)
+		out.Print("  • Release: %s\n", result.Pack.ReleaseID)
 	}
 	if result.Verified {
-		out.Print("  Verified: yes\n")
+		out.Print("  • Verified\n")
 	}
-	out.Print("\n")
-	out.Print("Use 'epack inspect %s' to view contents\n", result.OutputPath)
+	out.Print("\nOutput: %s\n", result.OutputPath)
+	out.Print("\nNext: epack inspect %s\n", result.OutputPath)
 
 	return nil
+}
+
+// formatPullDuration formats a duration into a human-readable string.
+func formatPullDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	mins := int(d.Minutes())
+	secs := d.Seconds() - float64(mins*60)
+	return fmt.Sprintf("%dm%.1fs", mins, secs)
 }
 
 // runPullDryRun shows what would be pulled without actually pulling.

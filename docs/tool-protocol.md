@@ -91,7 +91,7 @@ Fields:
 - `requires_pack`: Whether tool requires a pack to operate (default: true if omitted or capabilities fails)
 - `network`: Whether tool requires network access
 - `requires_tools`: (optional) Tools that must run first (e.g., `["index"]`)
-- `requires_outputs`: (optional) Output files that must exist relative to `<pack>.epack/tools/` (e.g., `["index/outputs/embeddings.json"]`)
+- `requires_outputs`: (optional) Output files that must exist relative to `<basename>.runs/tools/` (e.g., `["index/outputs/embeddings.json"]`)
 - `publisher`: (optional) Tool publisher
 - `repo`: (optional) Source repository URL
 
@@ -124,7 +124,7 @@ Note: `result.json` in the run directory is the source of truth; stdout JSON is 
 Tools write to:
 
 ```
-<pack>.epack/
+<basename>.runs/           # e.g., sample.epack -> sample.runs/
   tools/
     <tool>/
       <run-id>/

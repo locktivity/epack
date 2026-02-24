@@ -339,7 +339,7 @@ When a tool is invoked from PATH without lockfile verification, a warning is dis
 
 1. **Verification**: Binary digest verified against lockfile (TOCTOU-safe).
 2. **Pack Integrity**: Pack manifest and artifact digests verified.
-3. **Run Directory**: Unique run directory created at `<pack>.epack/tools/<name>/<run-id>/`.
+3. **Run Directory**: Unique run directory created at `<basename>.runs/tools/<name>/<run-id>/` (e.g., `sample.epack` → `sample.runs/`).
 4. **Execution**: Tool executed with protocol environment variables.
 5. **Result Capture**: `result.json` written to run directory.
 

@@ -15,6 +15,7 @@ import (
 	"github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/netpolicy"
+	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/progress"
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/remote"
@@ -306,7 +307,7 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 	)
 
 	writer := &ReceiptWriter{
-		BaseDir: filepath.Join(filepath.Dir(absPackPath)+".epack", "receipts", "push"),
+		BaseDir: filepath.Join(packpath.SidecarDir(absPackPath), "receipts", "push"),
 	}
 	receiptPath, err := writer.Write(receipt)
 	if err != nil {
@@ -520,7 +521,7 @@ func findRuns(packPath string, cfg *config.RemoteConfig, extraPaths []string) ([
 	paths = append(paths, extraPaths...)
 
 	// Base directory is pack sidecar
-	baseDir := packPath + ".epack"
+	baseDir := packpath.SidecarDir(packPath)
 
 	var runs []remote.RunInfo
 	seen := make(map[string]bool)

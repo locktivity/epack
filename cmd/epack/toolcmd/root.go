@@ -53,8 +53,8 @@ CLI flags take precedence over environment variables.
 OUTPUT LOCATION
 
 Tool outputs are written to:
-  <pack>.epack/tools/<name>/<run-id>/   (when --pack is specified)
-  ~/.local/state/epack/tools/<name>/    (without pack, on Linux)
+  <basename>.runs/tools/<name>/<run-id>/   (when --pack is specified, e.g., sample.epack -> sample.runs/)
+  ~/.local/state/epack/tools/<name>/       (without pack, on Linux)
 
 EXAMPLES
 

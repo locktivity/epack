@@ -35,7 +35,7 @@ func TestCheckDependencies_NoDeps(t *testing.T) {
 
 func TestCheckDependencies_MissingTool(t *testing.T) {
 	tmpDir := t.TempDir()
-	packSidecar := filepath.Join(tmpDir, "test.pack.epack")
+	packSidecar := filepath.Join(tmpDir, "test.pack.runs")
 	if err := os.MkdirAll(packSidecar, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestCheckDependencies_MissingTool(t *testing.T) {
 
 func TestCheckDependencies_ToolWithSuccessfulRun(t *testing.T) {
 	tmpDir := t.TempDir()
-	packSidecar := filepath.Join(tmpDir, "test.pack.epack")
+	packSidecar := filepath.Join(tmpDir, "test.pack.runs")
 	toolRunDir := filepath.Join(packSidecar, "tools", "index", "2026-01-01T00-00-00-000000Z-000000")
 	if err := os.MkdirAll(toolRunDir, 0755); err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestCheckDependencies_ToolWithSuccessfulRun(t *testing.T) {
 
 func TestCheckDependencies_ToolWithFailedRun(t *testing.T) {
 	tmpDir := t.TempDir()
-	packSidecar := filepath.Join(tmpDir, "test.pack.epack")
+	packSidecar := filepath.Join(tmpDir, "test.pack.runs")
 	toolRunDir := filepath.Join(packSidecar, "tools", "index", "2026-01-01T00-00-00-000000Z-000000")
 	if err := os.MkdirAll(toolRunDir, 0755); err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestCheckDependencies_ToolWithFailedRun(t *testing.T) {
 
 func TestCheckDependencies_MissingOutput(t *testing.T) {
 	tmpDir := t.TempDir()
-	packSidecar := filepath.Join(tmpDir, "test.pack.epack")
+	packSidecar := filepath.Join(tmpDir, "test.pack.runs")
 	if err := os.MkdirAll(packSidecar, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestCheckDependencies_MissingOutput(t *testing.T) {
 
 func TestCheckDependencies_OutputExists(t *testing.T) {
 	tmpDir := t.TempDir()
-	packSidecar := filepath.Join(tmpDir, "test.pack.epack")
+	packSidecar := filepath.Join(tmpDir, "test.pack.runs")
 	outputPath := filepath.Join(packSidecar, "tools", "index", "outputs", "embeddings.json")
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 		t.Fatal(err)
@@ -210,7 +210,7 @@ func TestFormatDependencyErrors_Empty(t *testing.T) {
 
 func TestLatestRunDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	packSidecar := filepath.Join(tmpDir, "test.pack.epack")
+	packSidecar := filepath.Join(tmpDir, "test.pack.runs")
 	toolDir := filepath.Join(packSidecar, "tools", "index")
 
 	// Create multiple run directories
@@ -234,7 +234,7 @@ func TestLatestRunDir(t *testing.T) {
 
 func TestLatestRunDir_NoRuns(t *testing.T) {
 	tmpDir := t.TempDir()
-	packSidecar := filepath.Join(tmpDir, "test.pack.epack")
+	packSidecar := filepath.Join(tmpDir, "test.pack.runs")
 	if err := os.MkdirAll(packSidecar, 0755); err != nil {
 		t.Fatal(err)
 	}
