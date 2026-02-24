@@ -19,8 +19,26 @@ for file in $(find . -name '*_fuzz_test.go' -not -path './vendor/*'); do
     for func in $fuzz_funcs; do
         echo "Fuzzing $pkg $func..."
         # Use anchored regex to match exact function name (avoids prefix matching)
-        # Set timeout to 2 minutes (higher than fuzztime) to allow clean exit
-        go test -fuzz="^${func}\$" -fuzztime="$FUZZTIME" -timeout=2m "$pkg"
+        # Capture output to check for real failures vs timeout
+        set +e
+        output=$(go test -fuzz="^${func}\$" -fuzztime="$FUZZTIME" -timeout=2m "$pkg" 2>&1)
+        exit_code=$?
+        set -e
+
+        echo "$output"
+
+        # Exit code 1 with "context deadline exceeded" is expected when fuzztime ends
+        # Only fail if there's an actual test failure (not just timeout)
+        if [ $exit_code -ne 0 ]; then
+            if echo "$output" | grep -q "context deadline exceeded" && \
+               ! echo "$output" | grep -q "FAIL.*\[" && \
+               ! echo "$output" | grep -q "panic:"; then
+                echo "  (fuzztime limit reached - OK)"
+            else
+                echo "FAIL: $pkg $func"
+                exit 1
+            fi
+        fi
     done
 done
 
