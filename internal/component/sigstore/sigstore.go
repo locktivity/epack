@@ -16,6 +16,29 @@ import (
 // Deprecated: Use digest.Parse() for format validation instead.
 const DigestPrefix = "sha256:"
 
+// Trusted OIDC issuers for component signature verification.
+const (
+	// GitHubActionsIssuer is the OIDC issuer for GitHub Actions workflows.
+	// This is used by the SLSA builder to sign attestations.
+	GitHubActionsIssuer = "https://token.actions.githubusercontent.com"
+)
+
+// Trusted SLSA builders for component signature verification.
+// Components must be built by one of these builders to be verified.
+// The builder signs attestations with its own workflow identity (SAN),
+// while the source repository is verified via certificate extensions.
+var (
+	// TrustedSLSABuilders contains regex patterns for trusted SLSA builder workflows.
+	// Each pattern matches the Subject Alternative Name (SAN) in the signing certificate.
+	//
+	// Currently trusted:
+	// - slsa-framework/slsa-github-generator: Official SLSA Level 3 builder for GitHub Actions
+	//   https://github.com/slsa-framework/slsa-github-generator
+	TrustedSLSABuilders = []string{
+		`^https://github\.com/slsa-framework/slsa-github-generator/\.github/workflows/[^@]+@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$`,
+	}
+)
+
 // ComputeDigest computes sha256 digest of a file.
 // Uses internal/digest package for consistent formatting.
 func ComputeDigest(path string) (string, error) {
@@ -103,10 +126,12 @@ func VerifyBundle(bundlePath, artifactPath string, expected *ExpectedIdentity) (
 	}
 
 	// Create verifier
+	// For SLSA attestations, use transparency log verification instead of SCTs
+	// The SLSA builder records attestations in Rekor (transparency log)
 	sev, err := verify.NewVerifier(
 		trustedRoot,
-		verify.WithSignedCertificateTimestamps(1),
-		verify.WithObserverTimestamps(1),
+		verify.WithTransparencyLog(1),        // Require inclusion in Rekor
+		verify.WithIntegratedTimestamps(1),   // Use log entry timestamps
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating verifier: %w", err)
@@ -123,16 +148,22 @@ func VerifyBundle(bundlePath, artifactPath string, expected *ExpectedIdentity) (
 	var policy verify.PolicyBuilder
 	if expected != nil {
 		// SECURE: Enforce identity binding - signature MUST come from expected source
-		// Create certificate identity with extension matching for SourceRepositoryURI
-		sanMatcher, err := verify.NewSANMatcher("", "") // Don't restrict SAN
+		// Use first trusted builder (currently only one supported)
+		if len(TrustedSLSABuilders) == 0 {
+			return nil, fmt.Errorf("no trusted SLSA builders configured")
+		}
+		sanMatcher, err := verify.NewSANMatcher("", TrustedSLSABuilders[0])
 		if err != nil {
 			return nil, fmt.Errorf("creating SAN matcher: %w", err)
 		}
-		issuerMatcher, err := verify.NewIssuerMatcher("", "") // Don't restrict issuer
+
+		// Match GitHub Actions OIDC issuer
+		issuerMatcher, err := verify.NewIssuerMatcher(GitHubActionsIssuer, "")
 		if err != nil {
 			return nil, fmt.Errorf("creating issuer matcher: %w", err)
 		}
-		// Use Extensions struct to match SourceRepositoryURI
+
+		// Also enforce certificate extensions for defense in depth
 		extensions := certificate.Extensions{
 			SourceRepositoryURI: expected.SourceRepositoryURI,
 			SourceRepositoryRef: expected.SourceRepositoryRef,
