@@ -27,8 +27,11 @@ epack sdk test ./{{.BinaryName}}
 ./{{.BinaryName}} --capabilities
 
 # Run conformance tests directly
-go install github.com/locktivity/epack/cmd/epack-conformance@latest
-epack-conformance {{.Kind}} ./{{.BinaryName}}
+go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest
+$(go env GOPATH)/bin/epack-conformance {{.Kind}} ./{{.BinaryName}}
+
+# Or add Go bin to your PATH for convenience:
+# export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
 ## Testing

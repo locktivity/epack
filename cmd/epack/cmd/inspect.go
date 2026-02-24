@@ -54,7 +54,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 
 	p, err := pack.Open(packPath)
 	if err != nil {
-		return exitError("failed to open pack: %v", err)
+		return packOpenError(packPath, err)
 	}
 	defer func() { _ = p.Close() }()
 

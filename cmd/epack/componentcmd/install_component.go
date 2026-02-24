@@ -5,6 +5,7 @@ package componentcmd
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -189,6 +190,17 @@ func runInstallComponent(cmd *cobra.Command, args []string, inst componentInstal
 		return &exitError{
 			Exit:    exitcode.General,
 			Message: fmt.Sprintf("invalid argument: %v", err),
+		}
+	}
+
+	// Check if we're in an epack project
+	if _, err := os.Stat(installComponentConfigPath); os.IsNotExist(err) {
+		return &exitError{
+			Exit:    exitcode.General,
+			Message: fmt.Sprintf(`No epack project found (missing %s)
+
+To create a new project:     epack new my-project
+To initialize this directory: epack init`, installComponentConfigPath),
 		}
 	}
 

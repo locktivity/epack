@@ -564,10 +564,20 @@ jobs:
       - name: Download epack-conformance
         run: |
           # Download from releases or build from source
-          go install github.com/evidencepack/epack/cmd/epack-conformance@latest
+          go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest
 
       - name: Run conformance tests
         run: epack-conformance collector ./epack-collector-myname --level standard
+```
+
+**Note**: In CI, `actions/setup-go` adds `~/go/bin` to PATH automatically. For local development, either add `$(go env GOPATH)/bin` to your PATH or use the full path:
+
+```bash
+# Option 1: Add to PATH (add to ~/.zshrc or ~/.bashrc for persistence)
+export PATH="$PATH:$(go env GOPATH)/bin"
+
+# Option 2: Use full path
+$(go env GOPATH)/bin/epack-conformance collector ./my-collector --level standard
 ```
 
 ### 8.9 Skipped Tests

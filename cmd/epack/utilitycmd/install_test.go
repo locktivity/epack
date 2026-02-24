@@ -79,18 +79,20 @@ func TestBuildSourceString(t *testing.T) {
 			component: catalog.CatalogComponent{
 				Name:    "viewer",
 				RepoURL: "https://github.com/locktivity/epack-tools-viewer",
+				Latest:  "v1.2.0",
 			},
 			constraint: "",
-			want:       "locktivity/epack-tools-viewer",
+			want:       "locktivity/epack-tools-viewer@v1.2.0",
 		},
 		{
 			name: "latest constraint",
 			component: catalog.CatalogComponent{
 				Name:    "viewer",
 				RepoURL: "https://github.com/locktivity/epack-tools-viewer",
+				Latest:  "v1.2.0",
 			},
 			constraint: "latest",
-			want:       "locktivity/epack-tools-viewer",
+			want:       "locktivity/epack-tools-viewer@v1.2.0",
 		},
 		{
 			name: "version constraint",
@@ -117,6 +119,16 @@ func TestBuildSourceString(t *testing.T) {
 				RepoURL: "",
 			},
 			constraint: "",
+			wantErr:    true,
+		},
+		{
+			name: "no releases",
+			component: catalog.CatalogComponent{
+				Name:    "viewer",
+				RepoURL: "https://github.com/locktivity/epack-tools-viewer",
+				Latest:  "",
+			},
+			constraint: "latest",
 			wantErr:    true,
 		},
 	}

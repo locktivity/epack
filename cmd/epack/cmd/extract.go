@@ -66,7 +66,7 @@ func runExtract(cmd *cobra.Command, args []string) error {
 	// Open the pack
 	p, err := pack.Open(packPath)
 	if err != nil {
-		return exitError("failed to open pack: %v", err)
+		return packOpenError(packPath, err)
 	}
 	defer func() { _ = p.Close() }()
 
@@ -84,7 +84,7 @@ func runExtract(cmd *cobra.Command, args []string) error {
 		Force:     extractForce,
 	})
 	if err != nil {
-		return exitError("%v", err)
+		return exitError("failed to extract artifacts: %v\n\nCheck that the output directory is writable: %s", err, extractOutput)
 	}
 
 	if len(result.Extracted) == 0 {

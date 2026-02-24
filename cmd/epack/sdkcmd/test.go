@@ -30,7 +30,7 @@ Examples:
   epack sdk test --verbose ./my-tool
 
 The conformance tool must be installed:
-  go install github.com/locktivity/epack/cmd/epack-conformance@latest`,
+  go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest`,
 		Args: cobra.ExactArgs(1),
 		RunE: runTest,
 	}

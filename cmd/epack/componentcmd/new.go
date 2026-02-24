@@ -75,7 +75,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	// Determine target directory
 	targetDir, err := filepath.Abs(projectName)
 	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
+		return fmt.Errorf("invalid project path %q: %w", projectName, err)
 	}
 
 	// Check if directory exists
@@ -97,10 +97,16 @@ func runNew(cmd *cobra.Command, args []string) error {
 	} else if os.IsNotExist(err) {
 		// Create the directory
 		if err := os.MkdirAll(targetDir, defaultDirPerm); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
+			if os.IsPermission(err) {
+				return fmt.Errorf("cannot create %s: permission denied", targetDir)
+			}
+			return fmt.Errorf("cannot create directory %s: %w", targetDir, err)
 		}
 	} else {
-		return fmt.Errorf("failed to check directory: %w", err)
+		if os.IsPermission(err) {
+			return fmt.Errorf("cannot access %s: permission denied", targetDir)
+		}
+		return fmt.Errorf("cannot access directory %s: %w", targetDir, err)
 	}
 
 	// Run scaffolding

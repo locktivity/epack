@@ -57,10 +57,16 @@ func LookupComponentInCatalog(catalog *Catalog, name string, constraint string) 
 		return nil, fmt.Errorf("component %q has invalid repo_url: %w", name, err)
 	}
 
-	// Build the source string
-	source := repoPath
+	// Build the source string with version
+	var source string
 	if constraint != "" && !strings.EqualFold(constraint, "latest") {
+		// User specified an explicit constraint
 		source = repoPath + "@" + constraint
+	} else if component.Latest != "" {
+		// Use latest version from catalog
+		source = repoPath + "@" + component.Latest
+	} else {
+		return nil, fmt.Errorf("component %q has no releases in the catalog", name)
 	}
 
 	return &LookupResult{

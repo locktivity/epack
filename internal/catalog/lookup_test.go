@@ -37,6 +37,12 @@ func TestLookupComponentInCatalog(t *testing.T) {
 				Publisher: "Test",
 				RepoURL:   "not-a-valid-url",
 			},
+			{
+				Name:      "no-releases",
+				Publisher: "Test",
+				RepoURL:   "https://github.com/test/no-releases",
+				Latest:    "",
+			},
 		},
 	}
 
@@ -57,7 +63,7 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			constraint:    "latest",
 			wantName:      "ai",
 			wantRepoPath:  "locktivity/epack-tool-ai",
-			wantSource:    "locktivity/epack-tool-ai",
+			wantSource:    "locktivity/epack-tool-ai@v2.0.1",
 			wantDeps:      []string{"index"},
 		},
 		{
@@ -66,7 +72,7 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			constraint:    "",
 			wantName:      "ai",
 			wantRepoPath:  "locktivity/epack-tool-ai",
-			wantSource:    "locktivity/epack-tool-ai",
+			wantSource:    "locktivity/epack-tool-ai@v2.0.1",
 			wantDeps:      []string{"index"},
 		},
 		{
@@ -93,7 +99,7 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			constraint:    "latest",
 			wantName:      "index",
 			wantRepoPath:  "locktivity/epack-index",
-			wantSource:    "locktivity/epack-index",
+			wantSource:    "locktivity/epack-index@v1.2.0",
 			wantDeps:      nil,
 		},
 		{
@@ -116,6 +122,13 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			constraint:     "latest",
 			wantErr:        true,
 			wantErrContain: "unsupported repo URL format",
+		},
+		{
+			name:           "component with no releases",
+			componentName:  "no-releases",
+			constraint:     "latest",
+			wantErr:        true,
+			wantErrContain: "no releases in the catalog",
 		},
 	}
 

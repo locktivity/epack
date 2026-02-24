@@ -97,7 +97,7 @@ func Test(ctx context.Context, opts TestOptions) (*TestResult, error) {
 	// Check if epack-conformance is installed
 	conformancePath, err := exec.LookPath("epack-conformance")
 	if err != nil {
-		return nil, fmt.Errorf("epack-conformance not found in PATH\n\nInstall with: go install github.com/locktivity/epack/cmd/epack-conformance@latest")
+		return nil, fmt.Errorf("epack-conformance not found in PATH\n\nInstall with: go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest")
 	}
 
 	// Build conformance command args

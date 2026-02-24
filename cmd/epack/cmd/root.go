@@ -201,3 +201,16 @@ func exitErrorWithCode(code int, format string, args ...interface{}) error {
 	return &errors.Error{Code: errors.InvalidInput, Exit: code, Message: msg}
 }
 
+// packOpenError returns a user-friendly error for pack open failures.
+// It distinguishes between common error types and provides actionable guidance.
+func packOpenError(packPath string, err error) error {
+	if os.IsNotExist(err) {
+		return exitError("pack file not found: %s\n\nCheck the file path and try again.", packPath)
+	}
+	if os.IsPermission(err) {
+		return exitError("permission denied: %s\n\nCheck file permissions: ls -la %s", packPath, packPath)
+	}
+	// For other errors (corrupted, invalid format, etc.)
+	return exitErrorWithCode(ExitMalformedPack, "failed to open pack %s: %v\n\nThe file may be corrupted or not a valid evidence pack.", packPath, err)
+}
+

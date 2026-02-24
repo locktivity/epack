@@ -74,7 +74,7 @@ func runInstallUtility(cmd *cobra.Command, args []string) error {
 	// Parse the argument (name or name@version)
 	parsed, err := resolve.ParseComponentArg(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid argument: %w", err)
+		return fmt.Errorf("invalid argument %q: %w (format: name or name@version)", args[0], err)
 	}
 
 	// Validate utility name
@@ -148,24 +148,29 @@ func runInstallUtility(cmd *cobra.Command, args []string) error {
 }
 
 // buildSourceString constructs the source string from a catalog component.
-// Format: owner/repo or owner/repo@constraint
+// Format: owner/repo@version
 func buildSourceString(component catalog.CatalogComponent, constraint string) (string, error) {
 	repoPath, err := extractRepoPath(component.RepoURL)
 	if err != nil {
 		return "", err
 	}
 
-	if constraint == "" || constraint == "latest" {
-		return repoPath, nil
+	if constraint != "" && constraint != "latest" {
+		// User specified an explicit constraint
+		return repoPath + "@" + constraint, nil
 	}
-	return repoPath + "@" + constraint, nil
+	if component.Latest != "" {
+		// Use latest version from catalog
+		return repoPath + "@" + component.Latest, nil
+	}
+	return "", fmt.Errorf("utility has no published releases yet; check the repository for release status")
 }
 
 // extractRepoPath extracts "owner/repo" from a GitHub URL.
 func extractRepoPath(repoURL string) (string, error) {
 	const githubPrefix = "https://github.com/"
 	if repoURL == "" {
-		return "", fmt.Errorf("repo_url is empty")
+		return "", fmt.Errorf("catalog entry is incomplete (missing repository URL)")
 	}
 	if len(repoURL) < len(githubPrefix) || repoURL[:len(githubPrefix)] != githubPrefix {
 		return "", fmt.Errorf("unsupported repo URL format: must start with %s", githubPrefix)
