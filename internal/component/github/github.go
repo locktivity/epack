@@ -467,15 +467,26 @@ func BinaryAssetPatterns(name, goos, goarch string) []string {
 		// windows is usually just "windows"
 	}
 
+	// Include epack component naming conventions (C-001)
+	nameVariants := []string{
+		name,
+		"epack-tool-" + name,
+		"epack-collector-" + name,
+		"epack-remote-" + name,
+		"epack-util-" + name,
+	}
+
 	var patterns []string
-	for _, os := range osVariants {
-		for _, arch := range archVariants {
-			// Common patterns: name-os-arch, name_os_arch, name-os_arch
-			patterns = append(patterns,
-				fmt.Sprintf("%s-%s-%s", name, os, arch),
-				fmt.Sprintf("%s_%s_%s", name, os, arch),
-				fmt.Sprintf("%s-%s_%s", name, os, arch),
-			)
+	for _, n := range nameVariants {
+		for _, os := range osVariants {
+			for _, arch := range archVariants {
+				// Common patterns: name-os-arch, name_os_arch, name-os_arch
+				patterns = append(patterns,
+					fmt.Sprintf("%s-%s-%s", n, os, arch),
+					fmt.Sprintf("%s_%s_%s", n, os, arch),
+					fmt.Sprintf("%s-%s_%s", n, os, arch),
+				)
+			}
 		}
 	}
 

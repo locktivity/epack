@@ -116,3 +116,9 @@ func generateSLSAGoreleaser(name string, kind componenttypes.ComponentKind, goos
 	data.GOARCH = goarch
 	return renderTemplate("slsa-goreleaser.yaml.tmpl", data)
 }
+
+// generateCIWorkflow generates .github/workflows/ci.yaml content.
+func generateCIWorkflow(name string, kind componenttypes.ComponentKind) (string, error) {
+	data := newTemplateData(name, kind, "")
+	return renderTemplate("ci.yaml.tmpl", data)
+}

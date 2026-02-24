@@ -96,6 +96,16 @@ func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 		return nil, fmt.Errorf("failed to create workflows directory: %w", err)
 	}
 
+	// Create ci.yaml workflow
+	ciContent, err := generateCIWorkflow(opts.Name, opts.Kind)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate ci.yaml: %w", err)
+	}
+	if err := safefile.WriteFile(workflowDir, "ci.yaml", []byte(ciContent)); err != nil {
+		return nil, fmt.Errorf("failed to create ci.yaml: %w", err)
+	}
+	result.FilesCreated = append(result.FilesCreated, ".github/workflows/ci.yaml")
+
 	// Create release.yaml workflow
 	releaseContent, err := generateReleaseWorkflow(opts.Name, opts.Kind)
 	if err != nil {

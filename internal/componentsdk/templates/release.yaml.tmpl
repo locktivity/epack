@@ -89,8 +89,12 @@ jobs:
           mkdir -p release
           # Find and move all binaries and attestations
           find artifacts -type f \( -name "{{.BinaryName}}-*" -o -name "*.intoto.jsonl" \) -exec mv {} release/ \;
-          # Create checksums
+          # Rename .intoto.jsonl to .sigstore.json (epack expects this extension)
           cd release
+          for f in *.intoto.jsonl; do
+            [ -f "$f" ] && mv "$f" "${f%.intoto.jsonl}.sigstore.json"
+          done
+          # Create checksums
           sha256sum * > checksums.txt
 
       - name: Create Release
