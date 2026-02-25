@@ -15,11 +15,11 @@ import (
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
-	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/platform"
 )
 
 // Collector config is passed only via EPACK_COLLECTOR_CONFIG.
@@ -341,7 +341,6 @@ func (r *Runner) executeCollector(ctx context.Context, name, execPath string, co
 	return result.Stdout, nil
 }
 
-
 // digestInfo contains information about a collector's digest and type.
 type digestInfo struct {
 	Digest            string
@@ -388,7 +387,6 @@ func (r *Runner) getExpectedDigest(name string, lf *lockfile.LockFile, platform 
 func (r *Runner) checkInsecureMarker(name, binaryPath string, opts RunOptions) error {
 	return sync.CheckInsecureMarkerAllowed(name, componenttypes.KindCollector, binaryPath, opts.Frozen, opts.InsecureAllowUnverified)
 }
-
 
 // resolveBinaryPath finds the binary for a collector.
 func (r *Runner) resolveBinaryPath(name string, cfg config.CollectorConfig, lf *lockfile.LockFile) (string, error) {

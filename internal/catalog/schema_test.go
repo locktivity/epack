@@ -265,7 +265,7 @@ func TestValidateRepoURL(t *testing.T) {
 		{"", ""},
 		{"https://github.com/org/repo", "https://github.com/org/repo"},
 		{"https://gitlab.com/org/repo", "https://gitlab.com/org/repo"},
-		{"http://github.com/org/repo", ""},  // http not allowed
+		{"http://github.com/org/repo", ""},   // http not allowed
 		{"https://github.com/org/repo/", ""}, // trailing slash
 		{"https://github.com", ""},           // no path
 		{"git://github.com/org/repo", ""},    // wrong scheme

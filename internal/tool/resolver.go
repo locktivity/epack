@@ -52,16 +52,16 @@ type PlatformInfo struct {
 
 // ToolVerification contains verification results for a tool.
 type ToolVerification struct {
-	Name            string `json:"name"`
-	Platform        string `json:"platform"`
-	Status          string `json:"status"` // "verified", "digest_mismatch", "not_installed", "not_locked"
-	Installed       bool   `json:"installed"`
-	InstallPath     string `json:"install_path,omitempty"`
-	ExpectedDigest  string `json:"expected_digest,omitempty"`
-	ActualDigest    string `json:"actual_digest,omitempty"`
-	DigestMatch     bool   `json:"digest_match,omitempty"`
-	Version         string `json:"version,omitempty"`
-	Error           string `json:"error,omitempty"`
+	Name           string `json:"name"`
+	Platform       string `json:"platform"`
+	Status         string `json:"status"` // "verified", "digest_mismatch", "not_installed", "not_locked"
+	Installed      bool   `json:"installed"`
+	InstallPath    string `json:"install_path,omitempty"`
+	ExpectedDigest string `json:"expected_digest,omitempty"`
+	ActualDigest   string `json:"actual_digest,omitempty"`
+	DigestMatch    bool   `json:"digest_match,omitempty"`
+	Version        string `json:"version,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 // GetToolInfo retrieves comprehensive information about a tool.

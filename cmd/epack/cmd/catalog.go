@@ -117,9 +117,9 @@ Examples:
 
 // UnifiedCatalogSearchResult is the JSON output structure for catalog search.
 type UnifiedCatalogSearchResult struct {
-	Query   string                          `json:"query"`
-	Kind    string                          `json:"kind,omitempty"`
-	Count   int                             `json:"count"`
+	Query   string                           `json:"query"`
+	Kind    string                           `json:"kind,omitempty"`
+	Count   int                              `json:"count"`
 	Results []UnifiedCatalogSearchResultItem `json:"results"`
 }
 

@@ -373,7 +373,6 @@ func (sk *staticKeypair) GetSigningAlgorithm() protocommon.PublicKeyDetails {
 	}
 }
 
-
 // defaultString returns v if non-empty, otherwise def.
 func defaultString(v, def string) string {
 	if v == "" {

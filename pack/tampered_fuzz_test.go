@@ -32,7 +32,9 @@ func FuzzTamperedZip(f *testing.F) {
 		{nil, nil},
 
 		// Digest attacks
-		{func(m *manifestForFuzz) { m.PackDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }, nil},
+		{func(m *manifestForFuzz) {
+			m.PackDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+		}, nil},
 		{func(m *manifestForFuzz) { m.PackDigest = "" }, nil},
 		{func(m *manifestForFuzz) { m.PackDigest = "sha256:short" }, nil},
 		{func(m *manifestForFuzz) {

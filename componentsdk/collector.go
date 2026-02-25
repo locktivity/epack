@@ -174,10 +174,10 @@ type collectorContext struct {
 	emitted bool
 }
 
-func (c *collectorContext) Context() context.Context   { return c.ctx }
-func (c *collectorContext) Name() string               { return c.name }
-func (c *collectorContext) Config() map[string]any     { return c.config }
-func (c *collectorContext) Secret(name string) string  { return os.Getenv(name) }
+func (c *collectorContext) Context() context.Context  { return c.ctx }
+func (c *collectorContext) Name() string              { return c.name }
+func (c *collectorContext) Config() map[string]any    { return c.config }
+func (c *collectorContext) Secret(name string) string { return os.Getenv(name) }
 
 func (c *collectorContext) Emit(data any) error {
 	if c.emitted {

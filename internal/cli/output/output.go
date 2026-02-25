@@ -200,8 +200,8 @@ type Spinner struct {
 	done      chan struct{}
 	stopped   bool
 	mu        sync.Mutex
-	closeOnce sync.Once          // prevents double-close panic on done channel
-	ctx       context.Context    // optional context for automatic cancellation
+	closeOnce sync.Once       // prevents double-close panic on done channel
+	ctx       context.Context // optional context for automatic cancellation
 }
 
 // spinnerFrames are the animation frames for the spinner.

@@ -270,4 +270,3 @@ func getToolsFromPATH(probe bool) []DiscoveredTool {
 
 	return tools
 }
-

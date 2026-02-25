@@ -14,9 +14,9 @@ import (
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/semver"
 	"github.com/locktivity/epack/internal/component/sync"
-	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/execsafe"
+	"github.com/locktivity/epack/internal/platform"
 )
 
 // securityTestDirInCwd creates a temporary directory under the current working directory

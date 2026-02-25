@@ -44,7 +44,6 @@ const (
 	DefaultMaxCompressionRatio = 100
 )
 
-
 // CheckCompressionRatio rejects archives containing entries whose
 // uncompressed-to-compressed ratio exceeds maxRatio.
 // If maxRatio <= 0, DefaultMaxCompressionRatio is used.

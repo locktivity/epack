@@ -103,8 +103,8 @@ func NewSafeReader(r io.ReaderAt, size int64, opts ...SafeReaderOption) (*SafeRe
 
 	// SECURITY: Validate all paths
 	// Also collect canonical paths for collision detection
-	seenPaths := make(map[string]string, len(zr.File))        // exact path -> first occurrence
-	seenCanonical := make(map[string]string, len(zr.File))    // canonical -> first occurrence
+	seenPaths := make(map[string]string, len(zr.File))     // exact path -> first occurrence
+	seenCanonical := make(map[string]string, len(zr.File)) // canonical -> first occurrence
 
 	for _, f := range zr.File {
 		// SECURITY: Validate directory entry attributes match path (R-321-323, R-347)

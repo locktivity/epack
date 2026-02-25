@@ -27,7 +27,6 @@ func NewManager(baseDir string) *Manager {
 	}
 }
 
-
 // Create creates a new job record.
 // Create is safe for concurrent use.
 func (m *Manager) Create(id, command string, args []string, pid int) (*Job, error) {

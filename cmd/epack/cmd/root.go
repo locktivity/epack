@@ -213,4 +213,3 @@ func packOpenError(packPath string, err error) error {
 	// For other errors (corrupted, invalid format, etc.)
 	return exitErrorWithCode(ExitMalformedPack, "failed to open pack %s: %v\n\nThe file may be corrupted or not a valid evidence pack.", packPath, err)
 }
-

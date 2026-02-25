@@ -15,9 +15,9 @@ func TestValidateSecretName(t *testing.T) {
 		{"valid custom secret", "MY_API_KEY", false},
 		{"valid AWS key", "AWS_ACCESS_KEY_ID", false},
 		{"valid openai", "OPENAI_API_KEY", false},
-		{"valid PATH", "PATH", false},           // Operators can pass PATH if they want
-		{"valid SHELL", "SHELL", false},         // Operators can pass SHELL if they want
-		{"valid HOME", "HOME", false},           // Operators can pass HOME if they want
+		{"valid PATH", "PATH", false},   // Operators can pass PATH if they want
+		{"valid SHELL", "SHELL", false}, // Operators can pass SHELL if they want
+		{"valid HOME", "HOME", false},   // Operators can pass HOME if they want
 		{"valid PYTHONPATH", "PYTHONPATH", false},
 		{"valid NODE_OPTIONS", "NODE_OPTIONS", false},
 
@@ -32,10 +32,10 @@ func TestValidateSecretName(t *testing.T) {
 		{"denied _ prefix", "_INTERNAL", true},
 
 		// Edge cases - similar prefixes that are NOT denied
-		{"allowed EPACKAGE", "EPACKAGE", false},     // Doesn't start with EPACK_
-		{"allowed LOADING", "LOADING", false},       // Doesn't start with LD_
-		{"allowed LDAP_HOST", "LDAP_HOST", false},   // Starts with LD but not LD_
-		{"allowed DYLAN", "DYLAN", false},           // Starts with DY but not DYLD_
+		{"allowed EPACKAGE", "EPACKAGE", false},   // Doesn't start with EPACK_
+		{"allowed LOADING", "LOADING", false},     // Doesn't start with LD_
+		{"allowed LDAP_HOST", "LDAP_HOST", false}, // Starts with LD but not LD_
+		{"allowed DYLAN", "DYLAN", false},         // Starts with DY but not DYLD_
 
 		// Empty name
 		{"empty name", "", true},
@@ -137,4 +137,3 @@ func TestFilterValidSecrets(t *testing.T) {
 		})
 	}
 }
-

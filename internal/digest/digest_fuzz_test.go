@@ -21,9 +21,9 @@ func FuzzParse(f *testing.F) {
 	f.Add("SHA256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
 
 	// Wrong length
-	f.Add("sha256:abcdef") // too short
+	f.Add("sha256:abcdef")                                                            // too short
 	f.Add("sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567890") // 65 chars
-	f.Add("sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef012345678")  // 63 chars
+	f.Add("sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef012345678")   // 63 chars
 
 	// Wrong algorithm prefix
 	f.Add("sha512:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")

@@ -55,4 +55,3 @@ func loadToolConfig(workDir, toolName string) (config.ToolConfig, *lockfile.Lock
 
 	return toolCfg, lf, nil
 }
-

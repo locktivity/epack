@@ -107,7 +107,7 @@ func TestFetchCatalog(t *testing.T) {
 			URL:               server.URL,
 			HTTPClient:        server.Client(),
 			InsecureAllowHTTP: true,
-			ETag:       `"abc123"`,
+			ETag:              `"abc123"`,
 		})
 		if err != nil {
 			t.Fatalf("Second FetchCatalog() error = %v", err)

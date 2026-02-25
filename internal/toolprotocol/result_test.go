@@ -238,11 +238,11 @@ func TestValidateDigest(t *testing.T) {
 	}{
 		{"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", false},
 		{"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", false},
-		{"", true},                    // empty
-		{"sha256:", true},             // no hash
+		{"", true},        // empty
+		{"sha256:", true}, // no hash
 		{"md5:d41d8cd98f00b204e9800998ecf8427e", true}, // wrong algorithm
-		{"sha256:UPPER", true},        // uppercase
-		{"sha256:short", true},        // too short
+		{"sha256:UPPER", true},                         // uppercase
+		{"sha256:short", true},                         // too short
 		{"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855extra", true}, // too long
 	}
 

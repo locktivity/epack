@@ -461,7 +461,7 @@ func TestUtilityDigest_NotInstalled(t *testing.T) {
 func TestUtilityDigest_NoPlatform(t *testing.T) {
 	lf := NewUtilitiesLock()
 	lf.Utilities["myutil"] = componenttypes.LockedUtility{
-		Version:   "v1.0.0",
+		Version: "v1.0.0",
 		Platforms: map[string]componenttypes.LockedPlatform{
 			// Platform that doesn't match current
 			"windows-amd64": {Digest: "sha256:xyz789"},

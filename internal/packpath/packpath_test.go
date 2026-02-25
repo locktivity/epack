@@ -135,10 +135,10 @@ func TestValidateArtifactPath(t *testing.T) {
 
 func TestValidateArtifactPathAndCollisionKey(t *testing.T) {
 	tests := []struct {
-		name        string
-		path        string
-		wantKey     string
-		wantErr     bool
+		name    string
+		path    string
+		wantKey string
+		wantErr bool
 	}{
 		{"lowercase", "artifacts/file.txt", "artifacts/file.txt", false},
 		{"uppercase", "artifacts/FILE.TXT", "artifacts/file.txt", false},

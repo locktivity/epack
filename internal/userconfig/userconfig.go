@@ -130,7 +130,7 @@ func EnsureBinDir() error {
 // UtilitiesLock is the lockfile format for user-installed utilities.
 // It mirrors the structure of the project lockfile but only contains utilities.
 type UtilitiesLock struct {
-	SchemaVersion int                               `yaml:"schema_version"`
+	SchemaVersion int                                     `yaml:"schema_version"`
 	Utilities     map[string]componenttypes.LockedUtility `yaml:"utilities,omitempty"`
 }
 

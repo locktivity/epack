@@ -209,11 +209,11 @@ type toolContext struct {
 	errors     []errorEntry
 }
 
-func (c *toolContext) RunID() string      { return c.runID }
-func (c *toolContext) RunDir() string     { return c.runDir }
-func (c *toolContext) Pack() *Pack        { return c.pack }
-func (c *toolContext) PackPath() string   { return c.packPath }
-func (c *toolContext) PackDigest() string { return c.packDigest }
+func (c *toolContext) RunID() string          { return c.runID }
+func (c *toolContext) RunDir() string         { return c.runDir }
+func (c *toolContext) Pack() *Pack            { return c.pack }
+func (c *toolContext) PackPath() string       { return c.packPath }
+func (c *toolContext) PackDigest() string     { return c.packDigest }
 func (c *toolContext) Config() map[string]any { return c.config }
 
 func (c *toolContext) WriteOutput(filename string, data any) error {

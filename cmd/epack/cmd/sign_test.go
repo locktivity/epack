@@ -253,8 +253,8 @@ func TestSignCmd_SecurityFlags(t *testing.T) {
 	flags := signCmd.Flags()
 
 	securityFlags := []string{
-		"no-tlog",                // Skip transparency log
-		"tsa",                    // Custom TSA
+		"no-tlog",                         // Skip transparency log
+		"tsa",                             // Custom TSA
 		"insecure-allow-custom-endpoints", // Explicit opt-in for custom endpoints
 	}
 

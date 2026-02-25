@@ -314,4 +314,3 @@ func TestDefaultTimeout(t *testing.T) {
 		t.Errorf("DefaultTimeout %v seems too long", remote.DefaultTimeout)
 	}
 }
-

@@ -35,10 +35,10 @@ func FuzzValidateBeforeParse(f *testing.F) {
 	f.Add([]byte("a: &a 1\nb: &b 2\nc: &c 3\nd: &d 4\ne: *a"))
 
 	// Edge cases
-	f.Add([]byte(""))                       // empty
-	f.Add([]byte("---"))                    // document marker only
-	f.Add([]byte("null"))                   // null document
-	f.Add([]byte("~"))                      // tilde null
+	f.Add([]byte(""))                      // empty
+	f.Add([]byte("---"))                   // document marker only
+	f.Add([]byte("null"))                  // null document
+	f.Add([]byte("~"))                     // tilde null
 	f.Add([]byte("---\n...\n---\nkey: v")) // multiple documents
 
 	// Unicode in keys/values

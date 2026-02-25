@@ -82,4 +82,3 @@ func TestExecImportGuard_RepoWide(t *testing.T) {
 			"  2. Use execsafe.VerifiedBinaryFD for TOCTOU-safe digest verification\n"+
 			"  3. Add to AllowedPackages after security review")
 }
-

@@ -84,9 +84,9 @@ type PackInfo struct {
 
 // ReleaseInfo contains release metadata for push operations.
 type ReleaseInfo struct {
-	Labels []string     `json:"labels,omitempty"`
-	Notes  string       `json:"notes,omitempty"`
-	Source *SourceInfo  `json:"source,omitempty"`
+	Labels []string    `json:"labels,omitempty"`
+	Notes  string      `json:"notes,omitempty"`
+	Source *SourceInfo `json:"source,omitempty"`
 }
 
 // SourceInfo contains source control metadata.
@@ -129,7 +129,7 @@ type DownloadInfo struct {
 // PackRef specifies how to reference a pack for pull operations.
 type PackRef struct {
 	// Exactly one of these should be set
-	Digest    string `json:"digest,omitempty"`    // Pull by exact digest (immutable)
+	Digest    string `json:"digest,omitempty"`     // Pull by exact digest (immutable)
 	ReleaseID string `json:"release_id,omitempty"` // Pull by release ID
 	Version   string `json:"version,omitempty"`    // Pull by semantic version
 	Latest    bool   `json:"latest,omitempty"`     // Pull latest release
@@ -162,7 +162,7 @@ type RunSyncItem struct {
 
 // ActionHint provides guidance on how to resolve an error.
 type ActionHint struct {
-	Type    string `json:"type"`    // run_command, open_url, etc.
+	Type    string `json:"type"` // run_command, open_url, etc.
 	Command string `json:"command,omitempty"`
 	URL     string `json:"url,omitempty"`
 }
@@ -186,14 +186,14 @@ type IdentityResult struct {
 
 // PrepareRequest is sent to initiate a push operation.
 type PrepareRequest struct {
-	Type            string        `json:"type"` // "push.prepare"
-	ProtocolVersion int           `json:"protocol_version"`
-	RequestID       string        `json:"request_id"`
-	Remote          string        `json:"remote"`
-	Target          TargetConfig  `json:"target"`
-	Pack            PackInfo      `json:"pack"`
-	Release         ReleaseInfo   `json:"release"`
-	Identity        *AuthHints `json:"identity,omitempty"`
+	Type            string       `json:"type"` // "push.prepare"
+	ProtocolVersion int          `json:"protocol_version"`
+	RequestID       string       `json:"request_id"`
+	Remote          string       `json:"remote"`
+	Target          TargetConfig `json:"target"`
+	Pack            PackInfo     `json:"pack"`
+	Release         ReleaseInfo  `json:"release"`
+	Identity        *AuthHints   `json:"identity,omitempty"`
 }
 
 // FinalizeRequest is sent after successful upload to create the release.
@@ -233,13 +233,13 @@ type AuthWhoamiRequest struct {
 
 // PullPrepareRequest is sent to initiate a pull operation.
 type PullPrepareRequest struct {
-	Type            string        `json:"type"` // "pull.prepare"
-	ProtocolVersion int           `json:"protocol_version"`
-	RequestID       string        `json:"request_id"`
-	Remote          string        `json:"remote"`
-	Target          TargetConfig  `json:"target"`
-	Ref             PackRef       `json:"ref"`
-	Identity        *AuthHints `json:"identity,omitempty"`
+	Type            string       `json:"type"` // "pull.prepare"
+	ProtocolVersion int          `json:"protocol_version"`
+	RequestID       string       `json:"request_id"`
+	Remote          string       `json:"remote"`
+	Target          TargetConfig `json:"target"`
+	Ref             PackRef      `json:"ref"`
+	Identity        *AuthHints   `json:"identity,omitempty"`
 }
 
 // PullFinalizeRequest is sent after successful download to confirm completion.
@@ -319,7 +319,7 @@ type AuthWhoamiResponse struct {
 
 // ErrorResponse is returned when an operation fails.
 type ErrorResponse struct {
-	OK        bool      `json:"ok"` // Always false
+	OK        bool      `json:"ok"`   // Always false
 	Type      string    `json:"type"` // "error"
 	RequestID string    `json:"request_id"`
 	Error     ErrorInfo `json:"error"`

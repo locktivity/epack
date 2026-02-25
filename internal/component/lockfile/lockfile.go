@@ -28,41 +28,41 @@ type LockFile struct {
 
 // LockedCollector pins either a source-based or external collector entry.
 type LockedCollector struct {
-	Kind         string                                      `yaml:"kind,omitempty"` // "external" or empty for source-based
-	Source       string                                      `yaml:"source,omitempty"`
-	Version      string                                      `yaml:"version,omitempty"`
-	Signer       *componenttypes.LockedSigner                `yaml:"signer,omitempty"`
-	ResolvedFrom *componenttypes.ResolvedFrom                `yaml:"resolved_from,omitempty"`
-	Verification *componenttypes.Verification                `yaml:"verification,omitempty"`
-	LockedAt     string                                      `yaml:"locked_at,omitempty"`
-	Platforms    map[string]componenttypes.LockedPlatform    `yaml:"platforms"`
+	Kind         string                                   `yaml:"kind,omitempty"` // "external" or empty for source-based
+	Source       string                                   `yaml:"source,omitempty"`
+	Version      string                                   `yaml:"version,omitempty"`
+	Signer       *componenttypes.LockedSigner             `yaml:"signer,omitempty"`
+	ResolvedFrom *componenttypes.ResolvedFrom             `yaml:"resolved_from,omitempty"`
+	Verification *componenttypes.Verification             `yaml:"verification,omitempty"`
+	LockedAt     string                                   `yaml:"locked_at,omitempty"`
+	Platforms    map[string]componenttypes.LockedPlatform `yaml:"platforms"`
 }
 
 // LockedTool pins either a source-based or external tool entry.
 // Tools share the same structure as collectors since they use
 // the same supply chain security model (Sigstore + digest verification).
 type LockedTool struct {
-	Kind         string                                      `yaml:"kind,omitempty"` // "external" or empty for source-based
-	Source       string                                      `yaml:"source,omitempty"`
-	Version      string                                      `yaml:"version,omitempty"`
-	Signer       *componenttypes.LockedSigner                `yaml:"signer,omitempty"`
-	ResolvedFrom *componenttypes.ResolvedFrom                `yaml:"resolved_from,omitempty"`
-	Verification *componenttypes.Verification                `yaml:"verification,omitempty"`
-	LockedAt     string                                      `yaml:"locked_at,omitempty"`
-	Platforms    map[string]componenttypes.LockedPlatform    `yaml:"platforms"`
+	Kind         string                                   `yaml:"kind,omitempty"` // "external" or empty for source-based
+	Source       string                                   `yaml:"source,omitempty"`
+	Version      string                                   `yaml:"version,omitempty"`
+	Signer       *componenttypes.LockedSigner             `yaml:"signer,omitempty"`
+	ResolvedFrom *componenttypes.ResolvedFrom             `yaml:"resolved_from,omitempty"`
+	Verification *componenttypes.Verification             `yaml:"verification,omitempty"`
+	LockedAt     string                                   `yaml:"locked_at,omitempty"`
+	Platforms    map[string]componenttypes.LockedPlatform `yaml:"platforms"`
 }
 
 // LockedRemote pins either a source-based or external remote adapter entry.
 // Remote adapters use the same supply chain security model as collectors and tools.
 type LockedRemote struct {
-	Kind         string                                      `yaml:"kind,omitempty"` // "external" or empty for source-based
-	Source       string                                      `yaml:"source,omitempty"`
-	Version      string                                      `yaml:"version,omitempty"`
-	Signer       *componenttypes.LockedSigner                `yaml:"signer,omitempty"`
-	ResolvedFrom *componenttypes.ResolvedFrom                `yaml:"resolved_from,omitempty"`
-	Verification *componenttypes.Verification                `yaml:"verification,omitempty"`
-	LockedAt     string                                      `yaml:"locked_at,omitempty"`
-	Platforms    map[string]componenttypes.LockedPlatform    `yaml:"platforms"`
+	Kind         string                                   `yaml:"kind,omitempty"` // "external" or empty for source-based
+	Source       string                                   `yaml:"source,omitempty"`
+	Version      string                                   `yaml:"version,omitempty"`
+	Signer       *componenttypes.LockedSigner             `yaml:"signer,omitempty"`
+	ResolvedFrom *componenttypes.ResolvedFrom             `yaml:"resolved_from,omitempty"`
+	Verification *componenttypes.Verification             `yaml:"verification,omitempty"`
+	LockedAt     string                                   `yaml:"locked_at,omitempty"`
+	Platforms    map[string]componenttypes.LockedPlatform `yaml:"platforms"`
 }
 
 // New returns an empty lockfile model.

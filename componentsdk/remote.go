@@ -79,11 +79,11 @@ type RemoteHandler interface {
 // Request types
 
 type PushPrepareRequest struct {
-	RequestID string         `json:"request_id"`
-	Target    RemoteTarget   `json:"target"`
-	Pack      PackInfo       `json:"pack"`
-	Release   ReleaseInfo    `json:"release"`
-	Identity  string         `json:"identity,omitempty"`
+	RequestID string       `json:"request_id"`
+	Target    RemoteTarget `json:"target"`
+	Pack      PackInfo     `json:"pack"`
+	Release   ReleaseInfo  `json:"release"`
+	Identity  string       `json:"identity,omitempty"`
 }
 
 type PushFinalizeRequest struct {

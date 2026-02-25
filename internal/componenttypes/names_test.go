@@ -26,7 +26,7 @@ func TestParseCollectorName(t *testing.T) {
 		{"slash", "foo/bar", true},
 		{"uppercase", "MyApp", true},
 		{"too long", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true}, // 65 chars
-		{"max length", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false},  // 64 chars
+		{"max length", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false}, // 64 chars
 	}
 
 	for _, tt := range tests {

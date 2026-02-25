@@ -12,12 +12,12 @@ import (
 
 func TestReadAllWithLimit(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		limit     int64
-		wantData  string
-		wantErr   bool
-		errType   string
+		name     string
+		input    string
+		limit    int64
+		wantData string
+		wantErr  bool
+		errType  string
 	}{
 		{
 			name:     "under limit",

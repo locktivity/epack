@@ -33,7 +33,6 @@ type StdOutput struct{}
 
 func (StdOutput) Stderr() interface{ Write([]byte) (int, error) } { return os.Stderr }
 
-
 // Tool executes an external tool binary with security verification.
 // This is a convenience wrapper that parses args internally.
 // For CLI usage where flags are parsed in the command layer, use ToolWithFlags instead.

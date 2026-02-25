@@ -235,10 +235,10 @@ func TestValidateEndpoints(t *testing.T) {
 		{
 			name: "all custom endpoints with unsafe flag",
 			opts: Options{
-				PrivateKey:                 testKey,
-				FulcioURL:                  "https://fulcio.example.com",
-				RekorURL:                   "https://rekor.example.com",
-				TSAURLs:                    []string{"https://tsa1.example.com", "https://tsa2.example.com"},
+				PrivateKey:                   testKey,
+				FulcioURL:                    "https://fulcio.example.com",
+				RekorURL:                     "https://rekor.example.com",
+				TSAURLs:                      []string{"https://tsa1.example.com", "https://tsa2.example.com"},
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: false,
@@ -246,8 +246,8 @@ func TestValidateEndpoints(t *testing.T) {
 		{
 			name: "mixed valid and invalid TSA URLs",
 			opts: Options{
-				PrivateKey:                 testKey,
-				TSAURLs:                    []string{"https://tsa1.example.com", "http://bad.com"},
+				PrivateKey:                   testKey,
+				TSAURLs:                      []string{"https://tsa1.example.com", "http://bad.com"},
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: true,
@@ -256,8 +256,8 @@ func TestValidateEndpoints(t *testing.T) {
 		{
 			name: "only FulcioURL custom",
 			opts: Options{
-				PrivateKey:                 testKey,
-				FulcioURL:                  "https://fulcio.example.com",
+				PrivateKey:                   testKey,
+				FulcioURL:                    "https://fulcio.example.com",
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: false,
@@ -265,8 +265,8 @@ func TestValidateEndpoints(t *testing.T) {
 		{
 			name: "only RekorURL custom",
 			opts: Options{
-				PrivateKey:                 testKey,
-				RekorURL:                   "https://rekor.example.com",
+				PrivateKey:                   testKey,
+				RekorURL:                     "https://rekor.example.com",
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: false,
@@ -274,8 +274,8 @@ func TestValidateEndpoints(t *testing.T) {
 		{
 			name: "only TSA custom",
 			opts: Options{
-				PrivateKey:                 testKey,
-				TSAURLs:                    []string{"https://tsa.example.com"},
+				PrivateKey:                   testKey,
+				TSAURLs:                      []string{"https://tsa.example.com"},
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: false,
@@ -283,8 +283,8 @@ func TestValidateEndpoints(t *testing.T) {
 		{
 			name: "empty TSA array is valid",
 			opts: Options{
-				PrivateKey:                 testKey,
-				TSAURLs:                    []string{},
+				PrivateKey:                   testKey,
+				TSAURLs:                      []string{},
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: false,
@@ -640,24 +640,24 @@ func TestNewSigner_HTTPEndpointsRejected(t *testing.T) {
 		{
 			name: "HTTP FulcioURL",
 			opts: Options{
-				PrivateKey:                 key,
-				FulcioURL:                  "http://insecure.fulcio.example.com",
+				PrivateKey:                   key,
+				FulcioURL:                    "http://insecure.fulcio.example.com",
 				InsecureAllowCustomEndpoints: true,
 			},
 		},
 		{
 			name: "HTTP RekorURL",
 			opts: Options{
-				PrivateKey:                 key,
-				RekorURL:                   "http://insecure.rekor.example.com",
+				PrivateKey:                   key,
+				RekorURL:                     "http://insecure.rekor.example.com",
 				InsecureAllowCustomEndpoints: true,
 			},
 		},
 		{
 			name: "HTTP TSA URL",
 			opts: Options{
-				PrivateKey:                 key,
-				TSAURLs:                    []string{"http://insecure.tsa.example.com"},
+				PrivateKey:                   key,
+				TSAURLs:                      []string{"http://insecure.tsa.example.com"},
 				InsecureAllowCustomEndpoints: true,
 			},
 		},

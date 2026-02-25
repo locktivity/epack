@@ -10,12 +10,12 @@ import (
 )
 
 var (
-	signOIDCToken            string
-	signKey                  string
-	signYes                  bool
-	signDryRun               bool
-	signNoTlog               bool
-	signTSAURLs              []string
+	signOIDCToken                    string
+	signKey                          string
+	signYes                          bool
+	signDryRun                       bool
+	signNoTlog                       bool
+	signTSAURLs                      []string
 	signInsecureAllowCustomEndpoints bool
 )
 
@@ -89,11 +89,11 @@ func runSign(cmd *cobra.Command, args []string) error {
 
 	// Build options from flags
 	opts := sign.SignPackOptions{
-		KeyPath:              signKey,
-		OIDCToken:            signOIDCToken,
-		Interactive:          signOIDCToken == "" && os.Getenv("EPACK_OIDC_TOKEN") == "",
-		SkipTlog:             signNoTlog,
-		TSAURLs:              signTSAURLs,
+		KeyPath:                      signKey,
+		OIDCToken:                    signOIDCToken,
+		Interactive:                  signOIDCToken == "" && os.Getenv("EPACK_OIDC_TOKEN") == "",
+		SkipTlog:                     signNoTlog,
+		TSAURLs:                      signTSAURLs,
 		InsecureAllowCustomEndpoints: signInsecureAllowCustomEndpoints,
 	}
 
@@ -177,4 +177,3 @@ func runSign(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-

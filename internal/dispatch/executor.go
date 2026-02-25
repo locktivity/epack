@@ -109,4 +109,3 @@ func buildProtocolEnv(toolName, runID, runDir, packPath, packDigest string, star
 func writeToolConfig(toolCfg config.ToolConfig) (string, func(), error) {
 	return execsafe.WriteSecureConfigFile(toolCfg.Config, "epack-tool-config-*")
 }
-

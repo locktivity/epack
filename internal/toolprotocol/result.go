@@ -28,7 +28,7 @@ type Result struct {
 	Wrapper       WrapperInfo   `json:"wrapper"`
 	Tool          ToolInfo      `json:"tool"`
 	RunID         string        `json:"run_id"`
-	PackPath      string        `json:"pack_path,omitempty"`  // Omit for packless runs
+	PackPath      string        `json:"pack_path,omitempty"`   // Omit for packless runs
 	PackDigest    string        `json:"pack_digest,omitempty"` // Omit for packless runs
 	StartedAt     string        `json:"started_at"`
 	CompletedAt   string        `json:"completed_at"`
@@ -87,16 +87,16 @@ type ErrorEntry struct {
 // SyncMetadata contains optional metadata for run synchronization.
 // This enables tracking which runs have been synced to external systems.
 type SyncMetadata struct {
-	LedgerID  *string `json:"ledger_id"`            // External ledger/database ID after sync
-	SyncedAt  *string `json:"synced_at"`            // Timestamp when run was synced
+	LedgerID  *string `json:"ledger_id"`           // External ledger/database ID after sync
+	SyncedAt  *string `json:"synced_at"`           // Timestamp when run was synced
 	Workspace string  `json:"workspace,omitempty"` // Workspace/org context
 }
 
 // IdentityInfo contains optional identity metadata for audit trails.
 // This enables tracking who initiated a run and how they authenticated.
 type IdentityInfo struct {
-	Workspace string `json:"workspace,omitempty"` // Workspace/org context
-	Actor     string `json:"actor,omitempty"`     // User, service account, or CI identity
+	Workspace string `json:"workspace,omitempty"`  // Workspace/org context
+	Actor     string `json:"actor,omitempty"`      // User, service account, or CI identity
 	ActorType string `json:"actor_type,omitempty"` // "user", "service", or "ci"
 	AuthMode  string `json:"auth_mode,omitempty"`  // "interactive", "api_key", or "ci_token"
 }
@@ -116,8 +116,8 @@ type RunContextInfo struct {
 // SigningIdentity contains cryptographic signing information from the lockfile.
 // This provides supply chain provenance for the tool binary.
 type SigningIdentity struct {
-	Issuer              string `json:"issuer,omitempty"`                 // OIDC issuer (e.g., "https://token.actions.githubusercontent.com")
-	Subject             string `json:"subject,omitempty"`                // Certificate subject (e.g., workflow path)
+	Issuer              string `json:"issuer,omitempty"`                // OIDC issuer (e.g., "https://token.actions.githubusercontent.com")
+	Subject             string `json:"subject,omitempty"`               // Certificate subject (e.g., workflow path)
 	SourceRepositoryURI string `json:"source_repository_uri,omitempty"` // Source repo from Sigstore cert
 	SourceRepositoryRef string `json:"source_repository_ref,omitempty"` // Source ref from Sigstore cert
 }

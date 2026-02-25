@@ -349,4 +349,3 @@ func TestLockFile_ExternalCollector(t *testing.T) {
 		t.Errorf("digest = %q, want %q", digest, "sha256:extdigest")
 	}
 }
-

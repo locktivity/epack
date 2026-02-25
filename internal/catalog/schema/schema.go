@@ -28,7 +28,6 @@ const SchemaVersion = 1
 // MetaVersion is the current meta file version.
 const MetaVersion = 1
 
-
 // Catalog is the component catalog schema v1.
 // This is INFORMATIONAL ONLY - never use for security decisions.
 type Catalog struct {
@@ -53,15 +52,15 @@ type CatalogSource struct {
 // CatalogComponent contains display information about a component.
 // NOTE: No trust assertions (verified_by, signatures, etc.) - catalog is for discovery only.
 type CatalogComponent struct {
-	Name             string                      `json:"name"`
+	Name             string                       `json:"name"`
 	Kind             componenttypes.ComponentKind `json:"kind,omitempty"` // "collector", "tool", "remote", "utility"
-	Publisher        string        `json:"publisher,omitempty"`
-	RepoURL          string        `json:"repo_url,omitempty"`          // Canonical: "https://github.com/org/repo" (no trailing slash)
-	Homepage         string        `json:"homepage,omitempty"`          // Optional docs/landing page
-	Description      string        `json:"description,omitempty"`
-	ProtocolVersions []int         `json:"protocol_versions,omitempty"` // e.g., [1]
-	Latest           string        `json:"latest,omitempty"`            // Latest version hint
-	Dependencies     []string      `json:"dependencies,omitempty"`      // Install-time dependencies (component names)
+	Publisher        string                       `json:"publisher,omitempty"`
+	RepoURL          string                       `json:"repo_url,omitempty"` // Canonical: "https://github.com/org/repo" (no trailing slash)
+	Homepage         string                       `json:"homepage,omitempty"` // Optional docs/landing page
+	Description      string                       `json:"description,omitempty"`
+	ProtocolVersions []int                        `json:"protocol_versions,omitempty"` // e.g., [1]
+	Latest           string                       `json:"latest,omitempty"`            // Latest version hint
+	Dependencies     []string                     `json:"dependencies,omitempty"`      // Install-time dependencies (component names)
 }
 
 // MetaStatus represents the outcome of the last catalog fetch attempt.

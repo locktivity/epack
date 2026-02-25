@@ -15,11 +15,11 @@ import (
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
-	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/platform"
 )
 
 // runnerTestDirInCwd creates a temporary directory under the current working directory

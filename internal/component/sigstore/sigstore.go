@@ -130,8 +130,8 @@ func VerifyBundle(bundlePath, artifactPath string, expected *ExpectedIdentity) (
 	// The SLSA builder records attestations in Rekor (transparency log)
 	sev, err := verify.NewVerifier(
 		trustedRoot,
-		verify.WithTransparencyLog(1),        // Require inclusion in Rekor
-		verify.WithIntegratedTimestamps(1),   // Use log entry timestamps
+		verify.WithTransparencyLog(1),      // Require inclusion in Rekor
+		verify.WithIntegratedTimestamps(1), // Use log entry timestamps
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating verifier: %w", err)

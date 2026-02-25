@@ -10,11 +10,11 @@ import (
 
 // WrapperFlags holds parsed wrapper-level flags.
 type WrapperFlags struct {
-	PackPath             string // --pack <path>
-	OutputDir            string // --output-dir <path>
-	JSONMode             bool   // --json
-	QuietMode            bool   // --quiet
-	HasSeparator         bool   // true if "--" was used to separate wrapper args from tool args
+	PackPath              string // --pack <path>
+	OutputDir             string // --output-dir <path>
+	JSONMode              bool   // --json
+	QuietMode             bool   // --quiet
+	HasSeparator          bool   // true if "--" was used to separate wrapper args from tool args
 	InsecureAllowUnpinned bool   // --insecure-allow-unpinned: allow unverified PATH execution
 }
 

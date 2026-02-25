@@ -71,8 +71,8 @@ func TestNewSignerValidation(t *testing.T) {
 		{
 			name: "HTTP FulcioURL rejected even with unsafe flag",
 			opts: sigstore.Options{
-				PrivateKey:                 testKey,
-				FulcioURL:                  "http://attacker.com",
+				PrivateKey:                   testKey,
+				FulcioURL:                    "http://attacker.com",
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: "must use HTTPS",
@@ -80,8 +80,8 @@ func TestNewSignerValidation(t *testing.T) {
 		{
 			name: "HTTP RekorURL rejected even with unsafe flag",
 			opts: sigstore.Options{
-				PrivateKey:                 testKey,
-				RekorURL:                   "http://attacker.com",
+				PrivateKey:                   testKey,
+				RekorURL:                     "http://attacker.com",
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: "must use HTTPS",
@@ -89,8 +89,8 @@ func TestNewSignerValidation(t *testing.T) {
 		{
 			name: "HTTP TSA URL rejected even with unsafe flag",
 			opts: sigstore.Options{
-				PrivateKey:                 testKey,
-				TSAURLs:                    []string{"http://attacker.com"},
+				PrivateKey:                   testKey,
+				TSAURLs:                      []string{"http://attacker.com"},
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: "must use HTTPS",
@@ -98,10 +98,10 @@ func TestNewSignerValidation(t *testing.T) {
 		{
 			name: "valid custom HTTPS endpoints with unsafe flag",
 			opts: sigstore.Options{
-				PrivateKey:                 testKey,
-				FulcioURL:                  "https://private-fulcio.corp.example.com",
-				RekorURL:                   "https://private-rekor.corp.example.com",
-				TSAURLs:                    []string{"https://tsa.corp.example.com"},
+				PrivateKey:                   testKey,
+				FulcioURL:                    "https://private-fulcio.corp.example.com",
+				RekorURL:                     "https://private-rekor.corp.example.com",
+				TSAURLs:                      []string{"https://tsa.corp.example.com"},
 				InsecureAllowCustomEndpoints: true,
 			},
 			wantErr: "",

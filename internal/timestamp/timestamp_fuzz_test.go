@@ -42,14 +42,14 @@ func FuzzParse(f *testing.F) {
 	f.Add("2024-01-15T10:30:00.123456789Z")
 
 	// Wrong length
-	f.Add("2024-01-15T10:30:00ZZ")       // too long
-	f.Add("2024-01-15T10:30:0Z")         // too short
-	f.Add("24-01-15T10:30:00Z")          // 2-digit year
-	f.Add("2024-1-15T10:30:00Z")         // 1-digit month
-	f.Add("2024-01-5T10:30:00Z")         // 1-digit day
-	f.Add("2024-01-15T1:30:00Z")         // 1-digit hour
-	f.Add("2024-01-15T10:3:00Z")         // 1-digit minute
-	f.Add("2024-01-15T10:30:0Z")         // 1-digit second
+	f.Add("2024-01-15T10:30:00ZZ") // too long
+	f.Add("2024-01-15T10:30:0Z")   // too short
+	f.Add("24-01-15T10:30:00Z")    // 2-digit year
+	f.Add("2024-1-15T10:30:00Z")   // 1-digit month
+	f.Add("2024-01-5T10:30:00Z")   // 1-digit day
+	f.Add("2024-01-15T1:30:00Z")   // 1-digit hour
+	f.Add("2024-01-15T10:3:00Z")   // 1-digit minute
+	f.Add("2024-01-15T10:30:0Z")   // 1-digit second
 
 	// Completely wrong formats
 	f.Add("")
@@ -121,12 +121,12 @@ func FuzzValidate(f *testing.F) {
 // FuzzFromTime tests conversion from time.Time.
 func FuzzFromTime(f *testing.F) {
 	// Unix timestamps covering various edge cases
-	f.Add(int64(0))                    // epoch
-	f.Add(int64(1705315800))           // 2024-01-15T10:30:00Z
-	f.Add(int64(-1))                   // before epoch
-	f.Add(int64(253402300799))         // 9999-12-31T23:59:59Z
-	f.Add(int64(1000000000))           // 2001-09-09
-	f.Add(int64(1609459200))           // 2021-01-01T00:00:00Z
+	f.Add(int64(0))            // epoch
+	f.Add(int64(1705315800))   // 2024-01-15T10:30:00Z
+	f.Add(int64(-1))           // before epoch
+	f.Add(int64(253402300799)) // 9999-12-31T23:59:59Z
+	f.Add(int64(1000000000))   // 2001-09-09
+	f.Add(int64(1609459200))   // 2021-01-01T00:00:00Z
 
 	f.Fuzz(func(t *testing.T, unixSec int64) {
 		// Skip extreme values that would cause issues
