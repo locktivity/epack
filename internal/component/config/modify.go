@@ -97,7 +97,7 @@ func addComponent(configPath, section, name string, cfg any) error {
 		return fmt.Errorf("invalid config file: expected mapping at top level")
 	}
 
-	// Find or create the section (tools or collectors)
+	// Find or create the section (tools, collectors, or remotes)
 	sectionNode := findMappingKey(docContent, section)
 	if sectionNode == nil {
 		// Create the section
@@ -108,6 +108,13 @@ func addComponent(configPath, section, name string, cfg any) error {
 			&safeyaml.Node{Kind: safeyaml.ScalarNode, Value: section},
 			sectionNode,
 		)
+	} else if sectionNode.Kind != safeyaml.MappingNode {
+		// Section exists but is null/scalar (e.g., "collectors:" with only comments)
+		// Convert to an empty mapping so we can add entries
+		sectionNode.Kind = safeyaml.MappingNode
+		sectionNode.Tag = ""
+		sectionNode.Value = ""
+		sectionNode.Content = nil
 	}
 
 	// Check if component already exists

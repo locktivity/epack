@@ -223,3 +223,134 @@ func TestHasCollector(t *testing.T) {
 		}
 	})
 }
+
+func TestAddCollector_NullSection(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "null_section.yaml")
+
+	content := `stream: test
+collectors:
+  # This is a comment - section value is null
+  # deps:
+  #   source: owner/deps@v1
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := AddCollector(configPath, "github", CollectorConfig{Source: "owner/github@v1"})
+	if err != nil {
+		t.Fatalf("AddCollector() error = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := string(data)
+	if !strings.Contains(result, "github:") {
+		t.Error("github collector not added")
+	}
+	if !strings.Contains(result, "owner/github@v1") {
+		t.Error("source not added")
+	}
+	if strings.Contains(result, "!!null") {
+		t.Error("output contains !!null tag")
+	}
+}
+
+func TestAddRemote(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Run("add remote to empty config", func(t *testing.T) {
+		configPath := filepath.Join(tmpDir, "add_remote.yaml")
+		if err := os.WriteFile(configPath, []byte("stream: test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		err := AddRemote(configPath, "locktivity", RemoteConfig{Source: "owner/remote@v1"})
+		if err != nil {
+			t.Fatalf("AddRemote() error = %v", err)
+		}
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result := string(data)
+		if !strings.Contains(result, "remotes:") {
+			t.Error("remotes section not created")
+		}
+		if !strings.Contains(result, "locktivity:") {
+			t.Error("locktivity remote not added")
+		}
+	})
+
+	t.Run("add remote to null section", func(t *testing.T) {
+		configPath := filepath.Join(tmpDir, "null_remote.yaml")
+		content := `stream: test
+remotes:
+  # commented out
+`
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		err := AddRemote(configPath, "locktivity", RemoteConfig{Source: "owner/remote@v1"})
+		if err != nil {
+			t.Fatalf("AddRemote() error = %v", err)
+		}
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result := string(data)
+		if !strings.Contains(result, "locktivity:") {
+			t.Error("locktivity remote not added")
+		}
+	})
+}
+
+func TestHasRemote(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Run("remote exists", func(t *testing.T) {
+		configPath := filepath.Join(tmpDir, "has_remote.yaml")
+		content := `remotes:
+  locktivity:
+    source: owner/remote@v1
+`
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		exists, err := HasRemote(configPath, "locktivity")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Error("expected remote to exist")
+		}
+	})
+
+	t.Run("remote does not exist", func(t *testing.T) {
+		configPath := filepath.Join(tmpDir, "no_remote.yaml")
+		content := `stream: test
+`
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		exists, err := HasRemote(configPath, "locktivity")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Error("expected remote to not exist")
+		}
+	})
+}

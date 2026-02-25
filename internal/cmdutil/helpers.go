@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-
 // GetOutput returns an output writer configured from the command's flags.
 func GetOutput(cmd *cobra.Command) *output.Writer {
 	quiet, _ := cmd.Flags().GetBool("quiet")
@@ -132,18 +131,19 @@ func FilterConfigCollectors(cfg *config.JobConfig, names []string) (*config.JobC
 }
 
 // FilterConfigComponents returns a copy of cfg with only the specified components.
-// Components can be either collectors or tools - the function figures out which.
+// Components can be collectors, tools, or remotes - the function figures out which.
 // Returns an error if any component is not found.
 func FilterConfigComponents(cfg *config.JobConfig, names []string) (*config.JobConfig, error) {
 	// First validate all names exist
 	for _, name := range names {
 		_, isCollector := cfg.Collectors[name]
 		_, isTool := cfg.Tools[name]
-		if !isCollector && !isTool {
+		_, isRemote := cfg.Remotes[name]
+		if !isCollector && !isTool && !isRemote {
 			return nil, &epackerrors.Error{
 				Code:    epackerrors.InvalidInput,
 				Exit:    exitcode.General,
-				Message: fmt.Sprintf("component %q not found in config (not a collector or tool)", name),
+				Message: fmt.Sprintf("component %q not found in config (not a collector, tool, or remote)", name),
 			}
 		}
 	}
@@ -152,6 +152,7 @@ func FilterConfigComponents(cfg *config.JobConfig, names []string) (*config.JobC
 	result := *cfg
 	result.Collectors = make(map[string]config.CollectorConfig)
 	result.Tools = make(map[string]config.ToolConfig)
+	result.Remotes = make(map[string]config.RemoteConfig)
 
 	for _, name := range names {
 		if c, ok := cfg.Collectors[name]; ok {
@@ -159,6 +160,9 @@ func FilterConfigComponents(cfg *config.JobConfig, names []string) (*config.JobC
 		}
 		if t, ok := cfg.Tools[name]; ok {
 			result.Tools[name] = t
+		}
+		if r, ok := cfg.Remotes[name]; ok {
+			result.Remotes[name] = r
 		}
 	}
 

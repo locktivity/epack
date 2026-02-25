@@ -37,10 +37,14 @@ FUZZTIME ?= 10s
 fuzz:
 	./scripts/fuzz.sh $(FUZZTIME)
 
-# Lint code (requires golangci-lint: https://golangci-lint.run/welcome/install/)
-# Install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
-GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null || echo "$(shell go env GOPATH)/bin/golangci-lint")
-lint:
+# Lint code (downloads golangci-lint binary to match CI)
+GOLANGCI_LINT_VERSION := v2.9.0
+GOLANGCI_LINT := ./bin/golangci-lint
+
+$(GOLANGCI_LINT):
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b ./bin $(GOLANGCI_LINT_VERSION)
+
+lint: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) run ./...
 	$(GOLANGCI_LINT) run --build-tags components ./...
 
