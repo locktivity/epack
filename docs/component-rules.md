@@ -112,9 +112,10 @@ Collectors gather evidence from external systems and output structured JSON.
 | ID | Level | Requirement |
 |----|-------|-------------|
 | COL-020 | MUST | Parse config file as JSON when `EPACK_COLLECTOR_CONFIG` is set |
-| COL-021 | MUST | Handle missing config file gracefully (use defaults) |
+| COL-021 | MUST | Not crash or hang when config file is missing |
 | COL-022 | SHOULD | Validate config schema and report clear errors for invalid config |
 | COL-023 | MUST NOT | Read config from hardcoded paths or user home directory |
+| COL-024 | SHOULD | Exit with config error (exit 2) if required configuration is missing |
 
 ### 2.5 Execution
 
