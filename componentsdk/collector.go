@@ -84,13 +84,25 @@ func NewNetworkError(format string, args ...any) error {
 }
 
 // RunCollector executes the collector handler with full protocol compliance.
-// It handles environment parsing, signal handling, timeout, protocol envelope
-// output, and proper exit codes. This function does not return.
+// It handles --capabilities, --version, environment parsing, signal handling,
+// timeout, protocol envelope output, and proper exit codes.
+// This function does not return.
 func RunCollector(spec CollectorSpec, handler CollectorHandler) {
 	os.Exit(runCollectorInternal(spec, handler))
 }
 
 func runCollectorInternal(spec CollectorSpec, handler CollectorHandler) int {
+	// Check for --capabilities and --version flags
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "--capabilities":
+			return outputCollectorCapabilities(spec)
+		case "--version":
+			fmt.Println(spec.Version)
+			return 0
+		}
+	}
+
 	// Set default timeout
 	timeout := spec.Timeout
 	if timeout == 0 {
@@ -187,4 +199,23 @@ func (c *collectorContext) Emit(data any) error {
 	}
 
 	return nil
+}
+
+// outputCollectorCapabilities outputs the collector's capabilities as JSON.
+func outputCollectorCapabilities(spec CollectorSpec) int {
+	caps := map[string]any{
+		"kind":             "collector",
+		"name":             spec.Name,
+		"version":          spec.Version,
+		"protocol_version": componenttypes.CollectorProtocolVersion,
+		"description":      spec.Description,
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(caps); err != nil {
+		fmt.Fprintf(os.Stderr, "error encoding capabilities: %v\n", err)
+		return 1
+	}
+	return 0
 }

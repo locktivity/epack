@@ -69,10 +69,11 @@ func runUtilityInternal(spec UtilitySpec, handler UtilityHandler) int {
 
 func outputUtilityCapabilities(spec UtilitySpec) int {
 	caps := map[string]any{
-		"name":        spec.Name,
-		"kind":        "utility",
-		"version":     spec.Version,
-		"description": spec.Description,
+		"name":             spec.Name,
+		"kind":             "utility",
+		"version":          spec.Version,
+		"protocol_version": 1,
+		"description":      spec.Description,
 	}
 
 	enc := json.NewEncoder(os.Stdout)

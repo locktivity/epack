@@ -59,7 +59,27 @@ These requirements apply to all component types.
 
 Collectors gather evidence from external systems and output structured JSON.
 
-### 2.1 Output Format
+### 2.1 Capabilities
+
+| ID | Level | Requirement |
+|----|-------|-------------|
+| COL-060 | MUST | Implement `--capabilities` flag returning JSON metadata |
+| COL-061 | MUST | Implement `--version` flag returning version string |
+| COL-062 | MUST | Capabilities include `kind`, `name`, `version`, `protocol_version` fields |
+| COL-063 | SHOULD | Capabilities include `description` field |
+
+**Capabilities format:**
+```json
+{
+  "kind": "collector",
+  "name": "example",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "description": "Example collector"
+}
+```
+
+### 2.2 Output Format
 
 | ID | Level | Requirement |
 |----|-------|-------------|
@@ -78,7 +98,7 @@ Collectors gather evidence from external systems and output structured JSON.
 }
 ```
 
-### 2.2 Environment Variables
+### 2.3 Environment Variables
 
 | ID | Level | Requirement |
 |----|-------|-------------|
@@ -87,7 +107,7 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-012 | SHOULD | Read config file path from `EPACK_COLLECTOR_CONFIG` if present |
 | COL-013 | MAY | Read identity token from `EPACK_IDENTITY` if present |
 
-### 2.3 Configuration
+### 2.4 Configuration
 
 | ID | Level | Requirement |
 |----|-------|-------------|
@@ -96,7 +116,7 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-022 | SHOULD | Validate config schema and report clear errors for invalid config |
 | COL-023 | MUST NOT | Read config from hardcoded paths or user home directory |
 
-### 2.4 Execution
+### 2.5 Execution
 
 | ID | Level | Requirement |
 |----|-------|-------------|
@@ -106,7 +126,7 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-033 | MUST NOT | Modify filesystem outside temp directories |
 | COL-034 | MUST | Exit with code 0 only when collection succeeds |
 
-### 2.5 Exit Codes
+### 2.6 Exit Codes
 
 | ID | Level | Requirement |
 |----|-------|-------------|
@@ -116,7 +136,7 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-043 | SHOULD | Exit 3 on authentication error |
 | COL-044 | SHOULD | Exit 4 on network/API error |
 
-### 2.6 Network
+### 2.7 Network
 
 | ID | Level | Requirement |
 |----|-------|-------------|
@@ -136,14 +156,15 @@ Tools operate on signed evidence packs and produce derived outputs.
 | ID | Level | Requirement |
 |----|-------|-------------|
 | TOOL-001 | MUST | Implement `--capabilities` flag returning JSON metadata |
-| TOOL-002 | MUST | Set `EPACK_MODE=capabilities` environment when invoked with `--capabilities` |
-| TOOL-003 | MUST | Capabilities include `name`, `version`, `protocol_version` fields |
+| TOOL-002 | MUST | Implement `--version` flag returning version string |
+| TOOL-003 | MUST | Capabilities include `kind`, `name`, `version`, `protocol_version` fields |
 | TOOL-004 | SHOULD | Capabilities include `description` field |
 | TOOL-005 | MAY | Capabilities include `network`, `requires_tools`, `requires_outputs` fields |
 
 **Capabilities format:**
 ```json
 {
+  "kind": "tool",
   "name": "example",
   "version": "1.0.0",
   "protocol_version": 1,
@@ -249,15 +270,17 @@ Remote adapters handle communication with registry backends.
 | ID | Level | Requirement |
 |----|-------|-------------|
 | REM-001 | MUST | Implement `--capabilities` flag returning JSON metadata |
-| REM-002 | MUST | Capabilities include `name`, `kind: "remote_adapter"`, `deploy_protocol_version` |
-| REM-003 | MUST | Capabilities include `features` object |
-| REM-004 | SHOULD | Capabilities include `auth` and `limits` objects |
+| REM-002 | MUST | Implement `--version` flag returning version string |
+| REM-003 | MUST | Capabilities include `name`, `kind: "remote_adapter"`, `version`, `deploy_protocol_version` |
+| REM-004 | MUST | Capabilities include `features` object |
+| REM-005 | SHOULD | Capabilities include `auth` and `limits` objects |
 
 **Capabilities format:**
 ```json
 {
   "name": "example",
   "kind": "remote_adapter",
+  "version": "1.0.0",
   "deploy_protocol_version": 1,
   "features": {
     "prepare_finalize": true,
@@ -368,7 +391,7 @@ Utilities are standalone helper applications that complement the epack ecosystem
 |----|-------|-------------|
 | UTIL-001 | MUST | Implement `--version` flag returning version string |
 | UTIL-002 | MUST | Implement `--capabilities` flag returning JSON metadata |
-| UTIL-003 | MUST | Capabilities include `name`, `kind: "utility"`, `version` fields |
+| UTIL-003 | MUST | Capabilities include `name`, `kind: "utility"`, `version`, `protocol_version` fields |
 | UTIL-004 | SHOULD | Capabilities include `description` field |
 
 **Capabilities format:**
@@ -377,6 +400,7 @@ Utilities are standalone helper applications that complement the epack ecosystem
   "name": "viewer",
   "kind": "utility",
   "version": "1.0.0",
+  "protocol_version": 1,
   "description": "Interactive pack viewer"
 }
 ```
@@ -601,31 +625,31 @@ To achieve full conformance, components must pass all testable requirements. Ski
 
 | Level | Count | IDs |
 |-------|-------|-----|
-| MUST | 17 | C-001 to C-003, C-010, C-020, C-021, C-030 to C-034, COL-001, COL-005, COL-006, COL-010, COL-011, COL-020, COL-021, COL-030, COL-034, COL-052 |
-| SHOULD | 13 | C-013, C-014, C-022, C-032, COL-002, COL-022, COL-032, COL-041 to COL-044, COL-050, COL-051, COL-053 |
-| MAY | 4 | COL-003, COL-004, COL-013 |
+| MUST | 22 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, COL-001, COL-005, COL-006, COL-010, COL-011, COL-020, COL-021, COL-023, COL-030, COL-031, COL-033, COL-034, COL-040, COL-052, COL-060, COL-061, COL-062 |
+| SHOULD | 14 | C-013, C-014, C-022, C-032, COL-002, COL-012, COL-022, COL-032, COL-041, COL-042, COL-043, COL-044, COL-050, COL-051, COL-053, COL-063 |
+| MAY | 3 | COL-003, COL-004, COL-013 |
 
 ### Tools
 
 | Level | Count | IDs |
 |-------|-------|-----|
-| MUST | 26 | C-001 to C-003, C-010, C-020, C-021, C-030 to C-034, TOOL-001 to TOOL-003, TOOL-010 to TOOL-013, TOOL-020 to TOOL-023, TOOL-030 to TOOL-032, TOOL-036, TOOL-040 to TOOL-042, TOOL-050 to TOOL-052, TOOL-060, TOOL-061 |
-| SHOULD | 12 | C-013, C-014, C-022, C-032, TOOL-004, TOOL-014, TOOL-015, TOOL-033, TOOL-034, TOOL-043, TOOL-070, TOOL-071 |
+| MUST | 27 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, TOOL-001, TOOL-002, TOOL-003, TOOL-010, TOOL-011, TOOL-012, TOOL-013, TOOL-020, TOOL-021, TOOL-022, TOOL-023, TOOL-030, TOOL-031, TOOL-032, TOOL-036, TOOL-040, TOOL-041, TOOL-042, TOOL-050, TOOL-051, TOOL-052, TOOL-060, TOOL-061 |
+| SHOULD | 10 | C-013, C-014, C-022, C-032, TOOL-004, TOOL-014, TOOL-015, TOOL-033, TOOL-034, TOOL-043, TOOL-070, TOOL-071 |
 | MAY | 4 | TOOL-005, TOOL-016, TOOL-035, TOOL-062 |
 
 ### Remote Adapters
 
 | Level | Count | IDs |
 |-------|-------|-----|
-| MUST | 30 | C-001 to C-003, C-010, C-020, C-021, C-030 to C-034, REM-001 to REM-003, REM-010 to REM-015, REM-020, REM-021, REM-030, REM-031, REM-034, REM-040, REM-041, REM-050 to REM-052, REM-054, REM-060, REM-061, REM-070 to REM-073, REM-080, REM-082, REM-084 |
-| SHOULD | 12 | C-013, C-014, C-022, C-032, REM-004, REM-022, REM-023, REM-032, REM-033, REM-042, REM-053, REM-074, REM-081, REM-083 |
-| MAY | 5 | REM-012, REM-024 to REM-026, REM-075 |
+| MUST | 31 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, REM-001, REM-002, REM-003, REM-004, REM-010, REM-011, REM-013, REM-014, REM-015, REM-020, REM-021, REM-030, REM-031, REM-034, REM-040, REM-041, REM-050, REM-051, REM-052, REM-054, REM-060, REM-061, REM-070, REM-071, REM-072, REM-073, REM-080, REM-082, REM-084 |
+| SHOULD | 11 | C-013, C-014, C-022, C-032, REM-005, REM-022, REM-023, REM-032, REM-033, REM-042, REM-053, REM-074, REM-081, REM-083 |
+| MAY | 5 | REM-012, REM-024, REM-025, REM-026, REM-075 |
 
 ### Utilities
 
 | Level | Count | IDs |
 |-------|-------|-----|
-| MUST | 5 | C-001 to C-003, C-020, C-021, UTIL-001 to UTIL-003 |
+| MUST | 8 | C-001, C-002, C-003, C-020, C-021, UTIL-001, UTIL-002, UTIL-003 |
 | SHOULD | 4 | C-013, C-022, UTIL-004, UTIL-010, UTIL-011 |
 | MAY | 0 | - |
 

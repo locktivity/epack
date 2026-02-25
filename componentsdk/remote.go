@@ -221,17 +221,21 @@ func ErrNetworkError(message string) RemoteError {
 }
 
 // RunRemote executes the remote adapter with full protocol compliance.
-// It handles --capabilities, JSON stdin/stdout protocol, and error formatting.
+// It handles --capabilities, --version, JSON stdin/stdout protocol, and error formatting.
 // This function does not return.
 func RunRemote(spec RemoteSpec, handler RemoteHandler) {
 	os.Exit(runRemoteInternal(spec, handler))
 }
 
 func runRemoteInternal(spec RemoteSpec, handler RemoteHandler) int {
-	// Check for --capabilities flag
+	// Check for --capabilities and --version flags
 	for _, arg := range os.Args[1:] {
-		if arg == "--capabilities" {
+		switch arg {
+		case "--capabilities":
 			return outputRemoteCapabilities(spec)
+		case "--version":
+			fmt.Println(spec.Version)
+			return 0
 		}
 	}
 

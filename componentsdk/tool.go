@@ -82,7 +82,7 @@ type ToolContext interface {
 }
 
 // RunTool executes the tool handler with full protocol compliance.
-// It handles --capabilities, environment parsing, result.json generation,
+// It handles --capabilities, --version, environment parsing, result.json generation,
 // and proper exit codes. This function does not return.
 func RunTool(spec ToolSpec, handler ToolHandler) {
 	os.Exit(runToolInternal(spec, handler))
@@ -91,10 +91,14 @@ func RunTool(spec ToolSpec, handler ToolHandler) {
 func runToolInternal(spec ToolSpec, handler ToolHandler) int {
 	startTime := time.Now().UTC()
 
-	// Check for --capabilities flag
+	// Check for --capabilities and --version flags
 	for _, arg := range os.Args[1:] {
-		if arg == "--capabilities" {
+		switch arg {
+		case "--capabilities":
 			return outputToolCapabilities(spec)
+		case "--version":
+			fmt.Println(spec.Version)
+			return 0
 		}
 	}
 
