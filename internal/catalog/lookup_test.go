@@ -44,22 +44,33 @@ func TestLookupComponentInCatalog(t *testing.T) {
 				Latest:    "",
 			},
 		},
+		Collectors: []schema.CatalogComponent{
+			{
+				Name:        "github",
+				Publisher:   "Locktivity",
+				RepoURL:     "https://github.com/locktivity/epack-collector-github",
+				Description: "Collects GitHub organization security posture metrics",
+				Latest:      "v0.1.0",
+			},
+		},
 	}
 
 	tests := []struct {
-		name            string
-		componentName   string
-		constraint      string
-		wantName        string
-		wantRepoPath    string
-		wantSource      string
-		wantDeps        []string
-		wantErr         bool
-		wantErrContain  string
+		name           string
+		componentName  string
+		kind           ComponentKind
+		constraint     string
+		wantName       string
+		wantRepoPath   string
+		wantSource     string
+		wantDeps       []string
+		wantErr        bool
+		wantErrContain string
 	}{
 		{
-			name:          "found with latest constraint",
+			name:          "tool found with latest constraint",
 			componentName: "ai",
+			kind:          KindTool,
 			constraint:    "latest",
 			wantName:      "ai",
 			wantRepoPath:  "locktivity/epack-tool-ai",
@@ -67,8 +78,9 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			wantDeps:      []string{"index"},
 		},
 		{
-			name:          "found with empty constraint",
+			name:          "tool found with empty constraint",
 			componentName: "ai",
+			kind:          KindTool,
 			constraint:    "",
 			wantName:      "ai",
 			wantRepoPath:  "locktivity/epack-tool-ai",
@@ -76,8 +88,9 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			wantDeps:      []string{"index"},
 		},
 		{
-			name:          "found with caret constraint",
+			name:          "tool found with caret constraint",
 			componentName: "ai",
+			kind:          KindTool,
 			constraint:    "^2.0",
 			wantName:      "ai",
 			wantRepoPath:  "locktivity/epack-tool-ai",
@@ -85,8 +98,9 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			wantDeps:      []string{"index"},
 		},
 		{
-			name:          "found with exact version",
+			name:          "tool found with exact version",
 			componentName: "ai",
+			kind:          KindTool,
 			constraint:    "v2.0.1",
 			wantName:      "ai",
 			wantRepoPath:  "locktivity/epack-tool-ai",
@@ -94,8 +108,9 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			wantDeps:      []string{"index"},
 		},
 		{
-			name:          "component with no dependencies",
+			name:          "tool with no dependencies",
 			componentName: "index",
+			kind:          KindTool,
 			constraint:    "latest",
 			wantName:      "index",
 			wantRepoPath:  "locktivity/epack-index",
@@ -103,8 +118,53 @@ func TestLookupComponentInCatalog(t *testing.T) {
 			wantDeps:      nil,
 		},
 		{
-			name:           "not found",
+			name:          "collector found",
+			componentName: "github",
+			kind:          KindCollector,
+			constraint:    "latest",
+			wantName:      "github",
+			wantRepoPath:  "locktivity/epack-collector-github",
+			wantSource:    "locktivity/epack-collector-github@v0.1.0",
+			wantDeps:      nil,
+		},
+		{
+			name:          "collector with version constraint",
+			componentName: "github",
+			kind:          KindCollector,
+			constraint:    "^0.1",
+			wantName:      "github",
+			wantRepoPath:  "locktivity/epack-collector-github",
+			wantSource:    "locktivity/epack-collector-github@^0.1",
+			wantDeps:      nil,
+		},
+		{
+			name:           "tool not found",
 			componentName:  "nonexistent",
+			kind:           KindTool,
+			constraint:     "latest",
+			wantErr:        true,
+			wantErrContain: "not found",
+		},
+		{
+			name:           "collector not found",
+			componentName:  "nonexistent",
+			kind:           KindCollector,
+			constraint:     "latest",
+			wantErr:        true,
+			wantErrContain: "not found",
+		},
+		{
+			name:           "tool name searched as collector fails",
+			componentName:  "ai",
+			kind:           KindCollector,
+			constraint:     "latest",
+			wantErr:        true,
+			wantErrContain: "not found",
+		},
+		{
+			name:           "collector name searched as tool fails",
+			componentName:  "github",
+			kind:           KindTool,
 			constraint:     "latest",
 			wantErr:        true,
 			wantErrContain: "not found",
@@ -112,6 +172,7 @@ func TestLookupComponentInCatalog(t *testing.T) {
 		{
 			name:           "empty repo url",
 			componentName:  "no-repo",
+			kind:           KindTool,
 			constraint:     "latest",
 			wantErr:        true,
 			wantErrContain: "repo_url is empty",
@@ -119,6 +180,7 @@ func TestLookupComponentInCatalog(t *testing.T) {
 		{
 			name:           "invalid repo url",
 			componentName:  "bad-repo",
+			kind:           KindTool,
 			constraint:     "latest",
 			wantErr:        true,
 			wantErrContain: "unsupported repo URL format",
@@ -126,6 +188,7 @@ func TestLookupComponentInCatalog(t *testing.T) {
 		{
 			name:           "component with no releases",
 			componentName:  "no-releases",
+			kind:           KindTool,
 			constraint:     "latest",
 			wantErr:        true,
 			wantErrContain: "no releases in the catalog",
@@ -134,7 +197,7 @@ func TestLookupComponentInCatalog(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := LookupComponentInCatalog(catalog, tt.componentName, tt.constraint)
+			got, err := LookupComponentInCatalog(catalog, tt.componentName, tt.kind, tt.constraint)
 
 			if tt.wantErr {
 				if err == nil {
@@ -241,7 +304,7 @@ func TestErrNotFound(t *testing.T) {
 		Tools:         []schema.CatalogComponent{},
 	}
 
-	_, err := LookupComponentInCatalog(catalog, "nonexistent", "latest")
+	_, err := LookupComponentInCatalog(catalog, "nonexistent", KindTool, "latest")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

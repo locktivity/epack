@@ -25,28 +25,29 @@ type LookupResult struct {
 	Dependencies []string // Install-time dependencies (component names)
 }
 
-// LookupComponent finds a component by exact name in the cached catalog and constructs
+// LookupComponent finds a component by exact name and kind in the cached catalog and constructs
 // the source string for use in epack.yaml.
 //
+// The kind parameter specifies which component type to search (tool, collector, etc.).
 // The constraint parameter specifies the version constraint to use in the source string.
 // If constraint is "latest" or empty, only the repo path is used (no @constraint suffix).
 //
 // Returns ErrNoCatalog if no cached catalog exists.
 // Returns ErrNotFound if the component is not in the catalog.
-func LookupComponent(name string, constraint string) (*LookupResult, error) {
+func LookupComponent(name string, kind ComponentKind, constraint string) (*LookupResult, error) {
 	catalog, _, err := ReadCatalog()
 	if err != nil {
 		return nil, err
 	}
 
-	return LookupComponentInCatalog(catalog, name, constraint)
+	return LookupComponentInCatalog(catalog, name, kind, constraint)
 }
 
 // LookupComponentInCatalog finds a component in the provided catalog.
 // This is useful when you already have the catalog loaded and want to avoid re-reading it.
-func LookupComponentInCatalog(catalog *Catalog, name string, constraint string) (*LookupResult, error) {
-	// FindByName is inherited from schema.Catalog via type alias
-	component, found := catalog.FindByName(name)
+func LookupComponentInCatalog(catalog *Catalog, name string, kind ComponentKind, constraint string) (*LookupResult, error) {
+	// FindByNameAndKind searches the appropriate component array based on kind
+	component, found := catalog.FindByNameAndKind(name, kind)
 	if !found {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, name)
 	}

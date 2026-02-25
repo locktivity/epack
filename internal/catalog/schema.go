@@ -46,9 +46,10 @@ func ParseMeta(data []byte) (*CatalogMeta, error) {
 	return schema.ParseMeta(data)
 }
 
-// FindComponentByName finds a component by exact name match.
+// FindComponentByName finds a tool by exact name match.
+// Note: This only searches the Tools array. For kind-aware lookup, use
+// LookupComponentInCatalog or Catalog.FindByNameAndKind directly.
 // Returns the component and true if found, or zero value and false if not found.
-// This is a convenience wrapper that avoids callers needing to import the schema package.
 func FindComponentByName(c *Catalog, name string) (CatalogComponent, bool) {
 	return c.FindByName(name)
 }

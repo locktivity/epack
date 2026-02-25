@@ -21,13 +21,26 @@ var (
 )
 
 func newInstallCommand() *cobra.Command {
+	return newInstallCommandWithUse("install <name>[@version]", "epack utility install")
+}
+
+// NewInstallUtilityCommand returns a utility install command for use under "epack install utility".
+// This provides a consistent interface: epack install {tool,collector,remote,utility} <name>
+func NewInstallUtilityCommand() *cobra.Command {
+	return newInstallCommandWithUse("utility <name>[@version]", "epack install utility")
+}
+
+func newInstallCommandWithUse(use, examplePrefix string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "install <name>[@version]",
+		Use:   use,
 		Short: "Install a utility from the catalog",
-		Long: `Install a utility by looking it up in the catalog.
+		Long: fmt.Sprintf(`Install a utility by looking it up in the catalog.
 
 The utility is looked up in the catalog to discover its source repository,
 then downloaded, verified with Sigstore, and installed to ~/.epack/bin/.
+
+Utilities are user-global tools (not project dependencies). They are stored
+in ~/.epack/ and can be run with "epack utility <name>".
 
 Version constraints:
   viewer          Use latest version
@@ -39,19 +52,19 @@ Version constraints:
 EXAMPLES
 
   # Install from catalog
-  epack utility install viewer
+  %s viewer
 
   # Install specific version
-  epack utility install viewer@v1.0.0
+  %s viewer@v1.0.0
 
   # Preview what would be installed
-  epack utility install viewer --dry-run
+  %s viewer --dry-run
 
   # Refresh catalog before lookup
-  epack utility install viewer --refresh
+  %s viewer --refresh
 
   # Install without Sigstore verification (NOT RECOMMENDED)
-  epack utility install viewer --insecure-skip-verify`,
+  %s viewer --insecure-skip-verify`, examplePrefix, examplePrefix, examplePrefix, examplePrefix, examplePrefix),
 		Args: cobra.ExactArgs(1),
 		RunE: runInstallUtility,
 	}

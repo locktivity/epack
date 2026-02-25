@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/locktivity/epack/cmd/epack/utilitycmd"
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
@@ -32,16 +33,18 @@ func newInstallCommand() *cobra.Command {
 		Short: "Lock and sync dependencies",
 		Long: `Resolve versions and download dependencies in one command.
 
-This command locks collectors and tools if needed, then syncs (downloads)
+This command locks collectors, tools, and remotes if needed, then syncs (downloads)
 any missing binaries for the current platform. It's equivalent to running
 'epack lock' followed by 'epack sync'.
 
 Subcommands:
   epack install tool <name>        Install a tool from the catalog
   epack install collector <name>   Install a collector from the catalog
+  epack install remote <name>      Install a remote from the catalog
+  epack install utility <name>     Install a user-global utility
 
 In non-frozen mode (default):
-  1. Locks collectors/tools if lockfile is missing or stale
+  1. Locks collectors/tools/remotes if lockfile is missing or stale
   2. Downloads any missing binaries for the current platform
   3. Verifies Sigstore signatures and digests
 
@@ -56,6 +59,8 @@ Examples:
   epack install                    # Lock if needed, download binaries
   epack install tool ask           # Install a tool from catalog
   epack install collector github   # Install a collector from catalog
+  epack install remote locktivity  # Install a remote from catalog
+  epack install utility viewer     # Install a user-global utility
   epack install --all-platforms    # Lock all platforms, download current
   epack install --frozen           # CI: verify only, no changes
 
@@ -78,6 +83,8 @@ See also:
 	// Add subcommands for installing from catalog
 	cmd.AddCommand(newInstallToolCommand())
 	cmd.AddCommand(newInstallCollectorCommand())
+	cmd.AddCommand(newInstallRemoteCommand())
+	cmd.AddCommand(utilitycmd.NewInstallUtilityCommand())
 
 	return cmd
 }

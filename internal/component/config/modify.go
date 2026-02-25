@@ -29,6 +29,13 @@ func AddCollector(configPath, name string, cfg CollectorConfig) error {
 	return addComponent(configPath, "collectors", name, cfg)
 }
 
+// AddRemote adds a remote entry to the config file.
+// Returns ErrAlreadyExists if the remote is already defined.
+// Preserves existing file formatting and comments.
+func AddRemote(configPath, name string, cfg RemoteConfig) error {
+	return addComponent(configPath, "remotes", name, cfg)
+}
+
 // HasTool checks if a tool exists in the config file.
 func HasTool(configPath, name string) (bool, error) {
 	return hasComponent(configPath, "tools", name)
@@ -37,6 +44,11 @@ func HasTool(configPath, name string) (bool, error) {
 // HasCollector checks if a collector exists in the config file.
 func HasCollector(configPath, name string) (bool, error) {
 	return hasComponent(configPath, "collectors", name)
+}
+
+// HasRemote checks if a remote exists in the config file.
+func HasRemote(configPath, name string) (bool, error) {
+	return hasComponent(configPath, "remotes", name)
 }
 
 // hasComponent checks if a component exists under the given section.

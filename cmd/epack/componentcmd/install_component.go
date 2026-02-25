@@ -19,12 +19,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// componentKind distinguishes tools from collectors for the unified installer.
+// componentKind distinguishes tools, collectors, and remotes for the unified installer.
 type componentKind int
 
 const (
 	kindTool componentKind = iota
 	kindCollector
+	kindRemote
 )
 
 func (k componentKind) String() string {
@@ -33,6 +34,8 @@ func (k componentKind) String() string {
 		return "tool"
 	case kindCollector:
 		return "collector"
+	case kindRemote:
+		return "remote"
 	default:
 		return "component"
 	}
@@ -46,6 +49,21 @@ func (k componentKind) Plural() string {
 func (k componentKind) Title() string {
 	s := k.String()
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// CatalogKind returns the catalog.ComponentKind for lookup operations.
+func (k componentKind) CatalogKind() catalog.ComponentKind {
+	switch k {
+	case kindTool:
+		return catalog.KindTool
+	case kindCollector:
+		return catalog.KindCollector
+	case kindRemote:
+		return catalog.KindRemote
+	default:
+		// This should never happen - if we add new kinds, update this switch
+		panic("unknown component kind")
+	}
 }
 
 // componentToInstall holds info about a component to install.
@@ -145,6 +163,40 @@ Examples:
 	return cmd
 }
 
+func newInstallRemoteCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "remote <name>[@version]",
+		Short: "Install a remote from the catalog",
+		Long: `Install a remote by looking it up in the catalog and adding it to epack.yaml.
+
+The remote is looked up in the catalog to discover its source repository,
+then added to your epack.yaml configuration, locked, and synced.
+
+Version constraints:
+  locktivity          Use latest version
+  locktivity@latest   Same as above
+  locktivity@^1.0     Caret: >=1.0.0 <2.0.0
+  locktivity@~1.2     Tilde: >=1.2.0 <1.3.0
+  locktivity@v1.2.3   Exact version
+
+Examples:
+  epack install remote locktivity           Install latest version
+  epack install remote locktivity@^1.0      Install with caret constraint
+  epack install remote locktivity --dry-run Preview what would be installed`,
+		Args: cobra.ExactArgs(1),
+		RunE: runInstallRemote,
+	}
+
+	cmd.Flags().StringVarP(&installComponentConfigPath, "config", "c", "epack.yaml",
+		"path to epack config file")
+	cmd.Flags().BoolVar(&installComponentRefresh, "refresh", false,
+		"refresh catalog before lookup")
+	cmd.Flags().BoolVar(&installComponentDryRun, "dry-run", false,
+		"show what would be installed without making changes")
+
+	return cmd
+}
+
 func runInstallTool(cmd *cobra.Command, args []string) error {
 	return runInstallComponent(cmd, args, toolInstaller)
 }
@@ -153,7 +205,11 @@ func runInstallCollector(cmd *cobra.Command, args []string) error {
 	return runInstallComponent(cmd, args, collectorInstaller)
 }
 
-// Installer instances for tools and collectors
+func runInstallRemote(cmd *cobra.Command, args []string) error {
+	return runInstallComponent(cmd, args, remoteInstaller)
+}
+
+// Installer instances for tools, collectors, and remotes
 var (
 	toolInstaller = componentInstaller{
 		kind: kindTool,
@@ -173,6 +229,17 @@ var (
 		},
 		addComponent: func(configPath, name, source string) error {
 			return config.AddCollector(configPath, name, config.CollectorConfig{Source: source})
+		},
+		supportsDeps: false,
+	}
+
+	remoteInstaller = componentInstaller{
+		kind: kindRemote,
+		hasComponent: func(configPath, name string) (bool, error) {
+			return config.HasRemote(configPath, name)
+		},
+		addComponent: func(configPath, name, source string) error {
+			return config.AddRemote(configPath, name, config.RemoteConfig{Source: source})
 		},
 		supportsDeps: false,
 	}
@@ -294,7 +361,7 @@ To initialize this directory: epack init`, installComponentConfigPath),
 		}
 
 		// Look up in catalog
-		result, err := catalog.LookupComponentInCatalog(cat, dep.Name, constraint)
+		result, err := catalog.LookupComponentInCatalog(cat, dep.Name, kind.CatalogKind(), constraint)
 		if err != nil {
 			return &exitError{
 				Exit:    exitcode.General,
