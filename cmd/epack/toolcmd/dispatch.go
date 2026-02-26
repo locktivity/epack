@@ -8,6 +8,8 @@ import (
 	"github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/dispatch"
 	"github.com/locktivity/epack/internal/project"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -37,14 +39,17 @@ func dispatchTool(cmd *cobra.Command, toolName string, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateDispatchFlags(cliFlags.InsecureAllowUnpinned); err != nil {
+		return err
+	}
 
 	// Convert CLI flags to dispatch flags
 	flags := dispatch.WrapperFlags{
-		PackPath:             cliFlags.PackPath,
-		OutputDir:            cliFlags.OutputDir,
-		JSONMode:             cliFlags.JSONMode,
-		QuietMode:            cliFlags.QuietMode,
-		HasSeparator:         cliFlags.HasSeparator,
+		PackPath:              cliFlags.PackPath,
+		OutputDir:             cliFlags.OutputDir,
+		JSONMode:              cliFlags.JSONMode,
+		QuietMode:             cliFlags.QuietMode,
+		HasSeparator:          cliFlags.HasSeparator,
 		InsecureAllowUnpinned: cliFlags.InsecureAllowUnpinned,
 	}
 
@@ -58,6 +63,30 @@ func dispatchTool(cmd *cobra.Command, toolName string, args []string) error {
 		return &exitError{code: exitErr.ExitCode()}
 	}
 	return err
+}
+
+func validateDispatchFlags(insecureAllowUnpinned bool) error {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        false,
+		AllowUnpinned: insecureAllowUnpinned,
+	}).Enforce(); err != nil {
+		return err
+	}
+	if err := securitypolicy.EnforceStrictProduction("dispatch_cli", insecureAllowUnpinned); err != nil {
+		return err
+	}
+	if insecureAllowUnpinned {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "dispatch",
+			Name:        "dispatch",
+			Description: "dispatch command running with insecure unpinned override",
+			Attrs: map[string]string{
+				"insecure_allow_unpinned": "true",
+			},
+		})
+	}
+	return nil
 }
 
 // findProjectRoot searches upward from dir for epack.yaml.

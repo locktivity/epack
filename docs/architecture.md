@@ -104,18 +104,21 @@ This document describes the security-relevant architecture of `epack`.
   - `epack sdk run [--watch] <path>` - Run component locally for development
   - `epack sdk test <path>` - Run conformance tests
   - `epack sdk mock <type>` - Generate sample test inputs
-- `cmd/epack/cmd/catalog.go`: Unified catalog commands, compiled only with `-tags components`:
+- `cmd/epack/cmd/`: Unified catalog commands, compiled only with `-tags components`:
   - `epack catalog search` - Search all component kinds (collectors, tools, remotes, utilities)
   - `epack catalog refresh` - Fetch latest catalog from registry
-- `cmd/epack/cmd/`: Remote commands (push/pull):
+- `cmd/epack/remotecmd/`: Remote commands, compiled only with `-tags components`:
   - `epack push` - Push pack to remote registry
   - `epack pull` - Pull pack from remote registry
+  - `epack remote list` - List configured remotes
+  - `epack remote whoami` - Show remote authentication status
 
 ## Build Variants
 
 - `epack-core` (default build, no `components` tag):
   - Includes core pack/sign/verify features.
-  - Includes stub commands for `collector` and `tool` that refuse execution.
+  - Includes stub commands for `collector`, `lock`, `sync`, and `tool` that refuse execution.
+  - Component-only commands (`collect`, `install`, `update`, `catalog`, `utility`, `push`, `pull`, `remote`, `sdk`) are not included.
   - No collector/tool runtime code is linked.
 - `epack` full build (`-tags components`):
   - Includes core features plus full component orchestration.
@@ -124,7 +127,7 @@ This document describes the security-relevant architecture of `epack`.
   - `epack catalog search`, `epack catalog refresh` - Unified catalog for all component types
   - `epack utility install/list/remove/<name>` - Global utility management and TOCTOU-safe dispatch
   - `epack sdk new/run/test/mock` - Component SDK for building custom components
-  - `epack push`, `epack pull`
+  - `epack push`, `epack pull`, `epack remote list/whoami`
   - Downloads and executes collector, tool, and remote adapter binaries.
 
 ## Unified Component Model

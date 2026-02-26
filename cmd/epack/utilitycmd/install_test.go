@@ -3,10 +3,31 @@
 package utilitycmd
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/locktivity/epack/internal/catalog"
+	"github.com/locktivity/epack/internal/securityaudit"
 )
+
+type installAuditSink struct {
+	mu     sync.Mutex
+	events []securityaudit.Event
+}
+
+func (s *installAuditSink) HandleSecurityEvent(evt securityaudit.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, evt)
+}
+
+func (s *installAuditSink) Snapshot() []securityaudit.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]securityaudit.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
 
 func TestExtractRepoPath(t *testing.T) {
 	tests := []struct {
@@ -193,4 +214,83 @@ func TestValidateUtilityName(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateInstallFlags_StrictProduction(t *testing.T) {
+	t.Setenv("EPACK_STRICT_PRODUCTION", "1")
+
+	origSkip := insecureSkipVerify
+	origTrust := insecureTrustOnFirst
+	t.Cleanup(func() {
+		insecureSkipVerify = origSkip
+		insecureTrustOnFirst = origTrust
+	})
+
+	insecureSkipVerify = true
+	insecureTrustOnFirst = false
+	if err := validateInstallFlags(); err == nil {
+		t.Fatal("expected strict production rejection for --insecure-skip-verify")
+	}
+
+	insecureSkipVerify = false
+	insecureTrustOnFirst = true
+	if err := validateInstallFlags(); err == nil {
+		t.Fatal("expected strict production rejection for --insecure-trust-on-first")
+	}
+}
+
+func TestValidateInstallFlags_NonStrict(t *testing.T) {
+	t.Setenv("EPACK_STRICT_PRODUCTION", "")
+
+	origSkip := insecureSkipVerify
+	origTrust := insecureTrustOnFirst
+	t.Cleanup(func() {
+		insecureSkipVerify = origSkip
+		insecureTrustOnFirst = origTrust
+	})
+
+	insecureSkipVerify = true
+	insecureTrustOnFirst = true
+	if err := validateInstallFlags(); err != nil {
+		t.Fatalf("expected insecure flags to be allowed when strict mode disabled, got: %v", err)
+	}
+}
+
+func TestValidateInstallFlags_EmitsInsecureBypassWhenAllowed(t *testing.T) {
+	t.Setenv("EPACK_STRICT_PRODUCTION", "")
+
+	origSkip := insecureSkipVerify
+	origTrust := insecureTrustOnFirst
+	t.Cleanup(func() {
+		insecureSkipVerify = origSkip
+		insecureTrustOnFirst = origTrust
+		securityaudit.SetSink(nil)
+	})
+
+	sink := &installAuditSink{}
+	securityaudit.SetSink(sink)
+
+	cases := []struct {
+		skip  bool
+		trust bool
+	}{
+		{skip: true, trust: false},
+		{skip: false, trust: true},
+		{skip: true, trust: true},
+	}
+
+	for _, tc := range cases {
+		insecureSkipVerify = tc.skip
+		insecureTrustOnFirst = tc.trust
+		if err := validateInstallFlags(); err != nil {
+			t.Fatalf("validateInstallFlags() error = %v", err)
+		}
+	}
+
+	for _, evt := range sink.Snapshot() {
+		if evt.Type == securityaudit.EventInsecureBypass && evt.Component == "utility_install" {
+			return
+		}
+	}
+	t.Fatalf("expected insecure bypass event, got: %+v", sink.Snapshot())
 }

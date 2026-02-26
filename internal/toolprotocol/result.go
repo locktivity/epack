@@ -18,6 +18,7 @@ import (
 	"github.com/locktivity/epack/internal/jsonutil"
 	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/safefile/tx"
 	"github.com/locktivity/epack/internal/timestamp"
 )
 
@@ -161,6 +162,49 @@ const (
 	StatusFailure = "failure"
 	StatusPartial = "partial"
 )
+
+// RunState models wrapper-side lifecycle states when processing a tool run.
+// These states are used by wrapper orchestration to ensure one terminal write path.
+type RunState string
+
+const (
+	RunStateCreated         RunState = "created"
+	RunStateExecFailed      RunState = "exec_failed"
+	RunStateToolResultValid RunState = "tool_result_valid"
+	RunStateBackfilled      RunState = "backfilled"
+)
+
+// IsTerminalRunState returns true when the state is terminal.
+func IsTerminalRunState(state RunState) bool {
+	switch state {
+	case RunStateExecFailed, RunStateToolResultValid, RunStateBackfilled:
+		return true
+	default:
+		return false
+	}
+}
+
+// CanTransitionRunState returns true if transitioning from current to next is valid.
+// State transitions are intentionally strict:
+//   - created -> exec_failed|tool_result_valid|backfilled
+//   - terminal states are immutable (except idempotent self-transition)
+func CanTransitionRunState(current, next RunState) bool {
+	if current == next && IsTerminalRunState(current) {
+		return true
+	}
+	if current != RunStateCreated {
+		return false
+	}
+	return IsTerminalRunState(next)
+}
+
+// TransitionRunState validates and applies a state transition.
+func TransitionRunState(current, next RunState) (RunState, error) {
+	if !CanTransitionRunState(current, next) {
+		return current, fmt.Errorf("invalid run state transition: %s -> %s", current, next)
+	}
+	return next, nil
+}
 
 // Exit codes and error codes are centralized in componenttypes package.
 // Use componenttypes.ExitComponentNotFound, componenttypes.ErrCodeComponentNotFound, etc.
@@ -375,56 +419,22 @@ func NormalizeExitCode(toolExitCode int) (wrapperExitCode int, toolCode *int) {
 
 // WriteResultAtomic writes a result.json atomically using tmp+rename.
 //
-// SECURITY: Uses safefile.OpenForWrite to prevent symlink attacks.
-// This uses O_NOFOLLOW to atomically refuse to follow symlinks, preventing
-// an attacker from swapping result.json.tmp or result.json with a symlink
-// to write to arbitrary locations.
+// SECURITY: Uses internal/safefile/tx to perform an fsync+rename transaction
+// with symlink refusal semantics.
 //
 // Note: We don't validate the entire runDir path for symlinks because:
 // 1. CreateRunDir already uses safefile.MkdirAllPrivate which refuses symlinks
 // 2. System symlinks (e.g., /var -> /private/var on macOS) are legitimate
-// 3. OpenFileNoFollow provides atomic symlink protection at file creation time
+// 3. tx.WriteAtomicPath enforces symlink protections for result writes
 func WriteResultAtomic(runDir string, result *Result) error {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling result: %w", err)
 	}
 
-	tmpPath := filepath.Join(runDir, "result.json.tmp")
 	finalPath := filepath.Join(runDir, "result.json")
-
-	// SECURITY: Use safefile.OpenForWrite instead of os.OpenFile.
-	// This uses O_NOFOLLOW to atomically refuse to follow symlinks,
-	// preventing an attacker from swapping result.json.tmp with a symlink.
-	f, err := safefile.OpenForWrite(tmpPath)
-	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
-	}
-
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("writing temp file: %w", err)
-	}
-
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("syncing temp file: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("closing temp file: %w", err)
-	}
-
-	// SECURITY: os.Rename is atomic on POSIX systems. Since we validated
-	// runDir has no symlinks and both paths are in runDir, the rename
-	// is safe. An attacker cannot swap the destination after validation
-	// because rename happens in the same syscall.
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("renaming result file: %w", err)
+	if err := tx.WriteAtomicPath(finalPath, data, limits.StandardFileMode); err != nil {
+		return fmt.Errorf("writing result file atomically: %w", err)
 	}
 
 	// Best-effort directory fsync
@@ -461,6 +471,19 @@ func ReadResult(path string) (*Result, error) {
 // ValidateResult checks if a result has all required fields.
 // Returns typed errors with MissingRequiredField code for programmatic handling.
 func ValidateResult(r *Result) error {
+	if err := validateResultRequiredFields(r); err != nil {
+		return err
+	}
+	if err := validateResultTimestamps(r); err != nil {
+		return err
+	}
+	if err := validateResultStatus(r); err != nil {
+		return err
+	}
+	return validateResultCollections(r)
+}
+
+func validateResultRequiredFields(r *Result) error {
 	if r.SchemaVersion == 0 {
 		return epackerrors.E(epackerrors.MissingRequiredField, "result.json missing 'schema_version'", nil)
 	}
@@ -476,33 +499,39 @@ func ValidateResult(r *Result) error {
 	if r.StartedAt == "" {
 		return epackerrors.E(epackerrors.MissingRequiredField, "result.json missing 'started_at'", nil)
 	}
-	if err := timestamp.Validate(r.StartedAt); err != nil {
-		return epackerrors.E(epackerrors.InvalidTimestamp, "result.json invalid 'started_at'", err)
-	}
 	if r.CompletedAt == "" {
 		return epackerrors.E(epackerrors.MissingRequiredField, "result.json missing 'completed_at'", nil)
-	}
-	if err := timestamp.Validate(r.CompletedAt); err != nil {
-		return epackerrors.E(epackerrors.InvalidTimestamp, "result.json invalid 'completed_at'", err)
 	}
 	if r.Status == "" {
 		return epackerrors.E(epackerrors.MissingRequiredField, "result.json missing 'status'", nil)
 	}
+	return nil
+}
+
+func validateResultTimestamps(r *Result) error {
+	if err := timestamp.Validate(r.StartedAt); err != nil {
+		return epackerrors.E(epackerrors.InvalidTimestamp, "result.json invalid 'started_at'", err)
+	}
+	if err := timestamp.Validate(r.CompletedAt); err != nil {
+		return epackerrors.E(epackerrors.InvalidTimestamp, "result.json invalid 'completed_at'", err)
+	}
+	return nil
+}
+
+func validateResultStatus(r *Result) error {
 	if r.Status != StatusSuccess && r.Status != StatusFailure && r.Status != StatusPartial {
 		return epackerrors.E(epackerrors.InvalidInput, fmt.Sprintf("result.json invalid 'status': %s", r.Status), nil)
 	}
-	// inputs must be present (even if empty) and must be an object
+	return nil
+}
+
+func validateResultCollections(r *Result) error {
 	if r.Inputs == nil {
 		return epackerrors.E(epackerrors.MissingRequiredField, "result.json missing 'inputs'", nil)
 	}
-	// Type validation: inputs must be a JSON object, not a primitive or array
-	switch r.Inputs.(type) {
-	case map[string]interface{}:
-		// Valid: JSON object
-	default:
+	if _, ok := r.Inputs.(map[string]interface{}); !ok {
 		return epackerrors.E(epackerrors.InvalidInput, fmt.Sprintf("result.json 'inputs' must be a JSON object, got %T", r.Inputs), nil)
 	}
-	// outputs, errors, warnings must be arrays (not nil)
 	if r.Outputs == nil {
 		return epackerrors.E(epackerrors.MissingRequiredField, "result.json missing 'outputs'", nil)
 	}
@@ -512,7 +541,6 @@ func ValidateResult(r *Result) error {
 	if r.Warnings == nil {
 		return epackerrors.E(epackerrors.MissingRequiredField, "result.json missing 'warnings'", nil)
 	}
-
 	return nil
 }
 

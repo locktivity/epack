@@ -6,11 +6,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/exitcode"
+	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/userconfig"
 	"github.com/spf13/cobra"
 )
@@ -123,18 +123,26 @@ func executeUtility(ctx context.Context, execPath string, args []string) (int, e
 	// Build restricted environment (no PATH inheritance for security)
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), false)
 
-	// Create command
-	cmd := exec.CommandContext(ctx, execPath, args...)
-	cmd.Env = env
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd, cancel, err := procexec.CommandChecked(ctx, procexec.Spec{
+		Path:                execPath,
+		Args:                args,
+		Env:                 env,
+		Stdin:               os.Stdin,
+		Stdout:              os.Stdout,
+		Stderr:              os.Stderr,
+		EnforceEnvAllowlist: true,
+		AllowedEnv:          append(append([]string{}, execsafe.AllowedEnvVars...), "PATH"),
+	})
+	if err != nil {
+		return 1, err
+	}
+	defer cancel()
 
 	// Run and capture exit code
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), nil
+		if cmd.ProcessState != nil {
+			return cmd.ProcessState.ExitCode(), nil
 		}
 		return 1, err
 	}

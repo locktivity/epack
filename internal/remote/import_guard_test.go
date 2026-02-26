@@ -6,23 +6,22 @@ import (
 	"github.com/locktivity/epack/internal/testutil/importguard"
 )
 
-// TestNoUnsafeExecInRemote ensures the remote package uses execsafe for binary execution.
+// TestNoUnsafeExecInRemote ensures the remote package uses procexec wrappers.
 //
 // SECURITY BOUNDARY: The remote package executes adapter binaries which may be:
 //   - Unverified (PATH-based adapters)
 //   - Verified (source-based with digest checks)
 //
-// All binary execution must go through execsafe to ensure:
+// All binary execution must go through wrappers to ensure:
 //   - TOCTOU-safe execution for verified binaries
 //   - Restricted environment (no credential leakage)
 //   - Proper timeout handling
 //
 // Direct use of exec.Command bypasses these protections.
 func TestNoUnsafeExecInRemote(t *testing.T) {
-	importguard.AssertRequiresImport(t, "os/exec", "execsafe",
-		"When using os/exec, ensure execsafe is also imported for:\n"+
-			"  - TOCTOU-safe execution via VerifiedBinaryFD\n"+
-			"  - Restricted environment via BuildRestrictedEnvSafe")
+	importguard.AssertNoImport(t, "os/exec",
+		"Use internal/procexec for subprocess execution.\n"+
+			"Direct os/exec usage bypasses shared process hardening patterns.")
 }
 
 // TestNoDirectOsFileOps ensures the remote package uses safe file operations.

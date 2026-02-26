@@ -24,6 +24,28 @@ type Pack struct {
 	reader   *zip.ReadCloser
 }
 
+// UntrustedBytes are bytes read without manifest integrity verification.
+// Callers must treat this content as attacker-controlled until verified.
+type UntrustedBytes struct {
+	data []byte
+}
+
+// TrustedBytes are bytes that have passed manifest integrity verification.
+type TrustedBytes struct {
+	data []byte
+}
+
+// UnsafeBytes returns the underlying untrusted slice.
+// Callers must only use this in untrusted processing paths.
+func (b UntrustedBytes) UnsafeBytes() []byte { return b.data }
+
+// Bytes returns the underlying slice.
+func (b TrustedBytes) Bytes() []byte { return b.data }
+
+func trustBytes(data UntrustedBytes) TrustedBytes {
+	return TrustedBytes(data)
+}
+
 // ReadBudget tracks cumulative bytes read during an operation to prevent DoS attacks.
 // Create a new ReadBudget for each logical operation (e.g., Extract, Verify).
 // ReadBudget is safe for concurrent use within a single operation.
@@ -102,7 +124,7 @@ func (p *Pack) HasFile(path string) bool {
 // any manifest digest. Use ReadArtifact for verified reads of manifest-declared artifacts.
 // This is useful for attestations and other non-artifact files where the caller
 // will perform their own verification (e.g., Sigstore signature verification).
-func (p *Pack) ReadFileUntrusted(path string) ([]byte, error) {
+func (p *Pack) ReadFileUntrusted(path string) (UntrustedBytes, error) {
 	return p.ReadFileUntrustedWithBudget(path, nil)
 }
 
@@ -111,14 +133,18 @@ func (p *Pack) ReadFileUntrusted(path string) ([]byte, error) {
 // SECURITY: The returned content is UNTRUSTED - see ReadFileUntrusted for details.
 //
 // If budget is nil, only per-artifact limits are enforced.
-func (p *Pack) ReadFileUntrustedWithBudget(path string, budget *ReadBudget) ([]byte, error) {
+func (p *Pack) ReadFileUntrustedWithBudget(path string, budget *ReadBudget) (UntrustedBytes, error) {
 	reader, err := p.OpenFileUntrustedWithBudget(path, budget)
 	if err != nil {
-		return nil, err
+		return UntrustedBytes{}, err
 	}
 	defer func() { _ = reader.Close() }()
 
-	return io.ReadAll(reader)
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return UntrustedBytes{}, err
+	}
+	return UntrustedBytes{data: data}, nil
 }
 
 // OpenFileUntrusted returns a reader WITHOUT integrity verification.
@@ -169,82 +195,85 @@ type limitedReader struct {
 }
 
 func (r *limitedReader) Read(p []byte) (int, error) {
-	// Check artifact limit first
 	remaining := r.maxArtifactBytes - r.bytesRead
-	if remaining == 0 {
-		// At limit - peek 1 byte to distinguish "exact size" from "truncated"
-		// For the peek, we need to reserve 1 byte from budget atomically
-		if r.budget != nil {
-			if !r.tryReserveBudgetBytes(1) {
-				return 0, errors.E(errors.ZipBomb,
-					fmt.Sprintf("operation read limit exceeded (%d bytes)", r.budget.maxBytes), nil)
-			}
-		}
-		var peek [1]byte
-		n, err := r.reader.Read(peek[:])
-		if n > 0 {
-			// There was more data - artifact exceeds limit
-			r.bytesRead += int64(n)
-			// Note: we already reserved 1 byte, so budget is already updated
-			return 0, errors.E(errors.ArtifactTooLarge,
-				fmt.Sprintf("%q exceeds artifact size limit (%d bytes)", r.path, r.maxArtifactBytes), nil)
-		}
-		// No bytes read - release the reservation
-		if r.budget != nil {
-			r.budget.bytesRead.Add(-1)
-		}
-		if err == io.EOF {
-			// Underlying stream ended exactly at limit - clean EOF
-			return 0, io.EOF
-		}
-		if err == nil {
-			// Reader returned (0, nil) which is allowed but would cause io.ReadAll to spin
-			return 0, io.ErrNoProgress
-		}
-		// Some other error from underlying reader - wrap with context
-		return 0, fmt.Errorf("read artifact %q: %w", r.path, err)
+	if remaining <= 0 {
+		return r.handleArtifactLimit(remaining)
 	}
+
+	readBuf, reserved, err := r.prepareReadBuffer(p, remaining)
+	if err != nil {
+		return 0, err
+	}
+
+	n, err := r.reader.Read(readBuf)
+	r.bytesRead += int64(n)
+
+	r.releaseUnusedReservation(reserved, n)
+
+	return n, r.wrapReadError(err)
+}
+
+func (r *limitedReader) handleArtifactLimit(remaining int64) (int, error) {
 	if remaining < 0 {
-		// Past limit (shouldn't happen with proper capping)
 		return 0, errors.E(errors.ArtifactTooLarge,
 			fmt.Sprintf("%q exceeds artifact size limit (%d bytes)", r.path, r.maxArtifactBytes), nil)
 	}
 
-	// Cap buffer to not exceed artifact limit
+	if r.budget != nil && !r.tryReserveBudgetBytes(1) {
+		return 0, errors.E(errors.ZipBomb,
+			fmt.Sprintf("operation read limit exceeded (%d bytes)", r.budget.maxBytes), nil)
+	}
+
+	var peek [1]byte
+	n, err := r.reader.Read(peek[:])
+	if n > 0 {
+		r.bytesRead += int64(n)
+		return 0, errors.E(errors.ArtifactTooLarge,
+			fmt.Sprintf("%q exceeds artifact size limit (%d bytes)", r.path, r.maxArtifactBytes), nil)
+	}
+	if r.budget != nil {
+		r.budget.bytesRead.Add(-1)
+	}
+	if err == io.EOF {
+		return 0, io.EOF
+	}
+	if err == nil {
+		return 0, io.ErrNoProgress
+	}
+	return 0, fmt.Errorf("read artifact %q: %w", r.path, err)
+}
+
+func (r *limitedReader) prepareReadBuffer(p []byte, remaining int64) ([]byte, int64, error) {
 	if int64(len(p)) > remaining {
 		p = p[:remaining]
 	}
 
-	// Atomically reserve bytes from operation budget BEFORE reading
-	// This prevents concurrent readers from overshooting the limit
-	var reserved int64
-	if r.budget != nil {
-		reserved = r.reserveBudgetBytes(int64(len(p)))
-		if reserved == 0 {
-			// No budget available
-			return 0, errors.E(errors.ZipBomb,
-				fmt.Sprintf("operation read limit exceeded (%d bytes)", r.budget.maxBytes), nil)
-		}
-		// Cap buffer to reserved amount
-		if int64(len(p)) > reserved {
-			p = p[:reserved]
-		}
+	if r.budget == nil {
+		return p, 0, nil
 	}
 
-	n, err := r.reader.Read(p)
-	r.bytesRead += int64(n)
+	reserved := r.reserveBudgetBytes(int64(len(p)))
+	if reserved == 0 {
+		return nil, 0, errors.E(errors.ZipBomb,
+			fmt.Sprintf("operation read limit exceeded (%d bytes)", r.budget.maxBytes), nil)
+	}
+	if int64(len(p)) > reserved {
+		p = p[:reserved]
+	}
+	return p, reserved, nil
+}
 
-	// Release unused reservation (reserved - actual read)
+func (r *limitedReader) releaseUnusedReservation(reserved int64, n int) {
 	if r.budget != nil && reserved > int64(n) {
 		r.budget.bytesRead.Add(-(reserved - int64(n)))
 	}
+}
 
-	// Wrap non-EOF errors with context
-	if err != nil && err != io.EOF {
-		return n, fmt.Errorf("read artifact %q: %w", r.path, err)
+func (r *limitedReader) wrapReadError(err error) error {
+	if err == nil || err == io.EOF {
+		return err
 	}
-
-	return n, err
+	return fmt.Errorf("read artifact %q: %w", r.path, err)
 }
 
 func (r *limitedReader) Close() error {

@@ -119,7 +119,7 @@ func FuzzTamperedZip(f *testing.F) {
 			if readErr == nil {
 				// ReadArtifact succeeded - content MUST be verified
 				// Verify that the content matches the claimed digest
-				h := sha256.Sum256(content)
+				h := sha256.Sum256(content.Bytes())
 				actualDigest := "sha256:" + hex.EncodeToString(h[:])
 
 				if actualDigest != artifact.Digest {
@@ -131,9 +131,9 @@ func FuzzTamperedZip(f *testing.F) {
 				// Verify size if present
 				if artifact.Size != nil {
 					claimedSize, err := artifact.Size.Int64()
-					if err == nil && int64(len(content)) != claimedSize {
+					if err == nil && int64(len(content.Bytes())) != claimedSize {
 						panic("SECURITY: ReadArtifact returned content with wrong size! " +
-							"actual=" + strconv.Itoa(len(content)) + " claimed=" + artifact.Size.String())
+							"actual=" + strconv.Itoa(len(content.Bytes())) + " claimed=" + artifact.Size.String())
 					}
 				}
 			}

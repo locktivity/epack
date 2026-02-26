@@ -234,13 +234,13 @@ func (p *Pack) extractArtifactWithBudget(absOutputDir string, a Artifact, force 
 		// Force mode: use WriteFile which will overwrite existing files.
 		// This keeps directory fd pinned from creation through file write,
 		// preventing parent symlink swaps.
-		if err := safefile.WriteFile(absOutputDir, a.Path, data); err != nil {
+		if err := safefile.WriteFile(absOutputDir, a.Path, data.Bytes()); err != nil {
 			return "", fmt.Errorf("writing %s: %w", outPath, err)
 		}
 	} else {
 		// Non-force mode: use exclusive write to atomically fail if file exists.
 		// This eliminates the TOCTOU race between existence check and file creation.
-		if err := safefile.WriteFileExclusive(absOutputDir, a.Path, data); err != nil {
+		if err := safefile.WriteFileExclusive(absOutputDir, a.Path, data.Bytes()); err != nil {
 			if err == safefile.ErrFileExists {
 				return "", fmt.Errorf("file already exists: %s (use Force=true to overwrite)", outPath)
 			}

@@ -9,7 +9,7 @@ import (
 )
 
 // Executor abstracts tool binary execution for testability.
-// The default implementation uses exec.Command with context support.
+// The default implementation uses internal/procexec wrappers.
 type Executor interface {
 	// Exec runs a binary with the given arguments and environment.
 	// The context enables cancellation of long-running tools.
@@ -39,7 +39,7 @@ type BinaryVerifier interface {
 	VerifyBinary(binaryPath, expectedDigest string) (execPath string, cleanup func(), err error)
 }
 
-// DefaultExecutor is the production Executor using exec.Command.
+// DefaultExecutor is the production Executor using internal/procexec wrappers.
 type DefaultExecutor struct{}
 
 // Exec implements Executor using execToolWithProtocol.

@@ -14,6 +14,8 @@ import (
 	"github.com/locktivity/epack/internal/detach"
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/push"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/pack"
 	"github.com/spf13/cobra"
 )
@@ -94,6 +96,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 	packPath := args[1]
 	out := outputWriter()
 	ctx := cmdContext(cmd)
+	if err := validatePushFlags(); err != nil {
+		return exitError("push failed: %v", err)
+	}
 
 	// Check pack exists
 	packInfo, err := os.Stat(packPath)
@@ -129,17 +134,22 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	// Build options with step callbacks for multi-step progress
 	opts := push.Options{
-		Remote:                remoteName,
-		PackPath:              packPath,
-		Environment:           pushEnv,
-		Workspace:             pushWorkspace,
-		Labels:                pushLabels,
-		Notes:                 pushNotes,
-		RunsPaths:             pushRunsPaths,
-		NoRuns:                pushNoRuns,
-		NonInteractive:        pushYes,
-		InsecureAllowUnpinned: pushInsecureAllowUnpinned,
-		Stderr:                os.Stderr,
+		Secure: struct{ Frozen bool }{
+			Frozen: false,
+		},
+		Unsafe: struct{ AllowUnpinned bool }{
+			AllowUnpinned: pushInsecureAllowUnpinned,
+		},
+		Remote:         remoteName,
+		PackPath:       packPath,
+		Environment:    pushEnv,
+		Workspace:      pushWorkspace,
+		Labels:         pushLabels,
+		Notes:          pushNotes,
+		RunsPaths:      pushRunsPaths,
+		NoRuns:         pushNoRuns,
+		NonInteractive: pushYes,
+		Stderr:         os.Stderr,
 		OnStep: func(step string, started bool) {
 			if out.IsQuiet() || out.IsJSON() {
 				return
@@ -247,6 +257,30 @@ func runPush(cmd *cobra.Command, args []string) error {
 	out.Print("%s  epack pull %s           %s\n", p.Dim("  •"), remoteName, p.Dim("# Pull on another machine"))
 	out.Print("%s  epack remote whoami %s  %s\n", p.Dim("  •"), remoteName, p.Dim("# Check auth status"))
 
+	return nil
+}
+
+func validatePushFlags() error {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        false,
+		AllowUnpinned: pushInsecureAllowUnpinned,
+	}).Enforce(); err != nil {
+		return err
+	}
+	if err := securitypolicy.EnforceStrictProduction("push_cli", pushInsecureAllowUnpinned); err != nil {
+		return err
+	}
+	if pushInsecureAllowUnpinned {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "push",
+			Name:        "push",
+			Description: "push command running with insecure unpinned override",
+			Attrs: map[string]string{
+				"insecure_allow_unpinned": "true",
+			},
+		})
+	}
 	return nil
 }
 

@@ -94,6 +94,50 @@ func TestTimestampNoFractionalSeconds(t *testing.T) {
 	}
 }
 
+func TestRunStateConstants(t *testing.T) {
+	if RunStateCreated == "" || RunStateExecFailed == "" || RunStateToolResultValid == "" || RunStateBackfilled == "" {
+		t.Fatal("run state constants must be non-empty")
+	}
+}
+
+func TestRunStateTransitions(t *testing.T) {
+	tests := []struct {
+		name    string
+		from    RunState
+		to      RunState
+		allowed bool
+	}{
+		{name: "created to exec_failed", from: RunStateCreated, to: RunStateExecFailed, allowed: true},
+		{name: "created to valid", from: RunStateCreated, to: RunStateToolResultValid, allowed: true},
+		{name: "created to backfilled", from: RunStateCreated, to: RunStateBackfilled, allowed: true},
+		{name: "created to created disallowed", from: RunStateCreated, to: RunStateCreated, allowed: false},
+		{name: "terminal immutable", from: RunStateBackfilled, to: RunStateExecFailed, allowed: false},
+		{name: "terminal idempotent", from: RunStateBackfilled, to: RunStateBackfilled, allowed: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CanTransitionRunState(tt.from, tt.to); got != tt.allowed {
+				t.Fatalf("CanTransitionRunState(%q, %q)=%v, want %v", tt.from, tt.to, got, tt.allowed)
+			}
+
+			next, err := TransitionRunState(tt.from, tt.to)
+			if tt.allowed {
+				if err != nil {
+					t.Fatalf("unexpected transition error: %v", err)
+				}
+				if next != tt.to {
+					t.Fatalf("next state = %q, want %q", next, tt.to)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected transition error, got nil (next=%q)", next)
+			}
+		})
+	}
+}
+
 // TestCreateRunDirCollision verifies run directory creation handles collisions.
 func TestCreateRunDirCollision(t *testing.T) {
 	tmpDir := t.TempDir()

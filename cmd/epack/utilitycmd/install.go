@@ -9,15 +9,17 @@ import (
 	"github.com/locktivity/epack/internal/catalog/resolve"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/internal/userconfig"
 	"github.com/spf13/cobra"
 )
 
 var (
-	installRefresh         bool
-	installDryRun          bool
-	insecureSkipVerify     bool
-	insecureTrustOnFirst   bool
+	installRefresh       bool
+	installDryRun        bool
+	insecureSkipVerify   bool
+	insecureTrustOnFirst bool
 )
 
 func newInstallCommand() *cobra.Command {
@@ -83,6 +85,9 @@ EXAMPLES
 
 func runInstallUtility(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
+	if err := validateInstallFlags(); err != nil {
+		return err
+	}
 
 	// Parse the argument (name or name@version)
 	parsed, err := resolve.ParseComponentArg(args[0])
@@ -142,8 +147,11 @@ func runInstallUtility(cmd *cobra.Command, args []string) error {
 
 	syncer := userconfig.NewUtilitySyncer()
 	result, err := syncer.Install(ctx, parsed.Name, source, userconfig.InstallOpts{
-		InsecureSkipVerify:   insecureSkipVerify,
-		InsecureTrustOnFirst: insecureTrustOnFirst,
+		Secure: userconfig.SecureInstallOptions{},
+		Unsafe: userconfig.UnsafeInstallOverrides{
+			SkipVerify:   insecureSkipVerify,
+			TrustOnFirst: insecureTrustOnFirst,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("installing utility: %w", err)
@@ -217,4 +225,24 @@ func extractRepoPath(repoURL string) (string, error) {
 
 func validateUtilityName(name string) error {
 	return config.ValidateUtilityName(name)
+}
+
+func validateInstallFlags() error {
+	hasUnsafeOverrides := insecureSkipVerify || insecureTrustOnFirst
+	if err := securitypolicy.EnforceStrictProduction("utility_install_cli", hasUnsafeOverrides); err != nil {
+		return err
+	}
+	if hasUnsafeOverrides {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "utility_install",
+			Name:        "install",
+			Description: "utility install command running with insecure verification override",
+			Attrs: map[string]string{
+				"skip_verify":    fmt.Sprintf("%t", insecureSkipVerify),
+				"trust_on_first": fmt.Sprintf("%t", insecureTrustOnFirst),
+			},
+		})
+	}
+	return nil
 }

@@ -19,28 +19,41 @@ import (
 //   - --insecure-allow-unverified permits components installed with --insecure-skip-verify
 //   - --insecure-allow-unpinned permits components not in lockfile (for development)
 type VerifyOptions struct {
+	// Secure defaults.
+	Secure VerifySecureOptions
+	// Explicit insecure overrides.
+	Unsafe VerifyUnsafeOverrides
+}
+
+type VerifySecureOptions struct {
 	// Frozen requires all components to be pinned with digests (CI mode).
 	// When true, any unpinned or unverified component causes an error.
 	Frozen bool
+}
 
-	// InsecureAllowUnverified permits execution of components installed with
+type VerifyUnsafeOverrides struct {
+	// AllowUnverified permits execution of components installed with
 	// --insecure-skip-verify (signature verification was bypassed at install time).
 	// SECURITY WARNING: Use only for development/testing.
-	InsecureAllowUnverified bool
+	AllowUnverified bool
 
-	// InsecureAllowUnpinned permits execution of components not pinned in lockfile.
+	// AllowUnpinned permits execution of components not pinned in lockfile.
 	// This enables PATH discovery for components not configured in epack.yaml.
 	// SECURITY WARNING: Use only for development/testing.
-	InsecureAllowUnpinned bool
+	AllowUnpinned bool
 }
 
 // DefaultVerifyOptions returns secure defaults for component verification.
 // All security checks are enabled; no insecure modes allowed.
 func DefaultVerifyOptions() VerifyOptions {
 	return VerifyOptions{
-		Frozen:                  false,
-		InsecureAllowUnverified: false,
-		InsecureAllowUnpinned:   false,
+		Secure: VerifySecureOptions{
+			Frozen: false,
+		},
+		Unsafe: VerifyUnsafeOverrides{
+			AllowUnverified: false,
+			AllowUnpinned:   false,
+		},
 	}
 }
 
@@ -48,7 +61,9 @@ func DefaultVerifyOptions() VerifyOptions {
 // Reads EPACK_INSECURE_ALLOW_UNPINNED to set InsecureAllowUnpinned.
 func VerifyOptionsFromEnv() VerifyOptions {
 	return VerifyOptions{
-		InsecureAllowUnpinned: InsecureAllowUnpinnedFromEnv(),
+		Unsafe: VerifyUnsafeOverrides{
+			AllowUnpinned: InsecureAllowUnpinnedFromEnv(),
+		},
 	}
 }
 
@@ -89,12 +104,12 @@ type DigestInfo struct {
 func CheckSecurity(kind ComponentKind, name string, info DigestInfo, opts VerifyOptions) error {
 	// PATH-based component checks
 	if info.IsPATHBased {
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("%s %q uses PATH-based discovery (not allowed in --frozen mode)", kind, name),
 				fmt.Sprintf("Configure a source for this %s in epack.yaml and run 'epack lock && epack sync'", kind), nil)
 		}
-		if !opts.InsecureAllowUnpinned {
+		if !opts.Unsafe.AllowUnpinned {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("%s %q not found in lockfile", kind, name),
 				fmt.Sprintf("Run 'epack lock' to pin all %ss, or use --insecure-allow-unpinned for development", kind.Plural()), nil)
@@ -105,12 +120,12 @@ func CheckSecurity(kind ComponentKind, name string, info DigestInfo, opts Verify
 
 	// Source-based component with missing digest
 	if info.IsSourceBased && info.MissingDigest {
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("%s %q missing digest in lockfile (required in --frozen mode)", kind, name),
 				"Run 'epack lock' to compute and pin digests", nil)
 		}
-		if !opts.InsecureAllowUnpinned {
+		if !opts.Unsafe.AllowUnpinned {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("%s %q missing digest in lockfile", kind, name),
 				"Run 'epack lock' to compute and pin digests, or use --insecure-allow-unpinned for development", nil)
@@ -119,12 +134,12 @@ func CheckSecurity(kind ComponentKind, name string, info DigestInfo, opts Verify
 
 	// External component without lockfile pinning
 	if info.IsExternal && info.Digest == "" {
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external %s %q is not pinned in lockfile (required in --frozen mode)", kind, name),
 				fmt.Sprintf("Run 'epack %s lock' to pin external %ss", kind, kind.Plural()), nil)
 		}
-		if !opts.InsecureAllowUnpinned {
+		if !opts.Unsafe.AllowUnpinned {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external %s %q is not pinned in lockfile", kind, name),
 				fmt.Sprintf("Run 'epack %s lock' to pin external %ss, or use --insecure-allow-unpinned", kind, kind.Plural()), nil)
@@ -132,7 +147,7 @@ func CheckSecurity(kind ComponentKind, name string, info DigestInfo, opts Verify
 	}
 
 	// Frozen mode: all components must be verifiable
-	if opts.Frozen && info.NeedsVerification && info.Digest == "" {
+	if opts.Secure.Frozen && info.NeedsVerification && info.Digest == "" {
 		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 			fmt.Sprintf("%s %q not pinned in lockfile (required in --frozen mode)", kind, name),
 			fmt.Sprintf("Run 'epack lock' to pin all %ss", kind.Plural()), nil)

@@ -51,76 +51,102 @@ Examples:
 
 func runJobs(cmd *cobra.Command, args []string) error {
 	out := outputWriter()
+	mgr := newJobsManager()
 
-	// Find project root for job storage
-	projectRoot, err := project.FindRoot("")
-	if err != nil {
-		// Fall back to current directory
-		projectRoot, _ = os.Getwd()
-	}
-
-	// Create job manager
-	jobsDir := filepath.Join(projectRoot, ".epack", "jobs")
-	mgr := jobs.NewManager(jobsDir)
-
-	// Clean mode
 	if jobsClean {
-		removed, err := mgr.Clean(24 * 60 * 60 * 1000000000) // 24 hours in nanoseconds
-		if err != nil {
-			return exitError("failed to clean jobs: %v", err)
-		}
-		if out.IsJSON() {
-			return out.JSON(map[string]interface{}{
-				"cleaned": removed,
-			})
-		}
-		out.Success("Cleaned %d old job(s)", removed)
-		return nil
+		return runJobsClean(mgr, out)
 	}
 
-	// Show specific job
 	if len(args) == 1 {
 		return showJob(mgr, args[0], out)
 	}
 
-	// List jobs
-	var statusFilter jobs.Status
-	if !jobsAll {
-		statusFilter = jobs.StatusRunning
-	}
-
-	jobList, err := mgr.List(statusFilter)
+	jobList, err := listJobs(mgr)
 	if err != nil {
 		return exitError("failed to list jobs: %v", err)
 	}
 
 	if out.IsJSON() {
-		jobsData := make([]map[string]interface{}, len(jobList))
-		for i, job := range jobList {
-			jobsData[i] = map[string]interface{}{
-				"id":         job.ID,
-				"command":    job.Command,
-				"args":       job.Args,
-				"status":     job.Status,
-				"pid":        job.PID,
-				"started_at": job.StartedAt,
-				"log_path":   job.LogPath,
-			}
-			if job.CompletedAt != nil {
-				jobsData[i]["completed_at"] = job.CompletedAt
-			}
-			if job.ExitCode != nil {
-				jobsData[i]["exit_code"] = *job.ExitCode
-			}
-			if job.Error != "" {
-				jobsData[i]["error"] = job.Error
-			}
-		}
-		return out.JSON(map[string]interface{}{
-			"jobs": jobsData,
-		})
+		return out.JSON(map[string]interface{}{"jobs": jobsListToJSON(jobList)})
 	}
 
+	return printJobsHuman(out, jobList)
+}
+
+func showJob(mgr *jobs.Manager, jobID string, out *output.Writer) error {
+	job, err := mgr.Load(jobID)
+	if err != nil {
+		return exitError("job not found: %s", jobID)
+	}
+
+	if out.IsJSON() {
+		return out.JSON(jobToJSONMap(job))
+	}
+	return printJobHuman(out, job)
+}
+
+func newJobsManager() *jobs.Manager {
+	projectRoot, err := project.FindRoot("")
+	if err != nil {
+		projectRoot, _ = os.Getwd()
+	}
+	return jobs.NewManager(filepath.Join(projectRoot, ".epack", "jobs"))
+}
+
+func runJobsClean(mgr *jobs.Manager, out *output.Writer) error {
+	removed, err := mgr.Clean(24 * time.Hour)
+	if err != nil {
+		return exitError("failed to clean jobs: %v", err)
+	}
+	if out.IsJSON() {
+		return out.JSON(map[string]interface{}{"cleaned": removed})
+	}
+	out.Success("Cleaned %d old job(s)", removed)
+	return nil
+}
+
+func listJobs(mgr *jobs.Manager) ([]*jobs.Job, error) {
+	var statusFilter jobs.Status
+	if !jobsAll {
+		statusFilter = jobs.StatusRunning
+	}
+	return mgr.List(statusFilter)
+}
+
+func jobsListToJSON(jobList []*jobs.Job) []map[string]interface{} {
+	jobsData := make([]map[string]interface{}, len(jobList))
+	for i, job := range jobList {
+		jobsData[i] = jobToJSONMap(job)
+	}
+	return jobsData
+}
+
+func jobToJSONMap(job *jobs.Job) map[string]interface{} {
+	data := map[string]interface{}{
+		"id":         job.ID,
+		"command":    job.Command,
+		"args":       job.Args,
+		"status":     job.Status,
+		"pid":        job.PID,
+		"started_at": job.StartedAt,
+		"log_path":   job.LogPath,
+	}
+	if job.CompletedAt != nil {
+		data["completed_at"] = job.CompletedAt
+	}
+	if job.ExitCode != nil {
+		data["exit_code"] = *job.ExitCode
+	}
+	if job.Error != "" {
+		data["error"] = job.Error
+	}
+	if job.Result != nil {
+		data["result"] = job.Result
+	}
+	return data
+}
+
+func printJobsHuman(out *output.Writer, jobList []*jobs.Job) error {
 	if len(jobList) == 0 {
 		if jobsAll {
 			out.Print("No jobs found.\n")
@@ -132,12 +158,9 @@ func runJobs(cmd *cobra.Command, args []string) error {
 	}
 
 	palette := out.Palette()
-	out.Print("%s\n", palette.Bold("Background Jobs:"))
-	out.Print("\n")
-
+	out.Print("%s\n\n", palette.Bold("Background Jobs:"))
 	for _, job := range jobList {
-		statusIcon := statusToIcon(job.Status, palette)
-		out.Print("  %s %s\n", statusIcon, job.ID)
+		out.Print("  %s %s\n", statusToIcon(job.Status, palette), job.ID)
 		out.Print("      Command: epack %s %s\n", job.Command, strings.Join(job.Args, " "))
 		out.Print("      Started: %s\n", formatTimeAgo(job.StartedAt))
 		if job.Status == jobs.StatusRunning {
@@ -154,41 +177,10 @@ func runJobs(cmd *cobra.Command, args []string) error {
 		}
 		out.Print("\n")
 	}
-
 	return nil
 }
 
-func showJob(mgr *jobs.Manager, jobID string, out *output.Writer) error {
-	job, err := mgr.Load(jobID)
-	if err != nil {
-		return exitError("job not found: %s", jobID)
-	}
-
-	if out.IsJSON() {
-		data := map[string]interface{}{
-			"id":         job.ID,
-			"command":    job.Command,
-			"args":       job.Args,
-			"status":     job.Status,
-			"pid":        job.PID,
-			"started_at": job.StartedAt,
-			"log_path":   job.LogPath,
-		}
-		if job.CompletedAt != nil {
-			data["completed_at"] = job.CompletedAt
-		}
-		if job.ExitCode != nil {
-			data["exit_code"] = *job.ExitCode
-		}
-		if job.Error != "" {
-			data["error"] = job.Error
-		}
-		if job.Result != nil {
-			data["result"] = job.Result
-		}
-		return out.JSON(data)
-	}
-
+func printJobHuman(out *output.Writer, job *jobs.Job) error {
 	palette := out.Palette()
 	statusIcon := statusToIcon(job.Status, palette)
 
@@ -218,27 +210,34 @@ func showJob(mgr *jobs.Manager, jobID string, out *output.Writer) error {
 	out.Print("\n%s\n", palette.Bold("Log:"))
 	out.Print("  %s\n", job.LogPath)
 
-	// Show last few lines of log if available
-	if job.LogPath != "" {
-		if data, err := os.ReadFile(job.LogPath); err == nil {
-			lines := strings.Split(string(data), "\n")
-			// Show last 10 lines
-			start := len(lines) - 10
-			if start < 0 {
-				start = 0
-			}
-			if start < len(lines) {
-				out.Print("\n%s\n", palette.Bold("Recent output:"))
-				for _, line := range lines[start:] {
-					if line != "" {
-						out.Print("  %s\n", line)
-					}
-				}
-			}
-		}
-	}
+	printRecentJobOutput(out, palette, job.LogPath)
 
 	return nil
+}
+
+func printRecentJobOutput(out *output.Writer, palette *output.Palette, logPath string) {
+	if logPath == "" {
+		return
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	start := len(lines) - 10
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(lines) {
+		return
+	}
+
+	out.Print("\n%s\n", palette.Bold("Recent output:"))
+	for _, line := range lines[start:] {
+		if line != "" {
+			out.Print("  %s\n", line)
+		}
+	}
 }
 
 func statusToIcon(status jobs.Status, palette *output.Palette) string {

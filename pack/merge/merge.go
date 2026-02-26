@@ -98,175 +98,178 @@ func Merge(ctx context.Context, sources []SourcePack, outputPath string, opts Op
 		return errors.E(errors.InvalidInput, "stream is required", nil)
 	}
 
-	// SECURITY: Default VerifyAttestations to true when IncludeAttestations is true.
-	// This ensures attestations are cryptographically verified before embedding.
-	// Users must explicitly set VerifyAttestations=false to include unverified attestations.
-	if opts.IncludeAttestations && opts.Verifier != nil && !opts.VerifyAttestations {
-		opts.VerifyAttestations = true
-	}
+	normalizeMergeOptions(&opts)
 
-	// Check for cancellation before starting
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	// Open packs that aren't already open
-	openedPacks := make([]*pack.Pack, len(sources))
-	for i, src := range sources {
-		if src.Pack != nil {
-			openedPacks[i] = src.Pack
-		} else {
-			p, err := pack.Open(src.Path)
-			if err != nil {
-				return fmt.Errorf("opening source pack %s: %w", src.Path, err)
-			}
-			defer func() { _ = p.Close() }()
-			openedPacks[i] = p
-		}
+	openedPacks, closeOpened, err := openSourcePacks(sources)
+	if err != nil {
+		return err
 	}
+	defer closeOpened()
 
-	// Check for stream uniqueness across all source packs (including nested)
 	if err := validateStreamUniqueness(openedPacks, sources); err != nil {
 		return err
 	}
-
-	// SECURITY: Check merge nesting depth to prevent excessive resource usage.
-	// Deeply nested merge chains could cause exponential provenance growth.
 	if err := validateMergeNestingDepth(openedPacks, sources); err != nil {
 		return err
 	}
 
-	// Build the merged pack
 	b := builder.New(opts.Stream)
-
-	// Collect source pack metadata for provenance
 	sourcePacks := make([]pack.SourcePack, len(sources))
-
 	for i, p := range openedPacks {
-		// Check for cancellation between packs
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-
-		manifest := p.Manifest()
-		srcStream := manifest.Stream
-		isMergedPack := isAlreadyMergedPack(manifest)
-
-		// SECURITY: Validate stream from untrusted pack manifest to prevent path traversal.
-		// The stream is used in filepath.Join() below, so we must reject traversal sequences.
-		// Streams can contain "/" (e.g., "org/prod") but must not contain ".." or other traversal.
-		if err := validate.RejectTraversalInPath(srcStream); err != nil {
-			return errors.E(errors.InvalidInput,
-				fmt.Sprintf("source pack %d has unsafe stream identifier %q: %v", i, srcStream, err), nil)
+		sp, err := mergeOneSourcePack(ctx, b, p, i, opts)
+		if err != nil {
+			return err
 		}
-
-		// Add artifacts from this source pack
-		for _, artifact := range manifest.Artifacts {
-			if artifact.Type != "embedded" {
-				continue
-			}
-
-			// Read artifact content
-			content, err := p.ReadArtifact(artifact.Path)
-			if err != nil {
-				return fmt.Errorf("reading artifact %s from source pack: %w", artifact.Path, err)
-			}
-
-			var outputPath string
-			if isMergedPack {
-				// Already-merged packs: preserve existing paths (already have stream prefixes)
-				outputPath = artifact.Path
-			} else {
-				// Non-merged packs: prefix with stream
-				// e.g., "artifacts/org/prod/data.json" for artifact "artifacts/data.json" from stream "org/prod"
-				relativePath := strings.TrimPrefix(artifact.Path, "artifacts/")
-				outputPath = filepath.Join("artifacts", srcStream, relativePath)
-			}
-
-			// Add to builder with original metadata
-			addOpts := builder.ArtifactOptions{
-				ContentType: artifact.ContentType,
-				DisplayName: artifact.DisplayName,
-				Description: artifact.Description,
-				CollectedAt: artifact.CollectedAt,
-				Schema:      artifact.Schema,
-				Controls:    artifact.Controls,
-			}
-			if err := b.AddBytesWithOptions(outputPath, content, addOpts); err != nil {
-				return fmt.Errorf("adding artifact %s: %w", outputPath, err)
-			}
-		}
-
-		// Build source pack metadata
-		sp := pack.SourcePack{
-			Stream:     srcStream,
-			PackDigest: manifest.PackDigest,
-			Artifacts:  json.Number(fmt.Sprintf("%d", countEmbeddedArtifacts(manifest.Artifacts))),
-		}
-
-		// Include all attestations if requested
-		if opts.IncludeAttestations {
-			attestations := p.ListAttestations()
-			for _, attPath := range attestations {
-				attData, err := p.ReadAttestation(attPath)
-				if err != nil {
-					return fmt.Errorf("reading attestation %s from %s: %w", attPath, srcStream, err)
-				}
-
-				// Validate size and depth before any parsing
-				if err := verify.ValidateAttestation(attData); err != nil {
-					return fmt.Errorf("validating attestation %s from %s: %w", attPath, srcStream, err)
-				}
-
-				// Verify attestation if requested (default: true when including attestations)
-				if opts.VerifyAttestations {
-					if opts.Verifier == nil {
-						return errors.E(errors.InvalidInput, "verifier required when VerifyAttestations is true", nil)
-					}
-
-					result, err := opts.Verifier.Verify(ctx, attData)
-					if err != nil {
-						return fmt.Errorf("verifying attestation %s from %s: %w", attPath, srcStream, err)
-					}
-
-					// Verify full in-toto statement semantics, not just subject digest.
-					// This validates:
-					// - Statement _type is correct in-toto type
-					// - predicateType is the expected evidence pack type
-					// - Subject digest matches pack_digest
-					// - Predicate pack_digest matches pack_digest
-					// A cryptographically valid signature without proper statement
-					// binding to pack_digest provides no security guarantee.
-					if err := verify.VerifyStatementSemantics(result, manifest.PackDigest); err != nil {
-						return fmt.Errorf("attestation %s from %s: %w", attPath, srcStream, err)
-					}
-				}
-
-				embedded, err := parseEmbeddedAttestation(attData)
-				if err != nil {
-					return fmt.Errorf("parsing embedded attestation %s from %s: %w", attPath, srcStream, err)
-				}
-				sp.EmbeddedAttestations = append(sp.EmbeddedAttestations, *embedded)
-			}
-		}
-
 		sourcePacks[i] = sp
 	}
 
-	// Set provenance
-	provenance := pack.Provenance{
+	b.SetProvenance(pack.Provenance{
 		Type:        "merged",
 		MergedAt:    timestamp.Now().String(),
 		MergedBy:    opts.MergedBy,
 		SourcePacks: sourcePacks,
-	}
-	b.SetProvenance(provenance)
-
-	// Build and write the pack
+	})
 	if err := b.Build(outputPath); err != nil {
 		return fmt.Errorf("building merged pack: %w", err)
 	}
 
+	return nil
+}
+
+func normalizeMergeOptions(opts *Options) {
+	if opts.IncludeAttestations && opts.Verifier != nil && !opts.VerifyAttestations {
+		opts.VerifyAttestations = true
+	}
+}
+
+func openSourcePacks(sources []SourcePack) ([]*pack.Pack, func(), error) {
+	openedPacks := make([]*pack.Pack, len(sources))
+	ownedPacks := make([]*pack.Pack, 0, len(sources))
+	for i, src := range sources {
+		if src.Pack != nil {
+			openedPacks[i] = src.Pack
+			continue
+		}
+		p, err := pack.Open(src.Path)
+		if err != nil {
+			for _, owned := range ownedPacks {
+				_ = owned.Close()
+			}
+			return nil, nil, fmt.Errorf("opening source pack %s: %w", src.Path, err)
+		}
+		openedPacks[i] = p
+		ownedPacks = append(ownedPacks, p)
+	}
+	return openedPacks, func() {
+		for _, owned := range ownedPacks {
+			_ = owned.Close()
+		}
+	}, nil
+}
+
+func mergeOneSourcePack(ctx context.Context, b *builder.Builder, p *pack.Pack, index int, opts Options) (pack.SourcePack, error) {
+	manifest := p.Manifest()
+	srcStream := manifest.Stream
+	isMergedPack := isAlreadyMergedPack(manifest)
+	if err := validate.RejectTraversalInPath(srcStream); err != nil {
+		return pack.SourcePack{}, errors.E(errors.InvalidInput,
+			fmt.Sprintf("source pack %d has unsafe stream identifier %q: %v", index, srcStream, err), nil)
+	}
+	if err := addSourceArtifactsToBuilder(p, b, manifest, srcStream, isMergedPack); err != nil {
+		return pack.SourcePack{}, err
+	}
+
+	sp := pack.SourcePack{
+		Stream:     srcStream,
+		PackDigest: manifest.PackDigest,
+		Artifacts:  json.Number(fmt.Sprintf("%d", countEmbeddedArtifacts(manifest.Artifacts))),
+	}
+	if !opts.IncludeAttestations {
+		return sp, nil
+	}
+	embedded, err := collectEmbeddedAttestations(ctx, p, srcStream, manifest.PackDigest, opts)
+	if err != nil {
+		return pack.SourcePack{}, err
+	}
+	sp.EmbeddedAttestations = embedded
+	return sp, nil
+}
+
+func addSourceArtifactsToBuilder(p *pack.Pack, b *builder.Builder, manifest pack.Manifest, srcStream string, isMergedPack bool) error {
+	for _, artifact := range manifest.Artifacts {
+		if artifact.Type != "embedded" {
+			continue
+		}
+		content, err := p.ReadArtifact(artifact.Path)
+		if err != nil {
+			return fmt.Errorf("reading artifact %s from source pack: %w", artifact.Path, err)
+		}
+		outputPath := mergedArtifactPath(artifact.Path, srcStream, isMergedPack)
+		if err := b.AddBytesWithOptions(outputPath, content.Bytes(), builder.ArtifactOptions{
+			ContentType: artifact.ContentType,
+			DisplayName: artifact.DisplayName,
+			Description: artifact.Description,
+			CollectedAt: artifact.CollectedAt,
+			Schema:      artifact.Schema,
+			Controls:    artifact.Controls,
+		}); err != nil {
+			return fmt.Errorf("adding artifact %s: %w", outputPath, err)
+		}
+	}
+	return nil
+}
+
+func mergedArtifactPath(path, srcStream string, isMergedPack bool) string {
+	if isMergedPack {
+		return path
+	}
+	relativePath := strings.TrimPrefix(path, "artifacts/")
+	return filepath.Join("artifacts", srcStream, relativePath)
+}
+
+func collectEmbeddedAttestations(ctx context.Context, p *pack.Pack, srcStream, packDigest string, opts Options) ([]pack.EmbeddedAttestation, error) {
+	embedded := make([]pack.EmbeddedAttestation, 0)
+	for _, attPath := range p.ListAttestations() {
+		attData, err := p.ReadAttestation(attPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading attestation %s from %s: %w", attPath, srcStream, err)
+		}
+		if err := verify.ValidateAttestation(attData); err != nil {
+			return nil, fmt.Errorf("validating attestation %s from %s: %w", attPath, srcStream, err)
+		}
+		if err := verifyAttestationForMerge(ctx, opts, attData, attPath, srcStream, packDigest); err != nil {
+			return nil, err
+		}
+		parsed, err := parseEmbeddedAttestation(attData)
+		if err != nil {
+			return nil, fmt.Errorf("parsing embedded attestation %s from %s: %w", attPath, srcStream, err)
+		}
+		embedded = append(embedded, *parsed)
+	}
+	return embedded, nil
+}
+
+func verifyAttestationForMerge(ctx context.Context, opts Options, attData []byte, attPath, srcStream, packDigest string) error {
+	if !opts.VerifyAttestations {
+		return nil
+	}
+	if opts.Verifier == nil {
+		return errors.E(errors.InvalidInput, "verifier required when VerifyAttestations is true", nil)
+	}
+	result, err := opts.Verifier.Verify(ctx, attData)
+	if err != nil {
+		return fmt.Errorf("verifying attestation %s from %s: %w", attPath, srcStream, err)
+	}
+	if err := verify.VerifyStatementSemantics(result, packDigest); err != nil {
+		return fmt.Errorf("attestation %s from %s: %w", attPath, srcStream, err)
+	}
 	return nil
 }
 

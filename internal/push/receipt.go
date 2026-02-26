@@ -3,7 +3,6 @@ package push
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -94,11 +93,6 @@ func (w *ReceiptWriter) Write(receipt *Receipt) (string, error) {
 	// Remote names come from user configuration and could contain "../" sequences.
 	if err := validate.PathComponent(receipt.Remote); err != nil {
 		return "", fmt.Errorf("invalid remote name %q: %w", receipt.Remote, err)
-	}
-
-	// Ensure base directory exists (this is trusted, created by us)
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
-		return "", fmt.Errorf("creating receipt base directory: %w", err)
 	}
 
 	// Generate filename: <timestamp>_<shortdigest>.json

@@ -12,6 +12,9 @@ import (
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/safefile/tx"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/internal/timestamp"
 )
 
@@ -29,8 +32,15 @@ func NewUtilitySyncer() *UtilitySyncer {
 
 // InstallOpts controls utility installation behavior.
 type InstallOpts struct {
-	InsecureSkipVerify   bool // Skip Sigstore verification (NOT RECOMMENDED)
-	InsecureTrustOnFirst bool // Trust digest without Sigstore (NOT RECOMMENDED)
+	Secure SecureInstallOptions
+	Unsafe UnsafeInstallOverrides
+}
+
+type SecureInstallOptions struct{}
+
+type UnsafeInstallOverrides struct {
+	SkipVerify   bool // Skip Sigstore verification (NOT RECOMMENDED)
+	TrustOnFirst bool // Trust digest without Sigstore (NOT RECOMMENDED)
 }
 
 // InstallResult contains the result of installing a utility.
@@ -46,118 +56,203 @@ type InstallResult struct {
 // Install downloads and installs a utility from a source.
 // Source format: owner/repo@version (e.g., "locktivity/epack-tools-viewer@v1.0.0")
 func (s *UtilitySyncer) Install(ctx context.Context, name, source string, opts InstallOpts) (*InstallResult, error) {
-	// Parse source
-	owner, repo, constraint, err := github.ParseSource(source)
-	if err != nil {
-		return nil, fmt.Errorf("invalid source %q: %w", source, err)
+	hasUnsafeOverrides := opts.Unsafe.SkipVerify || opts.Unsafe.TrustOnFirst
+	if err := securitypolicy.EnforceStrictProduction("utility_install", hasUnsafeOverrides); err != nil {
+		return nil, err
+	}
+	if hasUnsafeOverrides {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   string(componenttypes.KindUtility),
+			Name:        name,
+			Description: "utility install running with insecure verification override",
+			Attrs: map[string]string{
+				"skip_verify":    fmt.Sprintf("%t", opts.Unsafe.SkipVerify),
+				"trust_on_first": fmt.Sprintf("%t", opts.Unsafe.TrustOnFirst),
+			},
+		})
 	}
 
-	// Resolve version
-	repoSource := fmt.Sprintf("%s/%s", owner, repo)
-	version, err := s.Registry.ResolveVersion(ctx, repoSource, constraint)
-	if err != nil {
-		return nil, fmt.Errorf("resolving version: %w", err)
-	}
-
-	platform := platform.Key(runtime.GOOS, runtime.GOARCH)
-
-	// Fetch release info
-	release, err := s.Registry.FetchRelease(ctx, repoSource, version)
-	if err != nil {
-		return nil, fmt.Errorf("fetching release %s: %w", version, err)
-	}
-
-	// Find binary asset - utilities use epack-util-{name} naming
-	binaryName := fmt.Sprintf("epack-util-%s", name)
-	asset, err := s.Registry.FindBinaryAsset(release, binaryName, runtime.GOOS, runtime.GOARCH)
-	if err != nil {
-		return nil, fmt.Errorf("finding binary asset: %w", err)
-	}
-
-	// Compute install path
-	installPath, err := UtilityInstallPath(name, version)
-	if err != nil {
-		return nil, fmt.Errorf("computing install path: %w", err)
-	}
-	installDir := filepath.Dir(installPath)
-
-	// Create install directory
-	binDir, err := BinPath()
+	owner, repo, version, err := s.resolveInstallSource(ctx, source)
 	if err != nil {
 		return nil, err
 	}
+
+	platform := platform.Key(runtime.GOOS, runtime.GOARCH)
+	repoSource := fmt.Sprintf("%s/%s", owner, repo)
+	release, asset, err := s.fetchReleaseAssetForInstall(ctx, repoSource, version, name)
+	if err != nil {
+		return nil, err
+	}
+
+	installPath, tmpPath, installDir, err := prepareUtilityInstallPath(name, version)
+	if err != nil {
+		return nil, err
+	}
+	cleanupTmp := func() { _ = os.Remove(tmpPath) }
+
+	if err := ensureUtilityInstallDir(installDir); err != nil {
+		return nil, err
+	}
+
+	digest, err := s.downloadAndDigestUtility(ctx, asset, tmpPath)
+	if err != nil {
+		cleanupTmp()
+		return nil, err
+	}
+
+	sigResult, verified, err := s.maybeVerifyUtilitySigstore(ctx, name, release, asset, tmpPath, installDir, owner, repo, version, opts)
+	if err != nil {
+		cleanupTmp()
+		return nil, err
+	}
+
+	if err := installUtilityBinary(tmpPath, installPath); err != nil {
+		cleanupTmp()
+		return nil, err
+	}
+
+	if err := s.updateUtilitiesLock(name, source, owner, repo, version, platform, digest, asset, sigResult, opts); err != nil {
+		return nil, err
+	}
+
+	return &InstallResult{
+		Name:      name,
+		Version:   version,
+		Platform:  platform,
+		Installed: true,
+		Verified:  verified,
+		Path:      installPath,
+	}, nil
+}
+
+func (s *UtilitySyncer) resolveInstallSource(ctx context.Context, source string) (owner, repo, version string, err error) {
+	owner, repo, constraint, err := github.ParseSource(source)
+	if err != nil {
+		return "", "", "", fmt.Errorf("invalid source %q: %w", source, err)
+	}
+	repoSource := fmt.Sprintf("%s/%s", owner, repo)
+	version, err = s.Registry.ResolveVersion(ctx, repoSource, constraint)
+	if err != nil {
+		return "", "", "", fmt.Errorf("resolving version: %w", err)
+	}
+	return owner, repo, version, nil
+}
+
+func (s *UtilitySyncer) fetchReleaseAssetForInstall(ctx context.Context, repoSource, version, name string) (*sync.ReleaseInfo, *sync.AssetInfo, error) {
+	release, err := s.Registry.FetchRelease(ctx, repoSource, version)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching release %s: %w", version, err)
+	}
+
+	binaryName := fmt.Sprintf("epack-util-%s", name)
+	asset, err := s.Registry.FindBinaryAsset(release, binaryName, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return nil, nil, fmt.Errorf("finding binary asset: %w", err)
+	}
+	return release, asset, nil
+}
+
+func prepareUtilityInstallPath(name, version string) (installPath, tmpPath, installDir string, err error) {
+	installPath, err = UtilityInstallPath(name, version)
+	if err != nil {
+		return "", "", "", fmt.Errorf("computing install path: %w", err)
+	}
+	installDir = filepath.Dir(installPath)
+	return installPath, installPath + ".tmp", installDir, nil
+}
+
+func ensureUtilityInstallDir(installDir string) error {
+	binDir, err := BinPath()
+	if err != nil {
+		return err
+	}
 	if err := safefile.MkdirAll(binDir, installDir); err != nil {
-		return nil, fmt.Errorf("creating install directory: %w", err)
+		return fmt.Errorf("creating install directory: %w", err)
 	}
+	return nil
+}
 
-	// Download binary
-	tmpPath := installPath + ".tmp"
+func (s *UtilitySyncer) downloadAndDigestUtility(ctx context.Context, asset *sync.AssetInfo, tmpPath string) (string, error) {
 	if err := s.Registry.DownloadAsset(ctx, asset.URL, tmpPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("downloading %s: %w", asset.Name, err)
+		return "", fmt.Errorf("downloading %s: %w", asset.Name, err)
 	}
-
-	// Compute digest
 	digest, err := sync.ComputeDigest(tmpPath)
 	if err != nil {
-		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("computing digest: %w", err)
+		return "", fmt.Errorf("computing digest: %w", err)
+	}
+	return digest, nil
+}
+
+func (s *UtilitySyncer) maybeVerifyUtilitySigstore(ctx context.Context, name string, release *sync.ReleaseInfo, asset *sync.AssetInfo, tmpPath, installDir, owner, repo, version string, opts InstallOpts) (*sync.SigstoreResult, bool, error) {
+	if opts.Unsafe.SkipVerify || opts.Unsafe.TrustOnFirst {
+		return nil, false, nil
 	}
 
-	var sigResult *sync.SigstoreResult
-	verified := false
-
-	if !opts.InsecureSkipVerify && !opts.InsecureTrustOnFirst {
-		// Full Sigstore verification
-		bundleAsset, err := s.Registry.FindSigstoreBundle(release, asset.Name)
-		if err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, fmt.Errorf("sigstore bundle not found for %s: use --insecure-skip-verify to bypass", asset.Name)
-		}
-
-		safeBundleName, err := sync.SanitizeAssetName(bundleAsset.Name)
-		if err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, fmt.Errorf("invalid bundle asset name: %w", err)
-		}
-
-		bundlePath := filepath.Join(installDir, safeBundleName)
-		if err := s.Registry.DownloadAsset(ctx, bundleAsset.URL, bundlePath); err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, fmt.Errorf("downloading sigstore bundle: %w", err)
-		}
-
-		// Build expected identity
-		expectedRepoURI := sync.BuildGitHubRepoURL(owner, repo)
-		expectedRef := sync.BuildGitHubRefTag(version)
-		expectedIdentity := &sync.ExpectedIdentity{
-			SourceRepositoryURI: expectedRepoURI,
-			SourceRepositoryRef: expectedRef,
-		}
-
-		sigResult, err = sync.VerifySigstoreBundle(bundlePath, tmpPath, expectedIdentity)
-		_ = os.Remove(bundlePath) // Clean up bundle
-		if err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, fmt.Errorf("sigstore verification failed: %w", err)
-		}
-		verified = true
+	bundleAsset, err := s.Registry.FindSigstoreBundle(release, asset.Name)
+	if err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   string(componenttypes.KindUtility),
+			Name:        name,
+			Description: "sigstore bundle not found for utility install",
+		})
+		return nil, false, fmt.Errorf("sigstore bundle not found for %s: use --insecure-skip-verify to bypass", asset.Name)
 	}
 
-	// Make executable and rename atomically
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("making binary executable: %w", err)
-	}
-	if err := os.Rename(tmpPath, installPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("installing binary: %w", err)
+	safeBundleName, err := sync.SanitizeAssetName(bundleAsset.Name)
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid bundle asset name: %w", err)
 	}
 
-	// Update utilities lockfile
+	bundlePath := filepath.Join(installDir, safeBundleName)
+	if err := s.Registry.DownloadAsset(ctx, bundleAsset.URL, bundlePath); err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   string(componenttypes.KindUtility),
+			Name:        name,
+			Description: "failed to download sigstore bundle for utility install",
+		})
+		return nil, false, fmt.Errorf("downloading sigstore bundle: %w", err)
+	}
+	defer func() { _ = os.Remove(bundlePath) }()
+
+	expectedIdentity := &sync.ExpectedIdentity{
+		SourceRepositoryURI: sync.BuildGitHubRepoURL(owner, repo),
+		SourceRepositoryRef: sync.BuildGitHubRefTag(version),
+	}
+	sigResult, err := sync.VerifySigstoreBundle(bundlePath, tmpPath, expectedIdentity)
+	if err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   string(componenttypes.KindUtility),
+			Name:        name,
+			Description: "sigstore verification failed for utility install",
+		})
+		return nil, false, fmt.Errorf("sigstore verification failed: %w", err)
+	}
+	return sigResult, true, nil
+}
+
+func installUtilityBinary(tmpPath, installPath string) error {
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return fmt.Errorf("reading downloaded utility: %w", err)
+	}
+	if err := tx.WriteAtomicPath(installPath, data, 0755); err != nil {
+		return fmt.Errorf("installing binary: %w", err)
+	}
+	if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cleaning temp utility binary: %w", err)
+	}
+
+	return nil
+}
+
+func (s *UtilitySyncer) updateUtilitiesLock(name, source, owner, repo, version, platform, digest string, asset *sync.AssetInfo, sigResult *sync.SigstoreResult, opts InstallOpts) error {
 	lf, err := LoadUtilitiesLock()
 	if err != nil {
-		return nil, fmt.Errorf("loading utilities lock: %w", err)
+		return fmt.Errorf("loading utilities lock: %w", err)
 	}
 
 	lockedUtil := componenttypes.LockedUtility{
@@ -183,7 +278,7 @@ func (s *UtilitySyncer) Install(ctx context.Context, name, source string, opts I
 			Status:     "verified",
 			VerifiedAt: timestamp.Now().String(),
 		}
-	} else if opts.InsecureSkipVerify || opts.InsecureTrustOnFirst {
+	} else if opts.Unsafe.SkipVerify || opts.Unsafe.TrustOnFirst {
 		lockedUtil.Verification = &componenttypes.Verification{
 			Status: "skipped",
 		}
@@ -196,17 +291,9 @@ func (s *UtilitySyncer) Install(ctx context.Context, name, source string, opts I
 
 	lf.SetUtility(name, lockedUtil)
 	if err := lf.Save(); err != nil {
-		return nil, fmt.Errorf("saving utilities lock: %w", err)
+		return fmt.Errorf("saving utilities lock: %w", err)
 	}
-
-	return &InstallResult{
-		Name:      name,
-		Version:   version,
-		Platform:  platform,
-		Installed: true,
-		Verified:  verified,
-		Path:      installPath,
-	}, nil
+	return nil
 }
 
 // Remove uninstalls a utility.

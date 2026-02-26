@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	syncstd "sync"
 	"testing"
 
 	"github.com/locktivity/epack/errors"
@@ -15,7 +16,27 @@ import (
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/platform"
+	"github.com/locktivity/epack/internal/securityaudit"
 )
+
+type securityAuditSink struct {
+	mu     syncstd.Mutex
+	events []securityaudit.Event
+}
+
+func (s *securityAuditSink) HandleSecurityEvent(evt securityaudit.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, evt)
+}
+
+func (s *securityAuditSink) Snapshot() []securityaudit.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]securityaudit.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
 
 // syncTestDirInCwd creates a temporary directory under the current working directory
 // for tests that need to use LockFile.Save() (which requires paths under cwd).
@@ -338,13 +359,107 @@ func TestSyncerVerifyExternal(t *testing.T) {
 
 	// Should skip verification with InsecureSkipVerify
 	// SECURITY: Verified MUST be false when verification was skipped
-	result, err = syncer.VerifyExternalCollector("external", cfg, lf, platform, sync.SyncOpts{InsecureSkipVerify: true})
+	result, err = syncer.VerifyExternalCollector("external", cfg, lf, platform, sync.SyncOpts{Unsafe: sync.SyncUnsafeOverrides{SkipVerify: true}})
 	if err != nil {
 		t.Fatalf("verifyExternal() with InsecureSkipVerify error: %v", err)
 	}
 	if result.Verified {
 		t.Error("SECURITY: Verified should be false when InsecureSkipVerify is set")
 	}
+}
+
+func TestSyncerVerifyExternalEmitsAuditEvents(t *testing.T) {
+	tmpDir := t.TempDir()
+	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
+
+	binaryPath := filepath.Join(tmpDir, "external-binary")
+	if err := os.WriteFile(binaryPath, []byte("external binary content"), 0755); err != nil {
+		t.Fatalf("writing binary: %v", err)
+	}
+	digest, err := sync.ComputeDigest(binaryPath)
+	if err != nil {
+		t.Fatalf("computing digest: %v", err)
+	}
+
+	cfg := config.CollectorConfig{Binary: binaryPath}
+	syncer := &sync.Syncer{BaseDir: filepath.Join(tmpDir, ".epack")}
+
+	t.Run("insecure bypass", func(t *testing.T) {
+		lf := lockfile.New()
+		lf.Collectors["external"] = lockfile.LockedCollector{
+			Kind: "external",
+			Platforms: map[string]componenttypes.LockedPlatform{
+				platformKey: {Digest: digest},
+			},
+		}
+
+		sink := &securityAuditSink{}
+		securityaudit.SetSink(sink)
+		t.Cleanup(func() { securityaudit.SetSink(nil) })
+
+		_, err := syncer.VerifyExternalCollector("external", cfg, lf, platformKey, sync.SyncOpts{
+			Unsafe: sync.SyncUnsafeOverrides{SkipVerify: true},
+		})
+		if err != nil {
+			t.Fatalf("VerifyExternalCollector() error: %v", err)
+		}
+
+		events := sink.Snapshot()
+		for _, evt := range events {
+			if evt.Type == securityaudit.EventInsecureBypass && evt.Component == string(componenttypes.KindCollector) && evt.Name == "external" {
+				return
+			}
+		}
+		t.Fatalf("expected insecure bypass event, got: %+v", events)
+	})
+
+	t.Run("verification fail", func(t *testing.T) {
+		lf := lockfile.New()
+		lf.Collectors["external"] = lockfile.LockedCollector{
+			Kind: "external",
+			Platforms: map[string]componenttypes.LockedPlatform{
+				platformKey: {Digest: "sha256:wrongdigest"},
+			},
+		}
+
+		sink := &securityAuditSink{}
+		securityaudit.SetSink(sink)
+		t.Cleanup(func() { securityaudit.SetSink(nil) })
+
+		_, err := syncer.VerifyExternalCollector("external", cfg, lf, platformKey, sync.SyncOpts{})
+		if err == nil {
+			t.Fatal("expected digest mismatch error")
+		}
+
+		events := sink.Snapshot()
+		for _, evt := range events {
+			if evt.Type == securityaudit.EventVerificationFail && evt.Component == string(componenttypes.KindCollector) && evt.Name == "external" {
+				return
+			}
+		}
+		t.Fatalf("expected verification failure event, got: %+v", events)
+	})
+
+	t.Run("unpinned execution", func(t *testing.T) {
+		lf := lockfile.New()
+
+		sink := &securityAuditSink{}
+		securityaudit.SetSink(sink)
+		t.Cleanup(func() { securityaudit.SetSink(nil) })
+
+		_, err := syncer.VerifyExternalCollector("external", cfg, lf, platformKey, sync.SyncOpts{})
+		if err != nil {
+			t.Fatalf("VerifyExternalCollector() unexpected error: %v", err)
+		}
+
+		events := sink.Snapshot()
+		for _, evt := range events {
+			if evt.Type == securityaudit.EventUnpinnedExecution && evt.Component == string(componenttypes.KindCollector) && evt.Name == "external" {
+				return
+			}
+		}
+		t.Fatalf("expected unpinned execution event, got: %+v", events)
+	})
 }
 
 func TestSyncerVerifyExternalFrozenMissingPlatform(t *testing.T) {
@@ -373,7 +488,7 @@ func TestSyncerVerifyExternalFrozenMissingPlatform(t *testing.T) {
 	}
 
 	// Non-frozen: should succeed (skipped, unverified)
-	result, err := syncer.VerifyExternalCollector("external", cfg, lf, platform, sync.SyncOpts{Frozen: false})
+	result, err := syncer.VerifyExternalCollector("external", cfg, lf, platform, sync.SyncOpts{Secure: sync.SyncSecureOptions{Frozen: false}})
 	if err != nil {
 		t.Errorf("verifyExternal() non-frozen unexpected error: %v", err)
 	}
@@ -382,7 +497,7 @@ func TestSyncerVerifyExternalFrozenMissingPlatform(t *testing.T) {
 	}
 
 	// Frozen: should fail - platform not locked
-	_, err = syncer.VerifyExternalCollector("external", cfg, lf, platform, sync.SyncOpts{Frozen: true})
+	_, err = syncer.VerifyExternalCollector("external", cfg, lf, platform, sync.SyncOpts{Secure: sync.SyncSecureOptions{Frozen: true}})
 	if err == nil {
 		t.Error("verifyExternal() frozen expected error for missing platform")
 	}
@@ -401,7 +516,7 @@ func TestSyncerVerifyExternalFrozenMissingPlatform(t *testing.T) {
 		},
 	}
 
-	_, err = syncer.VerifyExternalCollector("external", cfg, lf, platform, sync.SyncOpts{Frozen: true})
+	_, err = syncer.VerifyExternalCollector("external", cfg, lf, platform, sync.SyncOpts{Secure: sync.SyncSecureOptions{Frozen: true}})
 	if err == nil {
 		t.Error("verifyExternal() frozen expected error for empty digest")
 	}
@@ -425,8 +540,8 @@ func TestSyncerFrozenInsecureCombination(t *testing.T) {
 
 	// Should fail with frozen + insecure
 	_, err := syncer.Sync(context.Background(), cfg, sync.SyncOpts{
-		Frozen:             true,
-		InsecureSkipVerify: true,
+		Secure: sync.SyncSecureOptions{Frozen: true},
+		Unsafe: sync.SyncUnsafeOverrides{SkipVerify: true},
 	})
 	if err == nil {
 		t.Error("Sync() expected error for frozen + insecure combination")
@@ -520,7 +635,7 @@ func TestSyncerFrozenNoNetwork(t *testing.T) {
 	}
 
 	// Frozen mode should fail when binary not installed (no network allowed)
-	_, err := syncer.Sync(context.Background(), cfg, sync.SyncOpts{Frozen: true})
+	_, err := syncer.Sync(context.Background(), cfg, sync.SyncOpts{Secure: sync.SyncSecureOptions{Frozen: true}})
 	if err == nil {
 		t.Error("Sync() with --frozen expected error when binary not installed")
 	}
@@ -575,7 +690,7 @@ func TestSyncerFrozenVerifiesInstalled(t *testing.T) {
 	}
 
 	// Frozen mode should succeed when binary is installed and digest matches
-	results, err := syncer.Sync(context.Background(), cfg, sync.SyncOpts{Frozen: true})
+	results, err := syncer.Sync(context.Background(), cfg, sync.SyncOpts{Secure: sync.SyncSecureOptions{Frozen: true}})
 	if err != nil {
 		t.Fatalf("Sync() with --frozen error: %v", err)
 	}

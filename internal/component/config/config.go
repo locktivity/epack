@@ -376,13 +376,31 @@ func (c *JobConfig) Validate() error {
 			len(c.Remotes), limits.MaxRemoteCount)
 	}
 
-	// Validate platforms
+	if err := c.validatePlatforms(); err != nil {
+		return err
+	}
+	if err := c.validateCollectors(); err != nil {
+		return err
+	}
+	if err := c.validateTools(); err != nil {
+		return err
+	}
+	if err := c.validateRemotes(); err != nil {
+		return err
+	}
+	return c.validateEnvironmentOverrides()
+}
+
+func (c *JobConfig) validatePlatforms() error {
 	for _, platform := range c.Platforms {
 		if err := ValidatePlatform(platform); err != nil {
 			return err
 		}
 	}
+	return nil
+}
 
+func (c *JobConfig) validateCollectors() error {
 	for name, collector := range c.Collectors {
 		// Validate collector name to prevent path traversal
 		if err := ValidateCollectorName(name); err != nil {
@@ -402,7 +420,10 @@ func (c *JobConfig) Validate() error {
 			return fmt.Errorf("collector %q: %w", name, err)
 		}
 	}
+	return nil
+}
 
+func (c *JobConfig) validateTools() error {
 	for name, tool := range c.Tools {
 		// Validate tool name to prevent path traversal
 		if err := ValidateToolName(name); err != nil {
@@ -422,8 +443,10 @@ func (c *JobConfig) Validate() error {
 			return fmt.Errorf("tool %q: %w", name, err)
 		}
 	}
+	return nil
+}
 
-	// Validate remotes
+func (c *JobConfig) validateRemotes() error {
 	for name, remote := range c.Remotes {
 		if err := ValidateRemoteName(name); err != nil {
 			return fmt.Errorf("remote %q: %w", name, err)
@@ -453,8 +476,10 @@ func (c *JobConfig) Validate() error {
 			return fmt.Errorf("remote %q: %w", name, err)
 		}
 	}
+	return nil
+}
 
-	// Validate environment overrides
+func (c *JobConfig) validateEnvironmentOverrides() error {
 	for envName, envCfg := range c.Environments {
 		if err := ValidateEnvironmentName(envName); err != nil {
 			return fmt.Errorf("environment %q: %w", envName, err)
@@ -471,7 +496,6 @@ func (c *JobConfig) Validate() error {
 			}
 		}
 	}
-
 	return nil
 }
 

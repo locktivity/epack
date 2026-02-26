@@ -122,7 +122,7 @@ epack uses Go build tags for optional features:
 
 | Build Tag | Feature | Dependencies Added |
 |-----------|---------|-------------------|
-| `components` | Collector/tool orchestration (`new`, `init`, `lock`, `sync`, `install`, `update`, `collect`, `collector`, `tool` commands) | (none beyond core) |
+| `components` | Full component/remote/catalog/sdk surface (`new`, `init`, `lock`, `sync`, `install`, `update`, `collect`, `collector`, `tool`, `utility`, `catalog`, `push`, `pull`, `remote`, `sdk` commands) | (none beyond core) |
 
 Build commands:
 ```bash

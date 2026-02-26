@@ -85,10 +85,12 @@ func runCollect(cmd *cobra.Command, args []string) error {
 
 	// Build options from flags
 	opts := collector.CollectOpts{
+		Secure: collector.SecureRunOptions{
+			Frozen:  collectFrozen,
+			Timeout: collectTimeout,
+		},
 		WorkDir:    workDir,
 		OutputPath: collectOutput,
-		Frozen:     collectFrozen,
-		Timeout:    collectTimeout,
 	}
 
 	// Print mode header

@@ -1,6 +1,11 @@
 package sync
 
-import "os"
+import (
+	"fmt"
+	"os"
+
+	"github.com/locktivity/epack/internal/safefile/tx"
+)
 
 // Installer abstracts local binary installation for testability.
 // The default implementation writes to the filesystem.
@@ -36,10 +41,17 @@ type DefaultInstaller struct{}
 
 // Install implements Installer by making the binary executable and renaming atomically.
 func (DefaultInstaller) Install(tmpPath, installPath string) error {
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		return err
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return fmt.Errorf("reading temporary binary: %w", err)
 	}
-	return os.Rename(tmpPath, installPath)
+	if err := tx.WriteAtomicPath(installPath, data, 0755); err != nil {
+		return fmt.Errorf("installing binary: %w", err)
+	}
+	if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cleaning temporary binary: %w", err)
+	}
+	return nil
 }
 
 // Verify implements Installer using VerifyDigest.

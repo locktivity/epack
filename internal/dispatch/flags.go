@@ -30,54 +30,61 @@ type WrapperFlags struct {
 //
 // Returns (WrapperFlags, toolArgs, error)
 func ParseWrapperArgs(args []string) (WrapperFlags, []string, error) {
-	// Start with env var defaults
 	flags := WrapperFlagsFromEnv()
-	var toolArgs []string
-
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-
-		// "--" ends wrapper flag parsing; everything after goes to tool
 		if arg == "--" {
 			flags.HasSeparator = true
 			if i+1 < len(args) {
-				toolArgs = args[i+1:]
+				return flags, args[i+1:], nil
 			}
-			return flags, toolArgs, nil
+			return flags, nil, nil
 		}
-
-		// Parse wrapper flags - CLI overrides env vars
-		switch {
-		case arg == "--pack" || arg == "-p":
-			if i+1 >= len(args) {
-				return flags, nil, fmt.Errorf("--pack requires an argument")
-			}
-			i++
-			flags.PackPath = args[i]
-		case strings.HasPrefix(arg, "--pack="):
-			flags.PackPath = strings.TrimPrefix(arg, "--pack=")
-		case arg == "--output-dir" || arg == "-o":
-			if i+1 >= len(args) {
-				return flags, nil, fmt.Errorf("--output-dir requires an argument")
-			}
-			i++
-			flags.OutputDir = args[i]
-		case strings.HasPrefix(arg, "--output-dir="):
-			flags.OutputDir = strings.TrimPrefix(arg, "--output-dir=")
-		case arg == "--json":
-			flags.JSONMode = true
-		case arg == "--quiet" || arg == "-q":
-			flags.QuietMode = true
-		case arg == "--insecure-allow-unpinned":
-			flags.InsecureAllowUnpinned = true
-		default:
-			// Not a wrapper flag - everything from here goes to tool
-			toolArgs = args[i:]
-			return flags, toolArgs, nil
+		consumed, isWrapper, err := applyWrapperFlag(&flags, args, i)
+		if err != nil {
+			return flags, nil, err
 		}
+		if !isWrapper {
+			return flags, args[i:], nil
+		}
+		i += consumed
 	}
+	return flags, nil, nil
+}
 
-	return flags, toolArgs, nil
+func applyWrapperFlag(flags *WrapperFlags, args []string, i int) (consumed int, isWrapper bool, err error) {
+	arg := args[i]
+	switch {
+	case arg == "--pack" || arg == "-p":
+		if i+1 >= len(args) {
+			return 0, true, fmt.Errorf("--pack requires an argument")
+		}
+		flags.PackPath = args[i+1]
+		return 1, true, nil
+	case strings.HasPrefix(arg, "--pack="):
+		flags.PackPath = strings.TrimPrefix(arg, "--pack=")
+		return 0, true, nil
+	case arg == "--output-dir" || arg == "-o":
+		if i+1 >= len(args) {
+			return 0, true, fmt.Errorf("--output-dir requires an argument")
+		}
+		flags.OutputDir = args[i+1]
+		return 1, true, nil
+	case strings.HasPrefix(arg, "--output-dir="):
+		flags.OutputDir = strings.TrimPrefix(arg, "--output-dir=")
+		return 0, true, nil
+	case arg == "--json":
+		flags.JSONMode = true
+		return 0, true, nil
+	case arg == "--quiet" || arg == "-q":
+		flags.QuietMode = true
+		return 0, true, nil
+	case arg == "--insecure-allow-unpinned":
+		flags.InsecureAllowUnpinned = true
+		return 0, true, nil
+	default:
+		return 0, false, nil
+	}
 }
 
 // WrapperFlagsFromEnv reads wrapper flags from environment variables.

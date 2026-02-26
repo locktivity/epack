@@ -8,10 +8,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/dispatch"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/internal/toolprotocol"
 	"github.com/spf13/cobra"
 )
@@ -24,6 +28,25 @@ func mockCmd() (*cobra.Command, *bytes.Buffer) {
 	cmd.SetErr(stderr)
 	cmd.SetContext(context.Background())
 	return cmd, stderr
+}
+
+type dispatchAuditSink struct {
+	mu     sync.Mutex
+	events []securityaudit.Event
+}
+
+func (s *dispatchAuditSink) HandleSecurityEvent(evt securityaudit.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, evt)
+}
+
+func (s *dispatchAuditSink) Snapshot() []securityaudit.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]securityaudit.Event, len(s.events))
+	copy(out, s.events)
+	return out
 }
 
 func TestDispatchTool_ToolNotFound(t *testing.T) {
@@ -224,5 +247,43 @@ func TestFindProjectRoot(t *testing.T) {
 	_, err = findProjectRoot(otherDir)
 	if err == nil {
 		t.Error("expected error when no epack.yaml exists")
+	}
+}
+
+func TestValidateDispatchFlags_EmitsInsecureBypassWhenAllowed(t *testing.T) {
+	t.Setenv(securitypolicy.StrictProductionEnvVar, "")
+
+	sink := &dispatchAuditSink{}
+	securityaudit.SetSink(sink)
+	t.Cleanup(func() { securityaudit.SetSink(nil) })
+
+	if err := validateDispatchFlags(true); err != nil {
+		t.Fatalf("validateDispatchFlags(true) error = %v", err)
+	}
+	for _, evt := range sink.Snapshot() {
+		if evt.Type == securityaudit.EventInsecureBypass && evt.Component == "dispatch" {
+			return
+		}
+	}
+	t.Fatalf("expected insecure bypass event, got: %+v", sink.Snapshot())
+}
+
+func TestValidateDispatchFlags_StrictProductionBlocksInsecure(t *testing.T) {
+	t.Setenv(securitypolicy.StrictProductionEnvVar, "1")
+
+	err := validateDispatchFlags(true)
+	if err == nil {
+		t.Fatal("expected strict production enforcement error")
+	}
+	if !strings.Contains(err.Error(), "strict production mode forbids insecure execution overrides") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateDispatchFlags_AllowsSecure(t *testing.T) {
+	t.Setenv(securitypolicy.StrictProductionEnvVar, "1")
+
+	if err := validateDispatchFlags(false); err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 }

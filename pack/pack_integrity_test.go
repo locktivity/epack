@@ -134,7 +134,7 @@ func TestReadArtifact_ValidDigest(t *testing.T) {
 		t.Fatalf("ReadArtifact() error = %v", err)
 	}
 
-	if !bytes.Equal(data, content) {
+	if !bytes.Equal(data.Bytes(), content) {
 		t.Errorf("ReadArtifact() = %q, want %q", data, content)
 	}
 }
@@ -405,7 +405,7 @@ func TestIntegrityBypass_PoC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	if string(data) != "MALICIOUS" {
+	if string(data.UnsafeBytes()) != "MALICIOUS" {
 		t.Fatalf("ReadFile() = %q, expected MALICIOUS", data)
 	}
 

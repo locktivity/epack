@@ -20,6 +20,8 @@ import (
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/internal/platform"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 )
 
 // Collector config is passed only via EPACK_COLLECTOR_CONFIG.
@@ -92,25 +94,26 @@ func NewRunner(workDir string) *Runner {
 }
 
 // RunOptions controls collector execution.
+type SecureRunOptions struct {
+	Frozen             bool          // Fail on any mismatch (CI mode)
+	Only               []string      // Run only these collectors (empty = all)
+	Timeout            time.Duration // Timeout per collector (0 = use DefaultCollectorTimeout)
+	MaxAggregateBudget int64         // Total bytes retained across all collector outputs
+}
+
+// UnsafeOverrides groups insecure execution toggles that require explicit opt-in.
+type UnsafeOverrides struct {
+	AllowUnverifiedInstall          bool // Allow components installed with insecure verification
+	AllowUnpinned                   bool // Allow external collectors not pinned in lockfile
+	AllowUnverifiedSourceCollectors bool // Allow source collectors missing lockfile digest
+	InheritPath                     bool // Allow inheriting PATH from environment
+}
+
 type RunOptions struct {
-	Frozen                  bool          // Fail on any mismatch (CI mode)
-	Only                    []string      // Run only these collectors (empty = all)
-	InsecureAllowUnverified bool          // Allow running collectors installed with --insecure-skip-verify
-	InsecureAllowUnpinned   bool          // Allow external collectors not pinned in lockfile (security risk)
-	Timeout                 time.Duration // Timeout per collector (0 = use DefaultCollectorTimeout)
-
-	// MaxAggregateBudget overrides the default aggregate output budget (MaxAggregateOutputBytes).
-	// Set to 0 to use the default. This is the total bytes retained across all collector outputs.
-	MaxAggregateBudget int64
-
-	// SECURITY: InsecureInheritPath allows inheriting PATH from the environment.
-	// When false (default), collectors run with a safe, deterministic PATH.
-	// This prevents PATH injection attacks where a malicious interpreter is used.
-	InsecureInheritPath bool
-
-	// AllowUnverifiedSourceCollectors permits executing source collectors without digest pinning.
-	// Use only for explicit recovery workflows.
-	AllowUnverifiedSourceCollectors bool
+	// Secure defaults.
+	Secure SecureRunOptions
+	// Explicit insecure overrides.
+	Unsafe UnsafeOverrides
 }
 
 // RunResult contains the result of running a collector.
@@ -130,6 +133,18 @@ type CollectResult struct {
 
 // Run executes all collectors and returns their outputs.
 func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions) (*CollectResult, error) {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        opts.Secure.Frozen,
+		AllowUnpinned: opts.Unsafe.AllowUnpinned,
+	}).Enforce(); err != nil {
+		return nil, err
+	}
+	if err := securitypolicy.EnforceStrictProduction("collector",
+		opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnpinned || opts.Unsafe.AllowUnverifiedSourceCollectors || opts.Unsafe.InheritPath,
+	); err != nil {
+		return nil, err
+	}
+
 	// SECURITY: Defense-in-depth validation of config structure.
 	// Config should already be validated by LoadConfig/ParseConfig, but we
 	// validate again in case the config was constructed programmatically.
@@ -146,7 +161,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions
 	platform := platform.Key(runtime.GOOS, runtime.GOARCH)
 
 	// Validate in frozen mode
-	if opts.Frozen {
+	if opts.Secure.Frozen {
 		if err := r.validateFrozen(cfg, lf, platform); err != nil {
 			return nil, err
 		}
@@ -166,7 +181,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions
 	// SECURITY: Enforce aggregate output budget to prevent memory exhaustion.
 	// Without this, N collectors each producing limits.MaxCollectorOutputBytes could
 	// cause OOM with N * 64 MB of retained output data.
-	aggregateBudget := opts.MaxAggregateBudget
+	aggregateBudget := opts.Secure.MaxAggregateBudget
 	if aggregateBudget == 0 {
 		aggregateBudget = limits.MaxAggregateOutputBytes
 	}
@@ -231,22 +246,8 @@ func (r *Runner) runOne(ctx context.Context, name string, cfg config.CollectorCo
 	// Get expected digest for TOCTOU-safe execution
 	dinfo := r.getExpectedDigest(name, lf, platform, opts)
 
-	// SECURITY: Source-based collectors MUST be verified unless explicitly opted out.
-	// This prevents RCE attacks where an attacker modifies the lockfile to remove the
-	// digest or drops a trojan binary at the predictable install path.
-	if dinfo.IsSourceCollector && dinfo.MissingDigest && !opts.AllowUnverifiedSourceCollectors {
-		result.Error = errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-			fmt.Sprintf("collector %q missing digest in lockfile (verification required for source collectors)", name),
-			"Run 'epack collector lock' to compute and pin digests", nil)
-		return result
-	}
-
-	// In frozen mode, verification is mandatory - fail if digest is missing
-	// This prevents executing unpinned binaries in frozen mode
-	if opts.Frozen && dinfo.NeedsVerification && dinfo.Digest == "" {
-		result.Error = errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-			fmt.Sprintf("collector %q missing digest in lockfile (required in --frozen mode)", name),
-			"Run 'epack collector lock' to compute and pin digests", nil)
+	if err := validateCollectorDigestPolicy(name, dinfo, opts); err != nil {
+		result.Error = err
 		return result
 	}
 
@@ -256,44 +257,13 @@ func (r *Runner) runOne(ctx context.Context, name string, cfg config.CollectorCo
 		return result
 	}
 
-	// Determine the path to execute
-	var execPath string
-	var cleanup func()
-
-	if dinfo.NeedsVerification && dinfo.Digest != "" {
-		// TOCTOU-safe execution: verify digest from fd and get safe exec path
-		// This eliminates the race between verification and execution by:
-		// 1. Opening the binary with O_NOFOLLOW
-		// 2. Hashing content via the fd (not the path)
-		// 3. Returning a path that refers to the same verified inode
-		execPath, cleanup, err = execsafe.VerifiedBinaryFD(binaryPath, dinfo.Digest)
-		if err != nil {
-			result.Error = errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
-				fmt.Sprintf("verification failed for collector %q: %v (expected %s)", name, err, dinfo.Digest),
-				"Binary may have been modified. Run 'epack collector sync' to reinstall", nil)
-			return result
-		}
-		if cleanup != nil {
-			defer cleanup()
-		}
-	} else if opts.Frozen {
-		// In frozen mode, all collectors must be verified
-		// This branch handles edge cases where needsVerification returned false
-		result.Error = errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-			fmt.Sprintf("collector %q not pinned in lockfile (required in --frozen mode)", name),
-			"Run 'epack collector lock' to pin all collectors", nil)
+	execPath, cleanup, err := resolveCollectorExecPath(name, binaryPath, cfg, dinfo, opts)
+	if err != nil {
+		result.Error = err
 		return result
-	} else if cfg.Binary != "" && !opts.InsecureAllowUnpinned {
-		// External binary without lockfile pinning - require explicit opt-in
-		// This prevents config injection attacks where a compromised config
-		// can execute arbitrary binaries without verification
-		result.Error = errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-			fmt.Sprintf("external collector %q is not pinned in lockfile", name),
-			"Run 'epack collector lock' to pin external collectors, or use --insecure-allow-unpinned", nil)
-		return result
-	} else {
-		// Non-frozen mode with explicit opt-in for unpinned external collectors
-		execPath = binaryPath
+	}
+	if cleanup != nil {
+		defer cleanup()
 	}
 
 	// Execute the collector
@@ -306,6 +276,74 @@ func (r *Runner) runOne(ctx context.Context, name string, cfg config.CollectorCo
 	result.Success = true
 	result.Output = output
 	return result
+}
+
+func validateCollectorDigestPolicy(name string, dinfo digestInfo, opts RunOptions) error {
+	if dinfo.IsSourceCollector && dinfo.MissingDigest && !opts.Unsafe.AllowUnverifiedSourceCollectors {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("collector %q missing digest in lockfile (verification required for source collectors)", name),
+			"Run 'epack collector lock' to compute and pin digests", nil)
+	}
+	if opts.Secure.Frozen && dinfo.NeedsVerification && dinfo.Digest == "" {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("collector %q missing digest in lockfile (required in --frozen mode)", name),
+			"Run 'epack collector lock' to compute and pin digests", nil)
+	}
+	if dinfo.IsSourceCollector && dinfo.MissingDigest && opts.Unsafe.AllowUnverifiedSourceCollectors {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   string(componenttypes.KindCollector),
+			Name:        name,
+			Description: "allowing source collector execution without lockfile digest",
+			Attrs: map[string]string{
+				"reason": "allow_unverified_source_collectors",
+			},
+		})
+	}
+	return nil
+}
+
+func resolveCollectorExecPath(name, binaryPath string, cfg config.CollectorConfig, dinfo digestInfo, opts RunOptions) (string, func(), error) {
+	if dinfo.NeedsVerification && dinfo.Digest != "" {
+		execPath, cleanup, err := execsafe.VerifiedBinaryFD(binaryPath, dinfo.Digest)
+		if err != nil {
+			securityaudit.Emit(securityaudit.Event{
+				Type:        securityaudit.EventVerificationFail,
+				Component:   string(componenttypes.KindCollector),
+				Name:        name,
+				Description: "collector digest verification failed",
+				Attrs: map[string]string{
+					"path": binaryPath,
+				},
+			})
+			return "", nil, errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
+				fmt.Sprintf("verification failed for collector %q: %v (expected %s)", name, err, dinfo.Digest),
+				"Binary may have been modified. Run 'epack collector sync' to reinstall", nil)
+		}
+		return execPath, cleanup, nil
+	}
+	if opts.Secure.Frozen {
+		return "", nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("collector %q not pinned in lockfile (required in --frozen mode)", name),
+			"Run 'epack collector lock' to pin all collectors", nil)
+	}
+	if cfg.Binary != "" && !opts.Unsafe.AllowUnpinned {
+		return "", nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("external collector %q is not pinned in lockfile", name),
+			"Run 'epack collector lock' to pin external collectors, or use --insecure-allow-unpinned", nil)
+	}
+	if cfg.Binary != "" && opts.Unsafe.AllowUnpinned {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventUnpinnedExecution,
+			Component:   string(componenttypes.KindCollector),
+			Name:        name,
+			Description: "executing external collector without lockfile pin",
+			Attrs: map[string]string{
+				"path": binaryPath,
+			},
+		})
+	}
+	return binaryPath, nil, nil
 }
 
 // executeCollector runs a collector binary and returns its output.
@@ -326,12 +364,12 @@ func (r *Runner) executeCollector(ctx context.Context, name, execPath string, co
 	}
 
 	// Build restricted environment with protocol variables
-	env := collectorexec.BuildEnv(os.Environ(), name, configPath, secrets, os.Getenv, opts.InsecureInheritPath)
+	env := collectorexec.BuildEnv(os.Environ(), name, configPath, secrets, os.Getenv, opts.Unsafe.InheritPath)
 
 	// Execute collector with timeout and output limits
 	result := collectorexec.Run(ctx, name, execPath, configPath, env, collectorexec.RunOptions{
-		Timeout:             opts.Timeout,
-		InsecureInheritPath: opts.InsecureInheritPath,
+		Timeout:             opts.Secure.Timeout,
+		InsecureInheritPath: opts.Unsafe.InheritPath,
 	})
 
 	if result.Err != nil {
@@ -356,7 +394,7 @@ func (r *Runner) getExpectedDigest(name string, lf *lockfile.LockFile, platform 
 		// External binary without lockfile entry
 		return digestInfo{
 			Digest:            "",
-			NeedsVerification: opts.Frozen,
+			NeedsVerification: opts.Secure.Frozen,
 			IsSourceCollector: false,
 			MissingDigest:     false,
 		}
@@ -369,7 +407,7 @@ func (r *Runner) getExpectedDigest(name string, lf *lockfile.LockFile, platform 
 	if !ok || platformEntry.Digest == "" {
 		return digestInfo{
 			Digest:            "",
-			NeedsVerification: opts.Frozen || isSource, // Source collectors always need verification
+			NeedsVerification: opts.Secure.Frozen || isSource, // Source collectors always need verification
 			IsSourceCollector: isSource,
 			MissingDigest:     true, // Collector exists but digest is missing
 		}
@@ -385,7 +423,7 @@ func (r *Runner) getExpectedDigest(name string, lf *lockfile.LockFile, platform 
 
 // checkInsecureMarker checks for insecure install marker and returns error if not allowed.
 func (r *Runner) checkInsecureMarker(name, binaryPath string, opts RunOptions) error {
-	return sync.CheckInsecureMarkerAllowed(name, componenttypes.KindCollector, binaryPath, opts.Frozen, opts.InsecureAllowUnverified)
+	return sync.CheckInsecureMarkerAllowed(name, componenttypes.KindCollector, binaryPath, opts.Secure.Frozen, opts.Unsafe.AllowUnverifiedInstall)
 }
 
 // resolveBinaryPath finds the binary for a collector.
@@ -436,7 +474,7 @@ func (r *Runner) loadLockfile(cfg *config.JobConfig, opts RunOptions) (*lockfile
 
 	lf, err := lockfile.Load(r.LockfilePath)
 	if os.IsNotExist(err) {
-		if hasSource || opts.Frozen {
+		if hasSource || opts.Secure.Frozen {
 			return nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				"lockfile missing", "Run 'epack collector lock && epack collector sync' first", nil)
 		}
@@ -454,72 +492,18 @@ func (r *Runner) loadLockfile(cfg *config.JobConfig, opts RunOptions) (*lockfile
 // In frozen mode, ALL collectors (including external binaries) must be pinned
 // in the lockfile with a platform-specific digest for integrity verification.
 func (r *Runner) validateFrozen(cfg *config.JobConfig, lf *lockfile.LockFile, platform string) error {
-	// Sort collector names for deterministic error messages
 	configNames := make([]string, 0, len(cfg.Collectors))
 	for name := range cfg.Collectors {
 		configNames = append(configNames, name)
 	}
 	sort.Strings(configNames)
 
-	// Check config/lockfile alignment for ALL collectors
 	for _, name := range configNames {
-		c := cfg.Collectors[name]
-		locked, ok := lf.GetCollector(name)
-
-		if c.Source != "" {
-			// Source-based collector
-			if !ok {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares collector %q not found in lockfile", name),
-					"Run 'epack collector lock' to update the lockfile", nil)
-			}
-			// Verify lockfile entry is also source-based (not external)
-			if locked.Kind == "external" {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares %q as source-based but lockfile has it as external", name),
-					"Run 'epack collector lock' to update the lockfile", nil)
-			}
-			platformEntry, hasPlatform := locked.Platforms[platform]
-			if !hasPlatform {
-				return errors.WithHint(errors.BinaryNotFound, exitcode.MissingBinary,
-					fmt.Sprintf("collector %q missing platform %s in lockfile", name, platform),
-					fmt.Sprintf("Run 'epack collector lock --platform %s'", platform), nil)
-			}
-			// Require digest for frozen mode
-			if platformEntry.Digest == "" {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("collector %q missing digest for platform %s in lockfile", name, platform),
-					fmt.Sprintf("Run 'epack collector lock --platform %s' to compute digest", platform), nil)
-			}
-		} else if c.Binary != "" {
-			// External binary collector - MUST be pinned in frozen mode
-			if !ok {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("external collector %q not found in lockfile (required in --frozen mode)", name),
-					"Run 'epack collector lock' to pin external collectors", nil)
-			}
-			if locked.Kind != "external" {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares %q as external binary but lockfile has it as source-based", name),
-					"Run 'epack collector lock' to update the lockfile", nil)
-			}
-			// Require platform entry with digest for external collectors in frozen mode
-			platformEntry, hasPlatform := locked.Platforms[platform]
-			if !hasPlatform {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("external collector %q missing platform %s in lockfile (required in --frozen mode)", name, platform),
-					fmt.Sprintf("Run 'epack collector lock --platform %s' to pin external collectors", platform), nil)
-			}
-			if platformEntry.Digest == "" {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("external collector %q missing digest for platform %s (required in --frozen mode)", name, platform),
-					fmt.Sprintf("Run 'epack collector lock --platform %s' to compute digest", platform), nil)
-			}
+		if err := validateFrozenConfigCollector(name, cfg.Collectors[name], lf, platform); err != nil {
+			return err
 		}
 	}
 
-	// Check lockfile entries match config
-	// Sort lockfile collector names for deterministic error messages
 	lockfileNames := make([]string, 0, len(lf.Collectors))
 	for name := range lf.Collectors {
 		lockfileNames = append(lockfileNames, name)
@@ -527,31 +511,93 @@ func (r *Runner) validateFrozen(cfg *config.JobConfig, lf *lockfile.LockFile, pl
 	sort.Strings(lockfileNames)
 
 	for _, name := range lockfileNames {
-		locked := lf.Collectors[name]
-		if locked.Kind == "external" {
-			continue
-		}
-		cfgCollector, ok := cfg.Collectors[name]
-		if !ok {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("lockfile has collector %q not found in config", name),
-				"Remove stale entries or add collector to config", nil)
-		}
-		// Verify config entry is also source-based (not external)
-		if cfgCollector.Source == "" {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("lockfile has %q as source-based but config declares it as external", name),
-				"Run 'epack collector lock' to update the lockfile", nil)
+		if err := validateFrozenLockfileCollector(name, lf.Collectors[name], cfg.Collectors); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
+func validateFrozenConfigCollector(name string, c config.CollectorConfig, lf *lockfile.LockFile, platform string) error {
+	locked, ok := lf.GetCollector(name)
+	if c.Source != "" {
+		if !ok {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares collector %q not found in lockfile", name),
+				"Run 'epack collector lock' to update the lockfile", nil)
+		}
+		if locked.Kind == "external" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares %q as source-based but lockfile has it as external", name),
+				"Run 'epack collector lock' to update the lockfile", nil)
+		}
+		return validateFrozenPlatformDigest(name, platform, locked.Platforms, false)
+	}
+
+	if c.Binary != "" {
+		if !ok {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("external collector %q not found in lockfile (required in --frozen mode)", name),
+				"Run 'epack collector lock' to pin external collectors", nil)
+		}
+		if locked.Kind != "external" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares %q as external binary but lockfile has it as source-based", name),
+				"Run 'epack collector lock' to update the lockfile", nil)
+		}
+		return validateFrozenPlatformDigest(name, platform, locked.Platforms, true)
+	}
+	return nil
+}
+
+func validateFrozenPlatformDigest(name, platform string, platforms map[string]componenttypes.LockedPlatform, external bool) error {
+	platformEntry, hasPlatform := platforms[platform]
+	if !hasPlatform {
+		if external {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("external collector %q missing platform %s in lockfile (required in --frozen mode)", name, platform),
+				fmt.Sprintf("Run 'epack collector lock --platform %s' to pin external collectors", platform), nil)
+		}
+		return errors.WithHint(errors.BinaryNotFound, exitcode.MissingBinary,
+			fmt.Sprintf("collector %q missing platform %s in lockfile", name, platform),
+			fmt.Sprintf("Run 'epack collector lock --platform %s'", platform), nil)
+	}
+	if platformEntry.Digest == "" {
+		if external {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("external collector %q missing digest for platform %s (required in --frozen mode)", name, platform),
+				fmt.Sprintf("Run 'epack collector lock --platform %s' to compute digest", platform), nil)
+		}
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("collector %q missing digest for platform %s in lockfile", name, platform),
+			fmt.Sprintf("Run 'epack collector lock --platform %s' to compute digest", platform), nil)
+	}
+	return nil
+}
+
+func validateFrozenLockfileCollector(name string, locked lockfile.LockedCollector, cfgCollectors map[string]config.CollectorConfig) error {
+	if locked.Kind == "external" {
+		return nil
+	}
+	cfgCollector, ok := cfgCollectors[name]
+	if !ok {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("lockfile has collector %q not found in config", name),
+			"Remove stale entries or add collector to config", nil)
+	}
+	if cfgCollector.Source == "" {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("lockfile has %q as source-based but config declares it as external", name),
+			"Run 'epack collector lock' to update the lockfile", nil)
+	}
+	return nil
+}
+
 // selectCollectors filters collectors based on options.
 // Always returns a copy to avoid shared mutable state issues.
 func (r *Runner) selectCollectors(cfg *config.JobConfig, opts RunOptions) map[string]config.CollectorConfig {
-	if len(opts.Only) == 0 {
+	if len(opts.Secure.Only) == 0 {
 		// Return a copy to prevent concurrent modification issues
 		result := make(map[string]config.CollectorConfig, len(cfg.Collectors))
 		for name, c := range cfg.Collectors {
@@ -561,7 +607,7 @@ func (r *Runner) selectCollectors(cfg *config.JobConfig, opts RunOptions) map[st
 	}
 
 	selected := make(map[string]config.CollectorConfig)
-	for _, name := range opts.Only {
+	for _, name := range opts.Secure.Only {
 		if c, ok := cfg.Collectors[name]; ok {
 			selected[name] = c
 		}

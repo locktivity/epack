@@ -11,7 +11,7 @@ import (
 )
 
 // ReadArtifact reads an artifact and verifies its digest and size against the manifest.
-func (p *Pack) ReadArtifact(path string) ([]byte, error) {
+func (p *Pack) ReadArtifact(path string) (TrustedBytes, error) {
 	return p.ReadArtifactWithBudget(path, nil)
 }
 
@@ -19,42 +19,44 @@ func (p *Pack) ReadArtifact(path string) ([]byte, error) {
 // tracking reads against the provided budget.
 //
 // If budget is nil, only per-artifact limits are enforced.
-func (p *Pack) ReadArtifactWithBudget(path string, budget *ReadBudget) ([]byte, error) {
+func (p *Pack) ReadArtifactWithBudget(path string, budget *ReadBudget) (TrustedBytes, error) {
 	artifact := p.findArtifact(path)
 	if artifact == nil {
-		return nil, errors.E(errors.MissingEntry,
+		return TrustedBytes{}, errors.E(errors.MissingEntry,
 			fmt.Sprintf("artifact %q not found in manifest", path), nil)
 	}
 
 	data, err := p.ReadFileUntrustedWithBudget(path, budget)
 	if err != nil {
-		return nil, err
+		return TrustedBytes{}, err
 	}
 
 	if err := verifyArtifactData(path, artifact, data); err != nil {
-		return nil, err
+		return TrustedBytes{}, err
 	}
 
-	return data, nil
+	return trustBytes(data), nil
 }
 
 // verifyArtifactData checks an artifact's size and digest against manifest values.
 // SECURITY: Uses constant-time comparison via digest.Equal to prevent timing attacks.
-func verifyArtifactData(path string, artifact *Artifact, data []byte) error {
+func verifyArtifactData(path string, artifact *Artifact, data UntrustedBytes) error {
+	raw := data.UnsafeBytes()
+
 	if artifact.Size != nil {
 		expectedSize, err := artifact.Size.Int64()
 		if err != nil {
 			return errors.E(errors.InvalidManifest,
 				fmt.Sprintf("artifact %q has invalid size in manifest", path), err)
 		}
-		if int64(len(data)) != expectedSize {
+		if int64(len(raw)) != expectedSize {
 			return errors.E(errors.SizeMismatch,
 				fmt.Sprintf("artifact %q size mismatch: manifest declares %d bytes, got %d bytes",
-					path, expectedSize, len(data)), nil)
+					path, expectedSize, len(raw)), nil)
 		}
 	}
 
-	computedDigest := computeSHA256(data)
+	computedDigest := computeSHA256(raw)
 	if !verifyDigest(artifact.Digest, computedDigest) {
 		return errors.E(errors.DigestMismatch,
 			fmt.Sprintf("artifact %q digest mismatch: manifest declares %s, computed %s",
@@ -119,7 +121,7 @@ func (p *Pack) VerifyAllArtifacts() error {
 			return err
 		}
 
-		totalBytesRead += int64(len(data))
+		totalBytesRead += int64(len(data.UnsafeBytes()))
 		if totalBytesRead > limits.MaxPackSizeBytes {
 			return errors.E(errors.ZipBomb,
 				fmt.Sprintf("aggregate artifact size %d exceeds pack limit %d bytes",

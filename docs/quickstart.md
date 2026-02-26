@@ -11,6 +11,12 @@ brew install locktivity/tap/epack
 Or with Go:
 
 ```bash
+go install -tags components github.com/locktivity/epack/cmd/epack@latest
+```
+
+For a minimal verify-only build (no component commands), install without tags:
+
+```bash
 go install github.com/locktivity/epack/cmd/epack@latest
 ```
 
@@ -115,7 +121,7 @@ epack verify my-evidence.pack \
 ✓ Verification passed
 
   Artifacts:     2 verified
-  Attestations:  1 valid
+  Attestations:  1 verified
     Signer: you@example.com
     Issuer: https://accounts.google.com
 ```

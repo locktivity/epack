@@ -8,10 +8,31 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/locktivity/epack/internal/catalog"
+	"github.com/locktivity/epack/internal/securityaudit"
 )
+
+type catalogAuditSink struct {
+	mu     sync.Mutex
+	events []securityaudit.Event
+}
+
+func (s *catalogAuditSink) HandleSecurityEvent(evt securityaudit.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, evt)
+}
+
+func (s *catalogAuditSink) Snapshot() []securityaudit.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]securityaudit.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
 
 func TestCatalogSearchCommand(t *testing.T) {
 	// Setup: use temp dir for cache
@@ -331,4 +352,34 @@ func TestCatalogUpdateAlias(t *testing.T) {
 	if !strings.Contains(out, "updated") {
 		t.Errorf("output = %q, want 'updated' (update should alias to refresh)", out)
 	}
+}
+
+func TestCatalogRefreshInsecureHTTPEmitsAuditEvent(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+
+	catalogJSON := `{"schema_version": 1, "generated_at": "", "source": {}, "tools": []}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(catalogJSON))
+	}))
+	defer server.Close()
+
+	sink := &catalogAuditSink{}
+	securityaudit.SetSink(sink)
+	t.Cleanup(func() { securityaudit.SetSink(nil) })
+
+	cmd := NewCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"catalog", "refresh", "--url", server.URL, "--insecure-allow-http"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	for _, evt := range sink.Snapshot() {
+		if evt.Type == securityaudit.EventInsecureBypass && evt.Component == "catalog" && evt.Name == "refresh" {
+			return
+		}
+	}
+	t.Fatalf("expected insecure bypass audit event, got: %+v", sink.Snapshot())
 }

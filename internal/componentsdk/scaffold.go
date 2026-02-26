@@ -45,132 +45,18 @@ func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 		BinaryName:   binaryName,
 	}
 
-	// Create main.go
-	mainContent, err := generateMainGo(opts.Name, opts.Kind)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate main.go: %w", err)
+	if err := scaffoldRootFiles(opts, result); err != nil {
+		return nil, err
 	}
-	if err := safefile.WriteFile(opts.TargetDir, "main.go", []byte(mainContent)); err != nil {
-		return nil, fmt.Errorf("failed to create main.go: %w", err)
+	if err := scaffoldSLSAConfigs(opts, binaryName, result); err != nil {
+		return nil, err
 	}
-	result.FilesCreated = append(result.FilesCreated, "main.go")
-
-	// Create go.mod
-	goModContent, err := generateGoMod(result.ModulePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate go.mod: %w", err)
+	if err := scaffoldWorkflows(opts, result); err != nil {
+		return nil, err
 	}
-	if err := safefile.WriteFile(opts.TargetDir, "go.mod", []byte(goModContent)); err != nil {
-		return nil, fmt.Errorf("failed to create go.mod: %w", err)
+	if err := scaffoldDocs(opts, result); err != nil {
+		return nil, err
 	}
-	result.FilesCreated = append(result.FilesCreated, "go.mod")
-
-	// Create .slsa-goreleaser/ directory with platform-specific configs for SLSA Level 3 builds
-	slsaDir := filepath.Join(opts.TargetDir, ".slsa-goreleaser")
-	if err := os.MkdirAll(slsaDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create .slsa-goreleaser directory: %w", err)
-	}
-
-	// Generate configs for each supported platform
-	platforms := []struct{ goos, goarch string }{
-		{"linux", "amd64"},
-		{"linux", "arm64"},
-		{"darwin", "amd64"},
-		{"darwin", "arm64"},
-	}
-	for _, p := range platforms {
-		content, err := generateSLSAGoreleaser(opts.Name, opts.Kind, p.goos, p.goarch)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate SLSA config for %s-%s: %w", p.goos, p.goarch, err)
-		}
-		filename := fmt.Sprintf("%s-%s-%s.yml", binaryName, p.goos, p.goarch)
-		if err := safefile.WriteFile(slsaDir, filename, []byte(content)); err != nil {
-			return nil, fmt.Errorf("failed to create %s: %w", filename, err)
-		}
-		result.FilesCreated = append(result.FilesCreated, ".slsa-goreleaser/"+filename)
-	}
-
-	// Create .github/workflows directory
-	workflowDir := filepath.Join(opts.TargetDir, ".github", "workflows")
-	if err := os.MkdirAll(workflowDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create workflows directory: %w", err)
-	}
-
-	// Create ci.yaml workflow
-	ciContent, err := generateCIWorkflow(opts.Name, opts.Kind)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate ci.yaml: %w", err)
-	}
-	if err := safefile.WriteFile(workflowDir, "ci.yaml", []byte(ciContent)); err != nil {
-		return nil, fmt.Errorf("failed to create ci.yaml: %w", err)
-	}
-	result.FilesCreated = append(result.FilesCreated, ".github/workflows/ci.yaml")
-
-	// Create release.yaml workflow
-	releaseContent, err := generateReleaseWorkflow(opts.Name, opts.Kind)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate release.yaml: %w", err)
-	}
-	if err := safefile.WriteFile(workflowDir, "release.yaml", []byte(releaseContent)); err != nil {
-		return nil, fmt.Errorf("failed to create release.yaml: %w", err)
-	}
-	result.FilesCreated = append(result.FilesCreated, ".github/workflows/release.yaml")
-
-	// Create README.md
-	readmeContent, err := generateReadme(opts.Name, opts.Kind, result.ModulePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate README.md: %w", err)
-	}
-	if err := safefile.WriteFile(opts.TargetDir, "README.md", []byte(readmeContent)); err != nil {
-		return nil, fmt.Errorf("failed to create README.md: %w", err)
-	}
-	result.FilesCreated = append(result.FilesCreated, "README.md")
-
-	// Create .gitignore
-	gitignoreContent, err := generateGitignore(opts.Name, opts.Kind)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate .gitignore: %w", err)
-	}
-	if err := safefile.WriteFile(opts.TargetDir, ".gitignore", []byte(gitignoreContent)); err != nil {
-		return nil, fmt.Errorf("failed to create .gitignore: %w", err)
-	}
-	result.FilesCreated = append(result.FilesCreated, ".gitignore")
-
-	// Create docs/ directory for registry documentation
-	docsDir := filepath.Join(opts.TargetDir, "docs")
-	if err := os.MkdirAll(docsDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create docs directory: %w", err)
-	}
-
-	// Create docs/overview.md
-	overviewContent, err := generateDocsOverview(opts.Name, opts.Kind)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate docs/overview.md: %w", err)
-	}
-	if err := safefile.WriteFile(docsDir, "overview.md", []byte(overviewContent)); err != nil {
-		return nil, fmt.Errorf("failed to create docs/overview.md: %w", err)
-	}
-	result.FilesCreated = append(result.FilesCreated, "docs/overview.md")
-
-	// Create docs/configuration.md
-	configContent, err := generateDocsConfiguration(opts.Name, opts.Kind)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate docs/configuration.md: %w", err)
-	}
-	if err := safefile.WriteFile(docsDir, "configuration.md", []byte(configContent)); err != nil {
-		return nil, fmt.Errorf("failed to create docs/configuration.md: %w", err)
-	}
-	result.FilesCreated = append(result.FilesCreated, "docs/configuration.md")
-
-	// Create docs/examples.md
-	examplesContent, err := generateDocsExamples(opts.Name, opts.Kind)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate docs/examples.md: %w", err)
-	}
-	if err := safefile.WriteFile(docsDir, "examples.md", []byte(examplesContent)); err != nil {
-		return nil, fmt.Errorf("failed to create docs/examples.md: %w", err)
-	}
-	result.FilesCreated = append(result.FilesCreated, "docs/examples.md")
 
 	return result, nil
 }
@@ -185,17 +71,155 @@ func ValidateName(name string) error {
 		return fmt.Errorf("component name too long (max 64 characters)")
 	}
 	for i, c := range name {
-		if i == 0 {
-			if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
-				return fmt.Errorf("component name must start with lowercase letter or digit")
-			}
-		} else {
-			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '.' && c != '_' && c != '-' {
-				return fmt.Errorf("component name can only contain lowercase letters, digits, dots, underscores, and hyphens")
-			}
+		if i == 0 && !isValidNameStart(c) {
+			return fmt.Errorf("component name must start with lowercase letter or digit")
+		}
+		if i > 0 && !isValidNameChar(c) {
+			return fmt.Errorf("component name can only contain lowercase letters, digits, dots, underscores, and hyphens")
 		}
 	}
 	return nil
+}
+
+func scaffoldRootFiles(opts ScaffoldOptions, result *ScaffoldResult) error {
+	mainContent, err := generateMainGo(opts.Name, opts.Kind)
+	if err != nil {
+		return fmt.Errorf("failed to generate main.go: %w", err)
+	}
+	if err := writeScaffoldFile(opts.TargetDir, "main.go", mainContent, result); err != nil {
+		return fmt.Errorf("failed to create main.go: %w", err)
+	}
+
+	goModContent, err := generateGoMod(result.ModulePath)
+	if err != nil {
+		return fmt.Errorf("failed to generate go.mod: %w", err)
+	}
+	if err := writeScaffoldFile(opts.TargetDir, "go.mod", goModContent, result); err != nil {
+		return fmt.Errorf("failed to create go.mod: %w", err)
+	}
+
+	readmeContent, err := generateReadme(opts.Name, opts.Kind, result.ModulePath)
+	if err != nil {
+		return fmt.Errorf("failed to generate README.md: %w", err)
+	}
+	if err := writeScaffoldFile(opts.TargetDir, "README.md", readmeContent, result); err != nil {
+		return fmt.Errorf("failed to create README.md: %w", err)
+	}
+
+	gitignoreContent, err := generateGitignore(opts.Name, opts.Kind)
+	if err != nil {
+		return fmt.Errorf("failed to generate .gitignore: %w", err)
+	}
+	if err := writeScaffoldFile(opts.TargetDir, ".gitignore", gitignoreContent, result); err != nil {
+		return fmt.Errorf("failed to create .gitignore: %w", err)
+	}
+	return nil
+}
+
+func scaffoldSLSAConfigs(opts ScaffoldOptions, binaryName string, result *ScaffoldResult) error {
+	slsaDir := filepath.Join(opts.TargetDir, ".slsa-goreleaser")
+	if err := os.MkdirAll(slsaDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .slsa-goreleaser directory: %w", err)
+	}
+
+	platforms := []struct{ goos, goarch string }{
+		{"linux", "amd64"},
+		{"linux", "arm64"},
+		{"darwin", "amd64"},
+		{"darwin", "arm64"},
+	}
+	for _, p := range platforms {
+		content, err := generateSLSAGoreleaser(opts.Name, opts.Kind, p.goos, p.goarch)
+		if err != nil {
+			return fmt.Errorf("failed to generate SLSA config for %s-%s: %w", p.goos, p.goarch, err)
+		}
+		filename := fmt.Sprintf("%s-%s-%s.yml", binaryName, p.goos, p.goarch)
+		if err := writeScaffoldFileWithRecord(slsaDir, filename, ".slsa-goreleaser/"+filename, content, result); err != nil {
+			return fmt.Errorf("failed to create %s: %w", filename, err)
+		}
+	}
+	return nil
+}
+
+func scaffoldWorkflows(opts ScaffoldOptions, result *ScaffoldResult) error {
+	workflowDir := filepath.Join(opts.TargetDir, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0755); err != nil {
+		return fmt.Errorf("failed to create workflows directory: %w", err)
+	}
+
+	ciContent, err := generateCIWorkflow(opts.Name, opts.Kind)
+	if err != nil {
+		return fmt.Errorf("failed to generate ci.yaml: %w", err)
+	}
+	if err := writeScaffoldFileWithRecord(workflowDir, "ci.yaml", ".github/workflows/ci.yaml", ciContent, result); err != nil {
+		return fmt.Errorf("failed to create ci.yaml: %w", err)
+	}
+
+	releaseContent, err := generateReleaseWorkflow(opts.Name, opts.Kind)
+	if err != nil {
+		return fmt.Errorf("failed to generate release.yaml: %w", err)
+	}
+	if err := writeScaffoldFileWithRecord(workflowDir, "release.yaml", ".github/workflows/release.yaml", releaseContent, result); err != nil {
+		return fmt.Errorf("failed to create release.yaml: %w", err)
+	}
+
+	return nil
+}
+
+func scaffoldDocs(opts ScaffoldOptions, result *ScaffoldResult) error {
+	docsDir := filepath.Join(opts.TargetDir, "docs")
+	if err := os.MkdirAll(docsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create docs directory: %w", err)
+	}
+
+	overviewContent, err := generateDocsOverview(opts.Name, opts.Kind)
+	if err != nil {
+		return fmt.Errorf("failed to generate docs/overview.md: %w", err)
+	}
+	if err := writeScaffoldFileWithRecord(docsDir, "overview.md", "docs/overview.md", overviewContent, result); err != nil {
+		return fmt.Errorf("failed to create docs/overview.md: %w", err)
+	}
+
+	configContent, err := generateDocsConfiguration(opts.Name, opts.Kind)
+	if err != nil {
+		return fmt.Errorf("failed to generate docs/configuration.md: %w", err)
+	}
+	if err := writeScaffoldFileWithRecord(docsDir, "configuration.md", "docs/configuration.md", configContent, result); err != nil {
+		return fmt.Errorf("failed to create docs/configuration.md: %w", err)
+	}
+
+	examplesContent, err := generateDocsExamples(opts.Name, opts.Kind)
+	if err != nil {
+		return fmt.Errorf("failed to generate docs/examples.md: %w", err)
+	}
+	if err := writeScaffoldFileWithRecord(docsDir, "examples.md", "docs/examples.md", examplesContent, result); err != nil {
+		return fmt.Errorf("failed to create docs/examples.md: %w", err)
+	}
+	return nil
+}
+
+func writeScaffoldFile(baseDir, relPath, content string, result *ScaffoldResult) error {
+	if err := safefile.WriteFile(baseDir, relPath, []byte(content)); err != nil {
+		return err
+	}
+	result.FilesCreated = append(result.FilesCreated, relPath)
+	return nil
+}
+
+func writeScaffoldFileWithRecord(baseDir, relPath, recordPath, content string, result *ScaffoldResult) error {
+	if err := safefile.WriteFile(baseDir, relPath, []byte(content)); err != nil {
+		return err
+	}
+	result.FilesCreated = append(result.FilesCreated, recordPath)
+	return nil
+}
+
+func isValidNameStart(c rune) bool {
+	return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+}
+
+func isValidNameChar(c rune) bool {
+	return isValidNameStart(c) || c == '.' || c == '_' || c == '-'
 }
 
 // SupportedKinds returns the component kinds that support scaffolding.

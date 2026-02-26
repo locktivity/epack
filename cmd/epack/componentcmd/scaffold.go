@@ -6,13 +6,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/locktivity/epack/internal/execsafe"
+	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/safefile"
 	"github.com/locktivity/epack/internal/validate"
 )
@@ -42,7 +42,6 @@ const (
 packs/*.pack
 !packs/.gitkeep`
 )
-
 
 // ScaffoldOptions configures the scaffolding behavior.
 type ScaffoldOptions struct {
@@ -106,13 +105,19 @@ func InferStreamFromGit(dir, projectName string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
-	cmd.Dir = dir
 	// SECURITY: Use restricted environment to prevent PATH poisoning attacks.
 	// A malicious .git/config could potentially influence git behavior, and
 	// a poisoned PATH could execute attacker-controlled binaries.
-	cmd.Env = execsafe.BuildRestrictedEnvSafe(os.Environ(), false)
-	output, err := cmd.Output()
+	output, err := procexec.Output(ctx, procexec.Spec{
+		Path:                "git",
+		Args:                []string{"remote", "get-url", "origin"},
+		Dir:                 dir,
+		Env:                 execsafe.BuildRestrictedEnvSafe(os.Environ(), false),
+		EnforceEnvAllowlist: true,
+		AllowedEnv:          append(append([]string{}, execsafe.AllowedEnvVars...), "PATH"),
+		EnforceDirPolicy:    true,
+		AllowedDirRoots:     []string{dir},
+	})
 	if err != nil {
 		// No git remote or timeout, use fallback
 		return fmt.Sprintf("example/%s/prod", projectName)
@@ -403,7 +408,7 @@ func scaffoldSamplePack(dir string) error {
 // Uses restricted environment to prevent PATH poisoning attacks.
 func maybeGitInit(dir string) (bool, error) {
 	// Check if git is available
-	if _, err := exec.LookPath("git"); err != nil {
+	if _, err := procexec.LookPath("git"); err != nil {
 		return false, nil // Git not available, skip silently
 	}
 
@@ -416,10 +421,16 @@ func maybeGitInit(dir string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--is-inside-work-tree")
-	cmd.Dir = dir
-	cmd.Env = restrictedEnv
-	if err := cmd.Run(); err == nil {
+	if err := procexec.Run(ctx, procexec.Spec{
+		Path:                "git",
+		Args:                []string{"rev-parse", "--is-inside-work-tree"},
+		Dir:                 dir,
+		Env:                 restrictedEnv,
+		EnforceEnvAllowlist: true,
+		AllowedEnv:          append(append([]string{}, execsafe.AllowedEnvVars...), "PATH"),
+		EnforceDirPolicy:    true,
+		AllowedDirRoots:     []string{dir},
+	}); err == nil {
 		return false, nil // Already in a git repo
 	}
 
@@ -427,10 +438,16 @@ func maybeGitInit(dir string) (bool, error) {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), gitCommandTimeout)
 	defer cancel2()
 
-	cmd = exec.CommandContext(ctx2, "git", "init")
-	cmd.Dir = dir
-	cmd.Env = restrictedEnv
-	if err := cmd.Run(); err != nil {
+	if err := procexec.Run(ctx2, procexec.Spec{
+		Path:                "git",
+		Args:                []string{"init"},
+		Dir:                 dir,
+		Env:                 restrictedEnv,
+		EnforceEnvAllowlist: true,
+		AllowedEnv:          append(append([]string{}, execsafe.AllowedEnvVars...), "PATH"),
+		EnforceDirPolicy:    true,
+		AllowedDirRoots:     []string{dir},
+	}); err != nil {
 		return false, err
 	}
 

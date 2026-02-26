@@ -15,8 +15,8 @@ import (
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
-	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/exitcode"
+	"github.com/locktivity/epack/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -116,7 +116,9 @@ func runInstallFrozen(ctx context.Context, cfg *config.JobConfig, workDir string
 	syncer := sync.NewSyncer(workDir)
 
 	syncOpts := sync.SyncOpts{
-		Frozen: true,
+		Secure: sync.SyncSecureOptions{
+			Frozen: true,
+		},
 	}
 
 	results, err := syncer.Sync(ctx, cfg, syncOpts)
@@ -201,7 +203,9 @@ func runInstallAuto(ctx context.Context, cfg *config.JobConfig, workDir string, 
 	// Sync (download missing binaries)
 	syncer := sync.NewSyncer(workDir)
 	syncOpts := sync.SyncOpts{
-		Frozen: false,
+		Secure: sync.SyncSecureOptions{
+			Frozen: false,
+		},
 	}
 
 	syncResults, err := syncer.Sync(ctx, cfg, syncOpts)

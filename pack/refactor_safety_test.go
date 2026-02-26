@@ -243,7 +243,7 @@ func TestConcurrentPackAccess(t *testing.T) {
 						errChan <- fmt.Errorf("goroutine %d op %d: ReadArtifact: %w", id, j, err)
 						return
 					}
-					if !bytes.Equal(data, content) {
+					if !bytes.Equal(data.Bytes(), content) {
 						errChan <- fmt.Errorf("goroutine %d op %d: content mismatch", id, j)
 						return
 					}
@@ -267,7 +267,7 @@ func TestConcurrentPackAccess(t *testing.T) {
 						errChan <- fmt.Errorf("goroutine %d op %d: ReadFileUntrusted: %w", id, j, err)
 						return
 					}
-					if !bytes.Equal(data, content) {
+					if !bytes.Equal(data.UnsafeBytes(), content) {
 						errChan <- fmt.Errorf("goroutine %d op %d: ReadFileUntrusted content mismatch", id, j)
 						return
 					}
@@ -320,7 +320,7 @@ func TestConcurrentBudgetAccess(t *testing.T) {
 					errChan <- fmt.Errorf("goroutine %d read %d: %w", id, j, err)
 					return
 				}
-				if !bytes.Equal(data, content) {
+				if !bytes.Equal(data.Bytes(), content) {
 					errChan <- fmt.Errorf("goroutine %d read %d: content mismatch", id, j)
 					return
 				}

@@ -15,6 +15,8 @@ import (
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/pull"
 	"github.com/locktivity/epack/internal/remote"
+	"github.com/locktivity/epack/internal/securitypolicy"
+	"github.com/locktivity/epack/internal/securityaudit"
 	"github.com/spf13/cobra"
 )
 
@@ -99,6 +101,9 @@ func runPull(cmd *cobra.Command, args []string) error {
 	remoteName := args[0]
 	out := outputWriter()
 	ctx := cmdContext(cmd)
+	if err := validatePullFlags(); err != nil {
+		return exitError("pull failed: %v", err)
+	}
 
 	// Build pack reference
 	ref := remote.PackRef{}
@@ -148,15 +153,20 @@ func runPull(cmd *cobra.Command, args []string) error {
 
 	// Build options with step callbacks for multi-step progress
 	opts := pull.Options{
-		Remote:                remoteName,
-		Ref:                   ref,
-		OutputPath:            pullOutput,
-		Force:                 pullForce,
-		Environment:           pullEnv,
-		Workspace:             pullWorkspace,
-		Verify:                pullVerify,
-		InsecureAllowUnpinned: pullInsecureAllowUnpinned,
-		Stderr:                os.Stderr,
+		Secure: struct{ Frozen bool }{
+			Frozen: false,
+		},
+		Unsafe: struct{ AllowUnpinned bool }{
+			AllowUnpinned: pullInsecureAllowUnpinned,
+		},
+		Remote:      remoteName,
+		Ref:         ref,
+		OutputPath:  pullOutput,
+		Force:       pullForce,
+		Environment: pullEnv,
+		Workspace:   pullWorkspace,
+		Verify:      pullVerify,
+		Stderr:      os.Stderr,
 		OnStep: func(step string, started bool) {
 			if out.IsQuiet() || out.IsJSON() {
 				return
@@ -260,6 +270,30 @@ func runPull(cmd *cobra.Command, args []string) error {
 	out.Print("%s  epack verify %s    %s\n", p.Dim("  •"), result.OutputPath, p.Dim("# Verify signatures"))
 	out.Print("%s  epack list artifacts %s  %s\n", p.Dim("  •"), result.OutputPath, p.Dim("# List artifacts"))
 
+	return nil
+}
+
+func validatePullFlags() error {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        false,
+		AllowUnpinned: pullInsecureAllowUnpinned,
+	}).Enforce(); err != nil {
+		return err
+	}
+	if err := securitypolicy.EnforceStrictProduction("pull_cli", pullInsecureAllowUnpinned); err != nil {
+		return err
+	}
+	if pullInsecureAllowUnpinned {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "pull",
+			Name:        "pull",
+			Description: "pull command running with insecure unpinned override",
+			Attrs: map[string]string{
+				"insecure_allow_unpinned": "true",
+			},
+		})
+	}
 	return nil
 }
 

@@ -8,6 +8,8 @@ import (
 
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/exitcode"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -59,12 +61,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	out := getOutput(cmd)
 
-	// Validate flag combinations
-	if syncFrozen && syncInsecureSkipVerify {
-		return &exitError{
-			Exit:    exitcode.General,
-			Message: "cannot combine --frozen with --insecure-skip-verify",
-		}
+	if err := validateSyncFlags(); err != nil {
+		return err
 	}
 
 	// Warn about insecure mode
@@ -85,8 +83,12 @@ func runSync(cmd *cobra.Command, args []string) error {
 	syncer := sync.NewSyncer(workDir)
 
 	opts := sync.SyncOpts{
-		Frozen:             syncFrozen,
-		InsecureSkipVerify: syncInsecureSkipVerify,
+		Secure: sync.SyncSecureOptions{
+			Frozen: syncFrozen,
+		},
+		Unsafe: sync.SyncUnsafeOverrides{
+			SkipVerify: syncInsecureSkipVerify,
+		},
 	}
 
 	if syncFrozen {
@@ -119,5 +121,29 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	out.Print("\nAll dependencies synced successfully\n")
 
+	return nil
+}
+
+func validateSyncFlags() error {
+	if syncFrozen && syncInsecureSkipVerify {
+		return &exitError{
+			Exit:    exitcode.General,
+			Message: "cannot combine --frozen with --insecure-skip-verify",
+		}
+	}
+	if err := securitypolicy.EnforceStrictProduction("component_sync_cli", syncInsecureSkipVerify); err != nil {
+		return err
+	}
+	if syncInsecureSkipVerify {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "component_sync",
+			Name:        "sync",
+			Description: "component sync command running with insecure skip-verify override",
+			Attrs: map[string]string{
+				"insecure_skip_verify": "true",
+			},
+		})
+	}
 	return nil
 }

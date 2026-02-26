@@ -13,34 +13,23 @@ import (
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/pack/builder"
 )
 
 // CollectOpts configures the full evidence collection workflow.
 type CollectOpts struct {
+	// Secure defaults.
+	Secure SecureRunOptions
+	// Explicit insecure overrides.
+	Unsafe UnsafeOverrides
+
 	// WorkDir is the working directory (defaults to cwd).
 	WorkDir string
 
 	// OutputPath is the output pack file path.
 	// If empty, defaults to "evidence-<timestamp>.pack".
 	OutputPath string
-
-	// Frozen enables strict CI mode: no auto-lock, no auto-sync.
-	Frozen bool
-
-	// Timeout per collector execution.
-	Timeout time.Duration
-
-	// Only runs specific collectors (empty means all).
-	Only []string
-
-	// InsecureAllowUnverified allows running collectors
-	// installed with --insecure-skip-verify.
-	InsecureAllowUnverified bool
-
-	// InsecureAllowUnpinned allows running external collectors
-	// not pinned in the lockfile.
-	InsecureAllowUnpinned bool
 }
 
 // CollectWorkflowResult contains the outcomes of evidence collection.
@@ -98,6 +87,16 @@ type SyncWorkflowResult struct {
 //  3. Run all collectors
 //  4. Build an evidence pack
 func Collect(ctx context.Context, cfg *config.JobConfig, opts CollectOpts) (*CollectWorkflowResult, error) {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        opts.Secure.Frozen,
+		AllowUnpinned: opts.Unsafe.AllowUnpinned,
+	}).Enforce(); err != nil {
+		return nil, err
+	}
+	if err := securitypolicy.EnforceStrictProduction("collector_workflow", opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnpinned); err != nil {
+		return nil, err
+	}
+
 	workDir := opts.WorkDir
 	if workDir == "" {
 		var err error
@@ -107,7 +106,7 @@ func Collect(ctx context.Context, cfg *config.JobConfig, opts CollectOpts) (*Col
 		}
 	}
 
-	if opts.Frozen {
+	if opts.Secure.Frozen {
 		return collectFrozen(ctx, cfg, workDir, opts)
 	}
 	return collectAuto(ctx, cfg, workDir, opts)
@@ -123,7 +122,9 @@ func collectFrozen(ctx context.Context, cfg *config.JobConfig, workDir string, o
 	syncer := sync.NewSyncer(workDir)
 
 	syncOpts := sync.SyncOpts{
-		Frozen: true,
+		Secure: sync.SyncSecureOptions{
+			Frozen: true,
+		},
 	}
 
 	syncResults, err := syncer.Sync(ctx, cfg, syncOpts)
@@ -201,7 +202,9 @@ func collectAuto(ctx context.Context, cfg *config.JobConfig, workDir string, opt
 	// Sync (download missing collectors)
 	syncer := sync.NewSyncer(workDir)
 	syncOpts := sync.SyncOpts{
-		Frozen: false,
+		Secure: sync.SyncSecureOptions{
+			Frozen: false,
+		},
 	}
 
 	syncResults, err := syncer.Sync(ctx, cfg, syncOpts)
@@ -228,11 +231,15 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 	runner := NewRunner(workDir)
 
 	runOpts := RunOptions{
-		Frozen:                  opts.Frozen,
-		Only:                    opts.Only,
-		InsecureAllowUnverified: opts.InsecureAllowUnverified,
-		InsecureAllowUnpinned:   opts.InsecureAllowUnpinned,
-		Timeout:                 opts.Timeout,
+		Secure: SecureRunOptions{
+			Frozen:  opts.Secure.Frozen,
+			Only:    opts.Secure.Only,
+			Timeout: opts.Secure.Timeout,
+		},
+		Unsafe: UnsafeOverrides{
+			AllowUnverifiedInstall: opts.Unsafe.AllowUnverifiedInstall,
+			AllowUnpinned:          opts.Unsafe.AllowUnpinned,
+		},
 	}
 
 	runResult, err := runner.Run(ctx, cfg, runOpts)
@@ -345,29 +352,17 @@ func addCollectorArtifacts(b *builder.Builder, results []RunResult) error {
 
 // RunAndBuildOpts configures the run-only workflow (no lock/sync).
 type RunAndBuildOpts struct {
+	// Secure defaults.
+	Secure SecureRunOptions
+	// Explicit insecure overrides.
+	Unsafe UnsafeOverrides
+
 	// WorkDir is the working directory (required).
 	WorkDir string
 
 	// OutputPath is the output pack file path.
 	// If empty, defaults to "evidence-<timestamp>.pack".
 	OutputPath string
-
-	// Frozen enables strict CI mode verification.
-	Frozen bool
-
-	// Timeout per collector execution.
-	Timeout time.Duration
-
-	// Only runs specific collectors (empty means all).
-	Only []string
-
-	// InsecureAllowUnverified allows running collectors
-	// installed with --insecure-skip-verify.
-	InsecureAllowUnverified bool
-
-	// InsecureAllowUnpinned allows running external collectors
-	// not pinned in the lockfile.
-	InsecureAllowUnpinned bool
 }
 
 // RunAndBuildResult contains the outcomes of running collectors and building a pack.
@@ -390,6 +385,16 @@ type RunAndBuildResult struct {
 // Unlike Collect, this does NOT auto-lock or auto-sync.
 // It assumes collectors are already installed and verified.
 func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpts) (*RunAndBuildResult, error) {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        opts.Secure.Frozen,
+		AllowUnpinned: opts.Unsafe.AllowUnpinned,
+	}).Enforce(); err != nil {
+		return nil, err
+	}
+	if err := securitypolicy.EnforceStrictProduction("collector_run", opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnpinned); err != nil {
+		return nil, err
+	}
+
 	result := &RunAndBuildResult{
 		Stream: cfg.Stream,
 	}
@@ -397,11 +402,15 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 	runner := NewRunner(opts.WorkDir)
 
 	runOpts := RunOptions{
-		Frozen:                  opts.Frozen,
-		Only:                    opts.Only,
-		InsecureAllowUnverified: opts.InsecureAllowUnverified,
-		InsecureAllowUnpinned:   opts.InsecureAllowUnpinned,
-		Timeout:                 opts.Timeout,
+		Secure: SecureRunOptions{
+			Frozen:  opts.Secure.Frozen,
+			Only:    opts.Secure.Only,
+			Timeout: opts.Secure.Timeout,
+		},
+		Unsafe: UnsafeOverrides{
+			AllowUnverifiedInstall: opts.Unsafe.AllowUnverifiedInstall,
+			AllowUnpinned:          opts.Unsafe.AllowUnpinned,
+		},
 	}
 
 	runResult, err := runner.Run(ctx, cfg, runOpts)

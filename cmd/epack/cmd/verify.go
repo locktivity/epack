@@ -5,6 +5,8 @@ import (
 
 	"github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/cli/output"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/internal/verify"
 	"github.com/locktivity/epack/pack"
 	"github.com/spf13/cobra"
@@ -89,6 +91,10 @@ Examples:
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
+	if err := validateVerifyFlags(); err != nil {
+		return err
+	}
+
 	packPath := args[0]
 	out := outputWriter()
 	ctx := cmdContext(cmd)
@@ -152,6 +158,26 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 	// Human-readable output
 	return printVerifyResults(out, packPath, result)
+}
+
+func validateVerifyFlags() error {
+	hasUnsafeOverrides := verifyInsecureSkipIdentityCheck || verifyInsecureSkipEmbeddedVerify
+	if err := securitypolicy.EnforceStrictProduction("verify_cli", hasUnsafeOverrides); err != nil {
+		return err
+	}
+	if hasUnsafeOverrides {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "verify",
+			Name:        "verify",
+			Description: "verify command running with insecure verification override",
+			Attrs: map[string]string{
+				"skip_identity_check":  fmt.Sprintf("%t", verifyInsecureSkipIdentityCheck),
+				"skip_embedded_verify": fmt.Sprintf("%t", verifyInsecureSkipEmbeddedVerify),
+			},
+		})
+	}
+	return nil
 }
 
 func printVerifyResults(out *output.Writer, packPath string, result *verify.PackResult) error {

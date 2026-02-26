@@ -91,67 +91,8 @@ func NewSafeReader(r io.ReaderAt, size int64, opts ...SafeReaderOption) (*SafeRe
 		return nil, fmt.Errorf("opening zip: %w", err)
 	}
 
-	// SECURITY: Check entry count limit before iterating
-	if len(zr.File) > cfg.maxEntries {
-		return nil, fmt.Errorf("zip entry count %d exceeds limit %d", len(zr.File), cfg.maxEntries)
-	}
-
-	// SECURITY: Validate compression ratios (zip bomb prevention)
-	if err := CheckCompressionRatio(zr, cfg.maxCompressionRatio); err != nil {
+	if err := validateZipReader(zr, cfg); err != nil {
 		return nil, err
-	}
-
-	// SECURITY: Validate all paths
-	// Also collect canonical paths for collision detection
-	seenPaths := make(map[string]string, len(zr.File))     // exact path -> first occurrence
-	seenCanonical := make(map[string]string, len(zr.File)) // canonical -> first occurrence
-
-	for _, f := range zr.File {
-		// SECURITY: Validate directory entry attributes match path (R-321-323, R-347)
-		if err := ValidateDirectoryEntry(f); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		// SECURITY: Reject symlinks (can escape extraction directory)
-		if err := ValidateNotSymlink(f); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		// SECURITY: Reject device files
-		if err := ValidateNotDeviceFile(f); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		// Skip directories (they end with /)
-		if f.FileInfo().IsDir() {
-			continue
-		}
-
-		// Validate path safety
-		if err := ValidatePath(f.Name); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		// SECURITY: Reject AppleDouble metadata files (R-101)
-		if err := ValidateNotAppleDouble(f.Name); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		// Check for exact duplicates
-		if first, exists := seenPaths[f.Name]; exists {
-			return nil, fmt.Errorf("duplicate zip entry %q (first seen: %s)", f.Name, first)
-		}
-		seenPaths[f.Name] = f.Name
-
-		// Check for Windows path collisions
-		if !cfg.skipCollisionCheck {
-			canonical := WindowsCanonicalPath(f.Name)
-			if first, exists := seenCanonical[canonical]; exists && first != f.Name {
-				return nil, fmt.Errorf("path collision (Windows case-folding): %q and %q both resolve to %q",
-					first, f.Name, canonical)
-			}
-			seenCanonical[canonical] = f.Name
-		}
 	}
 
 	return &SafeReader{
@@ -168,68 +109,78 @@ func NewSafeReaderFromZip(zr *zip.Reader, opts ...SafeReaderOption) (*SafeReader
 		opt(cfg)
 	}
 
-	// SECURITY: Check entry count limit
-	if len(zr.File) > cfg.maxEntries {
-		return nil, fmt.Errorf("zip entry count %d exceeds limit %d", len(zr.File), cfg.maxEntries)
-	}
-
-	// SECURITY: Validate compression ratios
-	if err := CheckCompressionRatio(zr, cfg.maxCompressionRatio); err != nil {
+	if err := validateZipReader(zr, cfg); err != nil {
 		return nil, err
-	}
-
-	// SECURITY: Validate all paths and check collisions
-	seenPaths := make(map[string]string, len(zr.File))
-	seenCanonical := make(map[string]string, len(zr.File))
-
-	for _, f := range zr.File {
-		// SECURITY: Validate directory entry attributes match path (R-321-323, R-347)
-		if err := ValidateDirectoryEntry(f); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		// SECURITY: Reject symlinks (can escape extraction directory)
-		if err := ValidateNotSymlink(f); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		// SECURITY: Reject device files
-		if err := ValidateNotDeviceFile(f); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		if f.FileInfo().IsDir() {
-			continue
-		}
-
-		if err := ValidatePath(f.Name); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		// SECURITY: Reject AppleDouble metadata files (R-101)
-		if err := ValidateNotAppleDouble(f.Name); err != nil {
-			return nil, fmt.Errorf("invalid zip entry: %w", err)
-		}
-
-		if first, exists := seenPaths[f.Name]; exists {
-			return nil, fmt.Errorf("duplicate zip entry %q (first seen: %s)", f.Name, first)
-		}
-		seenPaths[f.Name] = f.Name
-
-		if !cfg.skipCollisionCheck {
-			canonical := WindowsCanonicalPath(f.Name)
-			if first, exists := seenCanonical[canonical]; exists && first != f.Name {
-				return nil, fmt.Errorf("path collision (Windows case-folding): %q and %q both resolve to %q",
-					first, f.Name, canonical)
-			}
-			seenCanonical[canonical] = f.Name
-		}
 	}
 
 	return &SafeReader{
 		Reader:    zr,
 		validated: true,
 	}, nil
+}
+
+func validateZipReader(zr *zip.Reader, cfg *safeReaderConfig) error {
+	if len(zr.File) > cfg.maxEntries {
+		return fmt.Errorf("zip entry count %d exceeds limit %d", len(zr.File), cfg.maxEntries)
+	}
+	if err := CheckCompressionRatio(zr, cfg.maxCompressionRatio); err != nil {
+		return err
+	}
+
+	seenPaths := make(map[string]string, len(zr.File))
+	seenCanonical := make(map[string]string, len(zr.File))
+	for _, f := range zr.File {
+		if err := validateZipFileEntry(f); err != nil {
+			return err
+		}
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if err := checkZipPathCollisions(f.Name, seenPaths, seenCanonical, cfg.skipCollisionCheck); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateZipFileEntry(f *zip.File) error {
+	if err := ValidateDirectoryEntry(f); err != nil {
+		return fmt.Errorf("invalid zip entry: %w", err)
+	}
+	if err := ValidateNotSymlink(f); err != nil {
+		return fmt.Errorf("invalid zip entry: %w", err)
+	}
+	if err := ValidateNotDeviceFile(f); err != nil {
+		return fmt.Errorf("invalid zip entry: %w", err)
+	}
+	if f.FileInfo().IsDir() {
+		return nil
+	}
+	if err := ValidatePath(f.Name); err != nil {
+		return fmt.Errorf("invalid zip entry: %w", err)
+	}
+	if err := ValidateNotAppleDouble(f.Name); err != nil {
+		return fmt.Errorf("invalid zip entry: %w", err)
+	}
+	return nil
+}
+
+func checkZipPathCollisions(name string, seenPaths, seenCanonical map[string]string, skipCollisionCheck bool) error {
+	if first, exists := seenPaths[name]; exists {
+		return fmt.Errorf("duplicate zip entry %q (first seen: %s)", name, first)
+	}
+	seenPaths[name] = name
+
+	if skipCollisionCheck {
+		return nil
+	}
+
+	canonical := WindowsCanonicalPath(name)
+	if first, exists := seenCanonical[canonical]; exists && first != name {
+		return fmt.Errorf("path collision (Windows case-folding): %q and %q both resolve to %q", first, name, canonical)
+	}
+	seenCanonical[canonical] = name
+	return nil
 }
 
 // IsValidated returns true if the reader passed all security checks.

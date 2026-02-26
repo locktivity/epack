@@ -12,6 +12,7 @@ import (
 
 	"github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/safefile/tx"
 	"golang.org/x/sys/unix"
 )
 
@@ -192,45 +193,22 @@ func ContainsSymlinkFrom(path, root string) (bool, error) {
 		return false, err
 	}
 
-	var startPath string
-	if root != "" {
-		absRoot, err := filepath.Abs(filepath.Clean(root))
-		if err != nil {
-			return false, err
-		}
-
-		rootWithSep := absRoot
-		if !strings.HasSuffix(rootWithSep, string(filepath.Separator)) {
-			rootWithSep += string(filepath.Separator)
-		}
-
-		if strings.HasPrefix(absPath, rootWithSep) || absPath == absRoot {
-			startPath = absRoot
-		} else {
-			startPath = "/"
-		}
-	} else {
-		startPath = "/"
+	startPath, err := resolveSymlinkStartPath(absPath, root)
+	if err != nil {
+		return false, err
 	}
 
-	current := startPath
 	rel, err := filepath.Rel(startPath, absPath)
 	if err != nil {
 		return false, err
 	}
 
 	if rel == "." {
-		fi, err := os.Lstat(current)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return false, nil
-			}
-			return false, err
-		}
-		return fi.Mode()&os.ModeSymlink != 0, nil
+		return isSymlinkIfExists(startPath)
 	}
 
 	components := strings.Split(rel, string(filepath.Separator))
+	current := startPath
 	for _, component := range components {
 		if component == "" || component == "." {
 			continue
@@ -295,65 +273,17 @@ func ValidateRegularFile(root, relPath string) (string, error) {
 // Rename atomically moves a file, creating destination directories as needed.
 // Both source and destination must be under baseDir.
 func Rename(baseDir, srcPath, dstPath string) error {
-	// Validate both paths are contained
-	if _, err := validateContained(baseDir, srcPath); err != nil {
-		return err
-	}
-	dstDir := filepath.Dir(dstPath)
-	dstName := filepath.Base(dstPath)
-
-	if _, err := validateContained(baseDir, dstDir); err != nil {
+	dstDir, dstName, err := validateRenameInputs(baseDir, srcPath, dstPath)
+	if err != nil {
 		return err
 	}
 
-	// Validate dstName has no path separators
-	if strings.Contains(dstName, "/") || strings.Contains(dstName, string(filepath.Separator)) {
-		return fmt.Errorf("destination name must not contain path separators: %s", dstName)
-	}
-
-	// Get path relative to baseDir for component walking
-	rel, err := filepath.Rel(baseDir, dstDir)
+	dstDirFd, err := openContainedDir(baseDir, dstDir, limits.StandardDirMode)
 	if err != nil {
-		return fmt.Errorf("cannot make %s relative to %s: %w", dstDir, baseDir, err)
-	}
-
-	var components []string
-	if rel != "." {
-		components = strings.Split(rel, string(filepath.Separator))
-	}
-
-	// Open the base directory with O_NOFOLLOW
-	dstDirFd, err := unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return fmt.Errorf("opening base directory: %w", err)
+		return err
 	}
 	defer func() { _ = unix.Close(dstDirFd) }()
 
-	// Walk through each component, creating directories as needed
-	for _, component := range components {
-		if component == "" || component == "." {
-			continue
-		}
-
-		err := unix.Mkdirat(dstDirFd, component, uint32(limits.StandardDirMode))
-		if err != nil && err != unix.EEXIST {
-			return fmt.Errorf("creating directory %s: %w", component, err)
-		}
-
-		newFd, err := unix.Openat(dstDirFd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-		if err != nil {
-			if err == unix.ELOOP || err == unix.ENOTDIR {
-				return errors.E(errors.SymlinkNotAllowed,
-					fmt.Sprintf("symlink detected: %s", component), nil)
-			}
-			return fmt.Errorf("opening directory %s: %w", component, err)
-		}
-
-		_ = unix.Close(dstDirFd)
-		dstDirFd = newFd
-	}
-
-	// Open source directory
 	srcDir := filepath.Dir(srcPath)
 	srcName := filepath.Base(srcPath)
 
@@ -382,139 +312,134 @@ func writeFileInternal(baseDir, path string, data []byte, dirPerm, filePerm os.F
 	parentDir := filepath.Dir(fullPath)
 	fileName := filepath.Base(fullPath)
 
-	// Validate containment
-	if _, err := validateContained(baseDir, parentDir); err != nil {
+	dirFd, err := openContainedDir(baseDir, parentDir, dirPerm)
+	if err != nil {
 		return err
-	}
-
-	// Get path relative to baseDir
-	rel, err := filepath.Rel(baseDir, parentDir)
-	if err != nil {
-		return fmt.Errorf("cannot make %s relative to %s: %w", parentDir, baseDir, err)
-	}
-
-	var components []string
-	if rel != "." {
-		components = strings.Split(rel, string(filepath.Separator))
-	}
-
-	// Open base directory with O_NOFOLLOW
-	dirFd, err := unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return fmt.Errorf("opening base directory: %w", err)
 	}
 	defer func() { _ = unix.Close(dirFd) }()
 
-	// Walk and create parent directories
-	for _, component := range components {
+	if exclusive {
+		return writeExclusiveFile(dirFd, fileName, data, filePerm)
+	}
+	return writeAtomicFile(dirFd, fileName, data, filePerm)
+}
+
+func resolveSymlinkStartPath(absPath, root string) (string, error) {
+	if root == "" {
+		return "/", nil
+	}
+	absRoot, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return "", err
+	}
+	rootWithSep := absRoot
+	if !strings.HasSuffix(rootWithSep, string(filepath.Separator)) {
+		rootWithSep += string(filepath.Separator)
+	}
+	if strings.HasPrefix(absPath, rootWithSep) || absPath == absRoot {
+		return absRoot, nil
+	}
+	return "/", nil
+}
+
+func isSymlinkIfExists(path string) (bool, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return fi.Mode()&os.ModeSymlink != 0, nil
+}
+
+func validateRenameInputs(baseDir, srcPath, dstPath string) (string, string, error) {
+	if _, err := validateContained(baseDir, srcPath); err != nil {
+		return "", "", err
+	}
+	dstDir := filepath.Dir(dstPath)
+	dstName := filepath.Base(dstPath)
+	if _, err := validateContained(baseDir, dstDir); err != nil {
+		return "", "", err
+	}
+	if strings.Contains(dstName, "/") || strings.Contains(dstName, string(filepath.Separator)) {
+		return "", "", fmt.Errorf("destination name must not contain path separators: %s", dstName)
+	}
+	return dstDir, dstName, nil
+}
+
+func openContainedDir(baseDir, targetDir string, perm os.FileMode) (int, error) {
+	if _, err := validateContained(baseDir, targetDir); err != nil {
+		return -1, err
+	}
+	rel, err := filepath.Rel(baseDir, targetDir)
+	if err != nil {
+		return -1, fmt.Errorf("cannot make %s relative to %s: %w", targetDir, baseDir, err)
+	}
+
+	dirFd, err := unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return -1, fmt.Errorf("opening base directory: %w", err)
+	}
+
+	if rel == "." {
+		return dirFd, nil
+	}
+
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
 		if component == "" || component == "." {
 			continue
 		}
-
-		err := unix.Mkdirat(dirFd, component, uint32(dirPerm))
-		if err != nil && err != unix.EEXIST {
-			return fmt.Errorf("creating directory %s: %w", component, err)
+		if err := unix.Mkdirat(dirFd, component, uint32(perm)); err != nil && err != unix.EEXIST {
+			_ = unix.Close(dirFd)
+			return -1, fmt.Errorf("creating directory %s: %w", component, err)
 		}
-
 		newFd, err := unix.Openat(dirFd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 		if err != nil {
+			_ = unix.Close(dirFd)
 			if err == unix.ELOOP || err == unix.ENOTDIR {
-				return errors.E(errors.SymlinkNotAllowed,
-					fmt.Sprintf("symlink in path: %s", component), nil)
+				return -1, errors.E(errors.SymlinkNotAllowed, fmt.Sprintf("symlink detected: %s", component), nil)
 			}
-			return fmt.Errorf("opening directory %s: %w", component, err)
+			return -1, fmt.Errorf("opening directory %s: %w", component, err)
 		}
-
 		_ = unix.Close(dirFd)
 		dirFd = newFd
 	}
+	return dirFd, nil
+}
 
-	// Write file
-	var flags int
-	if exclusive {
-		flags = unix.O_CREAT | unix.O_EXCL | unix.O_WRONLY | unix.O_NOFOLLOW
-	} else {
-		// Use temp file + rename for atomic writes
-		tmpName := fileName + ".tmp"
-		fileFd, err := unix.Openat(dirFd, tmpName, unix.O_WRONLY|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, uint32(filePerm))
-		if err != nil {
-			if err == unix.ELOOP {
-				return errors.E(errors.SymlinkNotAllowed,
-					fmt.Sprintf("symlink at temp path: %s", tmpName), nil)
-			}
-			return fmt.Errorf("creating temp file: %w", err)
-		}
-
-		n, err := unix.Write(fileFd, data)
-		if err != nil {
-			_ = unix.Close(fileFd)
-			_ = unix.Unlinkat(dirFd, tmpName, 0)
-			return fmt.Errorf("writing temp file: %w", err)
-		}
-		if n != len(data) {
-			_ = unix.Close(fileFd)
-			_ = unix.Unlinkat(dirFd, tmpName, 0)
-			return fmt.Errorf("short write: %d of %d bytes", n, len(data))
-		}
-
-		if err := unix.Fsync(fileFd); err != nil {
-			_ = unix.Close(fileFd)
-			_ = unix.Unlinkat(dirFd, tmpName, 0)
-			return fmt.Errorf("syncing temp file: %w", err)
-		}
-
-		if err := unix.Close(fileFd); err != nil {
-			_ = unix.Unlinkat(dirFd, tmpName, 0)
-			return fmt.Errorf("closing temp file: %w", err)
-		}
-
-		// SECURITY: Check if destination is a symlink before rename.
-		// Renameat would overwrite a symlink, which could be a security issue.
-		var stat unix.Stat_t
-		err = unix.Fstatat(dirFd, fileName, &stat, unix.AT_SYMLINK_NOFOLLOW)
-		if err == nil {
-			// File exists - check if it's a symlink
-			if stat.Mode&unix.S_IFMT == unix.S_IFLNK {
-				_ = unix.Unlinkat(dirFd, tmpName, 0)
-				return errors.E(errors.SymlinkNotAllowed,
-					fmt.Sprintf("refusing to overwrite symlink: %s", fileName), nil)
-			}
-		}
-		// If file doesn't exist (ENOENT), that's fine - we'll create it
-
-		// Atomic rename
-		if err := unix.Renameat(dirFd, tmpName, dirFd, fileName); err != nil {
-			_ = unix.Unlinkat(dirFd, tmpName, 0)
-			return fmt.Errorf("renaming to final: %w", err)
-		}
-
-		_ = unix.Fsync(dirFd) // Best-effort directory sync
-		return nil
-	}
-
-	// Exclusive write (no temp file needed)
+func writeExclusiveFile(dirFd int, fileName string, data []byte, filePerm os.FileMode) error {
+	flags := unix.O_CREAT | unix.O_EXCL | unix.O_WRONLY | unix.O_NOFOLLOW
 	fileFd, err := unix.Openat(dirFd, fileName, flags, uint32(filePerm))
 	if err != nil {
 		if err == unix.EEXIST {
 			return ErrFileExists
 		}
 		if err == unix.ELOOP {
-			return errors.E(errors.SymlinkNotAllowed,
-				fmt.Sprintf("symlink at path: %s", fileName), nil)
+			return errors.E(errors.SymlinkNotAllowed, fmt.Sprintf("symlink at path: %s", fileName), nil)
 		}
 		return fmt.Errorf("creating file: %w", err)
 	}
 	defer func() { _ = unix.Close(fileFd) }()
+	return writeAndSyncFD(fileFd, data, "file")
+}
 
+func writeAtomicFile(dirFd int, fileName string, data []byte, filePerm os.FileMode) error {
+	return tx.WriteAtomicAt(dirFd, fileName, data, filePerm)
+}
+
+func writeAndSyncFD(fileFd int, data []byte, what string) error {
 	n, err := unix.Write(fileFd, data)
 	if err != nil {
-		return fmt.Errorf("writing file: %w", err)
+		return fmt.Errorf("writing %s: %w", what, err)
 	}
 	if n != len(data) {
 		return fmt.Errorf("short write: %d of %d bytes", n, len(data))
 	}
-
-	return unix.Fsync(fileFd)
+	if err := unix.Fsync(fileFd); err != nil {
+		return fmt.Errorf("syncing %s: %w", what, err)
+	}
+	return nil
 }
 
 func mkdirAllInternal(baseDir, targetDir string, perm os.FileMode) error {

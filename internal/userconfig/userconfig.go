@@ -24,6 +24,7 @@ import (
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/safefile/tx"
 	"github.com/locktivity/epack/internal/safeyaml"
 	"github.com/locktivity/epack/internal/timestamp"
 	"github.com/locktivity/epack/internal/yamlutil"
@@ -114,7 +115,7 @@ func EnsureDir() error {
 		return err
 	}
 
-	return os.MkdirAll(dir, 0755)
+	return safefile.MkdirAll(dir, dir)
 }
 
 // EnsureBinDir creates the bin directory if it doesn't exist.
@@ -124,7 +125,7 @@ func EnsureBinDir() error {
 		return err
 	}
 
-	return os.MkdirAll(binDir, 0755)
+	return safefile.MkdirAll(binDir, binDir)
 }
 
 // UtilitiesLock is the lockfile format for user-installed utilities.
@@ -253,7 +254,7 @@ func (lf *UtilitiesLock) Save() error {
 }
 
 // SaveToPath writes the utilities lockfile to a specific path.
-// SECURITY: Uses symlink-safe operations and atomic write via temp file + rename.
+// SECURITY: Uses symlink-safe operations and atomic write via fd-pinned temp+rename.
 func (lf *UtilitiesLock) SaveToPath(path string) error {
 	// Validate utilities before saving
 	if err := lf.validateUtilitiesForSave(); err != nil {
@@ -261,35 +262,8 @@ func (lf *UtilitiesLock) SaveToPath(path string) error {
 	}
 
 	dir := filepath.Dir(path)
-
-	// Get home directory as security root for symlink validation
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("getting home directory: %w", err)
-	}
-
-	// SECURITY: Validate no symlinks in parent path ancestry.
-	// This prevents symlink-based attacks where the lockfile parent directory
-	// is a symlink pointing elsewhere.
-	hasSymlink, err := safefile.ContainsSymlink(dir)
-	if err != nil {
-		return fmt.Errorf("checking for symlinks: %w", err)
-	}
-	if hasSymlink {
-		return fmt.Errorf("refusing to save utilities lock: path contains symlink: %s", dir)
-	}
-	_ = home // home was used for ValidateNoSymlinks root, but ContainsSymlink checks the whole path
-
-	// Create directory safely
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating utilities lock dir: %w", err)
-	}
-
-	// SECURITY: Check if target is a symlink (refuse to follow)
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to overwrite symlink at %s", path)
-		}
+	if err := validateUtilitiesLockPath(path, dir); err != nil {
+		return err
 	}
 
 	data, err := lf.marshalDeterministic()
@@ -297,49 +271,29 @@ func (lf *UtilitiesLock) SaveToPath(path string) error {
 		return fmt.Errorf("marshaling utilities lock: %w", err)
 	}
 
-	// Atomic write: write to temp file, then rename
-	tmpFile, err := os.CreateTemp(dir, ".utilities.lock.*.tmp")
+	if err := tx.WriteAtomicPath(path, data, 0644); err != nil {
+		return fmt.Errorf("writing utilities lock atomically: %w", err)
+	}
+	return nil
+}
+
+func validateUtilitiesLockPath(path, dir string) error {
+	if _, err := os.UserHomeDir(); err != nil {
+		return fmt.Errorf("getting home directory: %w", err)
+	}
+	hasSymlink, err := safefile.ContainsSymlink(dir)
 	if err != nil {
-		return fmt.Errorf("creating temp utilities lock: %w", err)
+		return fmt.Errorf("checking for symlinks: %w", err)
 	}
-	tmpPath := tmpFile.Name()
-
-	// Ensure cleanup on failure
-	success := false
-	defer func() {
-		if !success {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	// TOCTOU mitigation: Re-validate after temp file creation.
-	// This closes the race window between initial validation and temp file creation.
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			_ = tmpFile.Close()
-			return fmt.Errorf("refusing to overwrite symlink at %s (race detected)", path)
-		}
+	if hasSymlink {
+		return fmt.Errorf("refusing to save utilities lock: path contains symlink: %s", dir)
 	}
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("writing temp utilities lock: %w", err)
+	if err := safefile.MkdirAll(dir, dir); err != nil {
+		return fmt.Errorf("creating utilities lock dir: %w", err)
 	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("closing temp utilities lock: %w", err)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to overwrite symlink at %s", path)
 	}
-
-	// Set permissions before rename
-	if err := os.Chmod(tmpPath, 0644); err != nil {
-		return fmt.Errorf("setting utilities lock permissions: %w", err)
-	}
-
-	// Atomic rename
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("renaming temp utilities lock: %w", err)
-	}
-
-	success = true
 	return nil
 }
 
@@ -525,7 +479,7 @@ func SaveConfig(cfg *Config) error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := tx.WriteAtomicPath(path, data, 0644); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 

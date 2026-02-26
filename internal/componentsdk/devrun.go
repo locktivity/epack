@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/locktivity/epack/internal/procexec"
 )
 
 // Capabilities represents the JSON from --capabilities.
@@ -27,8 +28,10 @@ type Capabilities struct {
 
 // GetCapabilities runs --capabilities on a binary and parses the output.
 func GetCapabilities(binaryPath string) (*Capabilities, error) {
-	cmd := exec.Command(binaryPath, "--capabilities")
-	output, err := cmd.Output()
+	output, err := procexec.Output(context.Background(), procexec.Spec{
+		Path: binaryPath,
+		Args: []string{"--capabilities"},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("running --capabilities: %w", err)
 	}
@@ -65,12 +68,13 @@ type RunOptions struct {
 
 // Run executes a component binary and returns its exit code.
 func Run(ctx context.Context, opts RunOptions) (int, error) {
-	cmd := exec.CommandContext(ctx, opts.BinaryPath, opts.Args...)
-	cmd.Stdin = opts.Stdin
-	cmd.Stdout = opts.Stdout
-	cmd.Stderr = opts.Stderr
-
-	err := cmd.Run()
+	err := procexec.Run(ctx, procexec.Spec{
+		Path:   opts.BinaryPath,
+		Args:   opts.Args,
+		Stdin:  opts.Stdin,
+		Stdout: opts.Stdout,
+		Stderr: opts.Stderr,
+	})
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), nil
@@ -120,140 +124,183 @@ type WatchOptions struct {
 // Watch runs the component in watch mode, rebuilding and rerunning on changes.
 // It blocks until interrupted.
 func Watch(ctx context.Context, opts WatchOptions) error {
-	// Validate project directory
-	goModPath := filepath.Join(opts.ProjectDir, "go.mod")
-	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
-		return fmt.Errorf("not a Go project (go.mod not found in %s)", opts.ProjectDir)
+	if err := validateWatchProject(opts.ProjectDir); err != nil {
+		return err
 	}
 
-	// Set up file watcher
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := newGoFileWatcher(opts.ProjectDir)
 	if err != nil {
-		return fmt.Errorf("creating file watcher: %w", err)
+		return err
 	}
 	defer func() { _ = watcher.Close() }()
 
-	// Watch all directories with .go files
-	if err := watchGoFiles(watcher, opts.ProjectDir); err != nil {
-		return fmt.Errorf("setting up file watch: %w", err)
-	}
-
-	// Set up signal handling
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel, sigChan := newWatchContext(ctx)
 	defer cancel()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	// Track the running process
 	var currentCmd *exec.Cmd
 	var cmdMu sync.Mutex
 
-	killCurrent := func() {
-		cmdMu.Lock()
-		defer cmdMu.Unlock()
-		if currentCmd != nil && currentCmd.Process != nil {
-			_ = currentCmd.Process.Signal(syscall.SIGTERM)
-			done := make(chan struct{})
-			go func() {
-				_ = currentCmd.Wait()
-				close(done)
-			}()
-			select {
-			case <-done:
-			case <-time.After(2 * time.Second):
-				_ = currentCmd.Process.Kill()
-			}
-			currentCmd = nil
-		}
-	}
-
-	buildAndRun := func() {
-		killCurrent()
-
-		// Build
-		if opts.OnBuildStart != nil {
-			opts.OnBuildStart()
-		}
-
-		buildCmd := exec.CommandContext(ctx, "go", "build", "-o", opts.BinaryPath, ".")
-		buildCmd.Dir = opts.ProjectDir
-		buildCmd.Stdout = os.Stdout
-		buildCmd.Stderr = os.Stderr
-
-		if err := buildCmd.Run(); err != nil {
-			if opts.OnBuildFailed != nil {
-				opts.OnBuildFailed(err)
-			}
-			if opts.OnWaiting != nil {
-				opts.OnWaiting()
-			}
-			return
-		}
-
-		if opts.OnBuildSuccess != nil {
-			opts.OnBuildSuccess()
-		}
-
-		// Verify it's a valid component
-		caps, err := GetCapabilities(opts.BinaryPath)
-		if err != nil {
-			if opts.OnBuildFailed != nil {
-				opts.OnBuildFailed(fmt.Errorf("invalid component: %w", err))
-			}
-			if opts.OnWaiting != nil {
-				opts.OnWaiting()
-			}
-			return
-		}
-
-		// Run
-		if opts.OnRunStart != nil {
-			opts.OnRunStart(caps)
-		}
-
-		cmdMu.Lock()
-		currentCmd = exec.CommandContext(ctx, opts.BinaryPath, opts.Args...)
-		currentCmd.Stdin = os.Stdin
-		currentCmd.Stdout = os.Stdout
-		currentCmd.Stderr = os.Stderr
-		cmdMu.Unlock()
-
-		go func() {
-			err := currentCmd.Run()
-			cmdMu.Lock()
-			currentCmd = nil
-			cmdMu.Unlock()
-
-			if ctx.Err() != nil {
-				return // Context cancelled
-			}
-
-			exitCode := 0
-			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					exitCode = exitErr.ExitCode()
-				}
-			}
-
-			if opts.OnRunExit != nil {
-				opts.OnRunExit(exitCode, err)
-			}
-			if opts.OnWaiting != nil {
-				opts.OnWaiting()
-			}
-		}()
-	}
-
-	// Initial build and run
+	killCurrent := func() { killRunningCommand(&currentCmd, &cmdMu) }
+	buildAndRun := func() { buildAndRunComponent(ctx, opts, &currentCmd, &cmdMu, killCurrent) }
 	buildAndRun()
 
-	// Debounce timer
+	triggerRebuild := newDebouncedRebuildTrigger(opts, buildAndRun)
+	return runWatchLoop(watcher, sigChan, opts, killCurrent, triggerRebuild)
+}
+
+func validateWatchProject(projectDir string) error {
+	goModPath := filepath.Join(projectDir, "go.mod")
+	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+		return fmt.Errorf("not a Go project (go.mod not found in %s)", projectDir)
+	}
+	return nil
+}
+
+func newGoFileWatcher(projectDir string) (*fsnotify.Watcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("creating file watcher: %w", err)
+	}
+	if err := watchGoFiles(watcher, projectDir); err != nil {
+		_ = watcher.Close()
+		return nil, fmt.Errorf("setting up file watch: %w", err)
+	}
+	return watcher, nil
+}
+
+func newWatchContext(parent context.Context) (context.Context, context.CancelFunc, chan os.Signal) {
+	ctx, cancel := context.WithCancel(parent)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	return ctx, cancel, sigChan
+}
+
+func killRunningCommand(currentCmd **exec.Cmd, cmdMu *sync.Mutex) {
+	cmdMu.Lock()
+	defer cmdMu.Unlock()
+	if *currentCmd == nil || (*currentCmd).Process == nil {
+		return
+	}
+	_ = (*currentCmd).Process.Signal(syscall.SIGTERM)
+	done := make(chan struct{})
+	go func(cmd *exec.Cmd) {
+		_ = cmd.Wait()
+		close(done)
+	}(*currentCmd)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		_ = (*currentCmd).Process.Kill()
+	}
+	*currentCmd = nil
+}
+
+func buildAndRunComponent(ctx context.Context, opts WatchOptions, currentCmd **exec.Cmd, cmdMu *sync.Mutex, killCurrent func()) {
+	killCurrent()
+	if !buildComponentBinary(ctx, opts) {
+		return
+	}
+	caps, err := GetCapabilities(opts.BinaryPath)
+	if err != nil {
+		if opts.OnBuildFailed != nil {
+			opts.OnBuildFailed(fmt.Errorf("invalid component: %w", err))
+		}
+		if opts.OnWaiting != nil {
+			opts.OnWaiting()
+		}
+		return
+	}
+	if opts.OnRunStart != nil {
+		opts.OnRunStart(caps)
+	}
+	startComponentProcess(ctx, opts, currentCmd, cmdMu)
+	go watchComponentExit(ctx, opts, currentCmd, cmdMu)
+}
+
+func buildComponentBinary(ctx context.Context, opts WatchOptions) bool {
+	if opts.OnBuildStart != nil {
+		opts.OnBuildStart()
+	}
+	if err := procexec.Run(ctx, procexec.Spec{
+		Path:   "go",
+		Args:   []string{"build", "-o", opts.BinaryPath, "."},
+		Dir:    opts.ProjectDir,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	}); err != nil {
+		if opts.OnBuildFailed != nil {
+			opts.OnBuildFailed(err)
+		}
+		if opts.OnWaiting != nil {
+			opts.OnWaiting()
+		}
+		return false
+	}
+	if opts.OnBuildSuccess != nil {
+		opts.OnBuildSuccess()
+	}
+	return true
+}
+
+func startComponentProcess(ctx context.Context, opts WatchOptions, currentCmd **exec.Cmd, cmdMu *sync.Mutex) {
+	cmd, cancel, err := procexec.CommandChecked(ctx, procexec.Spec{
+		Path:             opts.BinaryPath,
+		Args:             opts.Args,
+		Stdin:            os.Stdin,
+		Stdout:           os.Stdout,
+		Stderr:           os.Stderr,
+		EnforceDirPolicy: true,
+		AllowedDirRoots:  []string{opts.ProjectDir},
+	})
+	if err != nil {
+		if opts.OnBuildFailed != nil {
+			opts.OnBuildFailed(fmt.Errorf("building component process command: %w", err))
+		}
+		return
+	}
+	_ = cancel // No timeout set; cancel is a no-op.
+	cmdMu.Lock()
+	*currentCmd = cmd
+	cmdMu.Unlock()
+}
+
+func watchComponentExit(ctx context.Context, opts WatchOptions, currentCmd **exec.Cmd, cmdMu *sync.Mutex) {
+	cmdMu.Lock()
+	cmd := *currentCmd
+	cmdMu.Unlock()
+	if cmd == nil {
+		return
+	}
+	err := cmd.Run()
+	cmdMu.Lock()
+	*currentCmd = nil
+	cmdMu.Unlock()
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+	if opts.OnRunExit != nil {
+		opts.OnRunExit(exitCode, err)
+	}
+	if opts.OnWaiting != nil {
+		opts.OnWaiting()
+	}
+}
+
+func newDebouncedRebuildTrigger(opts WatchOptions, buildAndRun func()) func() {
 	var debounceTimer *time.Timer
 	debounceMu := sync.Mutex{}
 	debounceDelay := 100 * time.Millisecond
 
-	triggerRebuild := func() {
+	return func() {
 		debounceMu.Lock()
 		defer debounceMu.Unlock()
 		if debounceTimer != nil {
@@ -266,8 +313,9 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 			buildAndRun()
 		})
 	}
+}
 
-	// Watch loop
+func runWatchLoop(watcher *fsnotify.Watcher, sigChan chan os.Signal, opts WatchOptions, killCurrent func(), triggerRebuild func()) error {
 	for {
 		select {
 		case <-sigChan:
@@ -276,22 +324,17 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 			}
 			killCurrent()
 			return nil
-
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return nil
 			}
-			if strings.HasSuffix(event.Name, ".go") {
-				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-					triggerRebuild()
-				}
+			if strings.HasSuffix(event.Name, ".go") && event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				triggerRebuild()
 			}
-
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return nil
 			}
-			// Log but don't fail
 			fmt.Fprintf(os.Stderr, "watch error: %v\n", err)
 		}
 	}

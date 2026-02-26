@@ -6,10 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/locktivity/epack/internal/procexec"
 )
 
 func (r *Runner) runCollectorTests(ctx context.Context) {
@@ -226,12 +227,19 @@ func (r *Runner) testCollectorSignalHandling(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, r.Binary)
-	cmd.Dir = r.WorkDir
-	cmd.Env = append(os.Environ(),
-		"EPACK_COLLECTOR_NAME=test",
-		"EPACK_PROTOCOL_VERSION=1",
-	)
+	cmd, cmdCancel, err := procexec.CommandChecked(ctx, procexec.Spec{
+		Path: r.Binary,
+		Dir:  r.WorkDir,
+		Env: append(os.Environ(),
+			"EPACK_COLLECTOR_NAME=test",
+			"EPACK_PROTOCOL_VERSION=1",
+		),
+	})
+	defer cmdCancel()
+	if err != nil {
+		r.skip("COL-031", "could not construct process for signal test")
+		return
+	}
 
 	if err := cmd.Start(); err != nil {
 		r.skip("COL-031", "could not start process for signal test")
@@ -247,12 +255,12 @@ func (r *Runner) testCollectorSignalHandling(ctx context.Context) {
 	}
 
 	// Wait for it to exit
-	err := cmd.Wait()
+	err = cmd.Wait()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		if cmd.ProcessState != nil {
 			// Any exit is considered graceful handling
 			// Exit code 0 or small positive values are fine
-			if exitErr.ExitCode() <= 128 {
+			if cmd.ProcessState.ExitCode() <= 128 {
 				r.pass("COL-031")
 			} else {
 				r.fail("COL-031", "process crashed on SIGTERM")

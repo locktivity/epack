@@ -6,8 +6,8 @@ package exec
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/redact"
 	"github.com/locktivity/epack/internal/version"
 )
@@ -64,15 +65,17 @@ func Run(ctx context.Context, name, execPath, configPath string, env []string, o
 	defer cancel()
 
 	// Execute collector
-	cmd := exec.CommandContext(execCtx, execPath)
-	cmd.Env = env
-
 	// Capture output with size limit to prevent memory exhaustion
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = limits.NewLimitedWriter(&stdout, limits.CollectorOutput.Bytes())
-	cmd.Stderr = limits.NewLimitedWriter(&stderr, limits.CollectorOutput.Bytes())
+	stdoutWriter := limits.NewLimitedWriter(&stdout, limits.CollectorOutput.Bytes())
+	stderrWriter := limits.NewLimitedWriter(&stderr, limits.CollectorOutput.Bytes())
 
-	err := cmd.Run()
+	err := procexec.Run(execCtx, procexec.Spec{
+		Path:   execPath,
+		Env:    env,
+		Stdout: stdoutWriter,
+		Stderr: stderrWriter,
+	})
 	if err != nil {
 		// Check if this was a timeout
 		if execCtx.Err() == context.DeadlineExceeded {
@@ -83,7 +86,8 @@ func Run(ctx context.Context, name, execPath, configPath string, env []string, o
 					"Increase timeout or check collector for hanging operations", nil),
 			}
 		}
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr interface{ ExitCode() int }
+		if stderrors.As(err, &exitErr) {
 			// SECURITY: Sanitize stderr before including in error messages.
 			sanitized := SanitizeStderr(stderr.String())
 			return RunResult{

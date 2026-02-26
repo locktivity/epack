@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -16,19 +15,20 @@ import (
 	"unicode/utf8"
 
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/validate"
 )
 
 // Runner executes conformance tests against a component binary.
 type Runner struct {
-	Binary      string                     // Path to component binary
-	Type        componenttypes.ComponentKind // Component type (collector, tool, remote, utility)
-	Timeout     time.Duration              // Execution timeout
-	WorkDir     string                     // Working directory for tests
-	Verbose     bool                       // Enable verbose output
-	results     []TestResult
-	caps        map[string]interface{}
-	binaryName  string
+	Binary     string                       // Path to component binary
+	Type       componenttypes.ComponentKind // Component type (collector, tool, remote, utility)
+	Timeout    time.Duration                // Execution timeout
+	WorkDir    string                       // Working directory for tests
+	Verbose    bool                         // Enable verbose output
+	results    []TestResult
+	caps       map[string]interface{}
+	binaryName string
 }
 
 // NewRunner creates a new conformance test runner.
@@ -145,36 +145,28 @@ func (r *Runner) exec(ctx context.Context, args []string, stdin []byte, env map[
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, r.Binary, args...)
-	cmd.Dir = r.WorkDir
-
 	// Build environment
-	cmd.Env = os.Environ()
+	cmdEnv := os.Environ()
 	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
+		cmdEnv = append(cmdEnv, k+"="+v)
 	}
 
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	res, err := procexec.RunCapture(ctx, procexec.Spec{
+		Path:  r.Binary,
+		Args:  args,
+		Dir:   r.WorkDir,
+		Env:   cmdEnv,
+		Stdin: bytes.NewReader(stdin),
+	})
 
 	result := execResult{
-		Stdout: stdout.Bytes(),
-		Stderr: stderr.Bytes(),
+		Stdout: res.Stdout,
+		Stderr: res.Stderr,
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			result.ExitCode = exitErr.ExitCode()
-		} else {
-			result.Err = err
-		}
+		result.ExitCode = res.ExitCode
+		result.Err = err
 	}
 
 	return result

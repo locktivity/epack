@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/pack/builder"
 	"github.com/spf13/cobra"
@@ -71,122 +72,42 @@ Examples:
 func runBuild(cmd *cobra.Command, args []string) error {
 	out := outputWriter()
 
-	// Determine output path
-	outputPath := buildOutput
-	artifacts := args
-	if outputPath == "" {
-		if len(args) < 1 {
-			// Interactive prompt for output path if TTY
-			if out.IsTTY() && !out.IsJSON() {
-				path, err := out.PromptRequired("Output path: ")
-				if err != nil {
-					return exitError("output path required: specify as first argument or with --output")
-				}
-				outputPath = path
-			} else {
-				return exitError("output path required: specify as first argument or with --output")
-			}
-		} else {
-			outputPath = args[0]
-			artifacts = args[1:]
-		}
+	outputPath, artifacts, err := resolveBuildOutputPath(out, args)
+	if err != nil {
+		return err
 	}
 
-	// Interactive prompt for stream if not provided
-	stream := buildStream
-	if stream == "" {
-		if out.IsTTY() && !out.IsJSON() {
-			s, err := out.PromptRequired("Stream identifier (e.g., myorg/prod): ")
-			if err != nil {
-				return exitError("--stream is required")
-			}
-			stream = s
-		} else {
-			return exitError("--stream is required")
-		}
+	stream, err := resolveBuildStream(out)
+	if err != nil {
+		return err
 	}
 
-	// Check if output exists
-	if !buildForce {
-		if _, err := os.Stat(outputPath); err == nil {
-			return exitError("output file %q already exists (use --force to overwrite)", outputPath)
-		}
+	if err := ensureBuildOutputWritable(outputPath); err != nil {
+		return err
 	}
 
-	// Create builder
 	b := builder.New(stream)
-
-	// Add sources
-	for _, src := range buildSources {
-		name, version := parseSource(src)
-		b.AddSource(name, version)
-	}
+	addBuildSources(b)
 
 	// Build artifact sources from CLI args and flags
 	var sources []builder.ArtifactSource
 
-	// Add artifacts from positional arguments (glob patterns)
-	for _, path := range artifacts {
-		matches, err := filepath.Glob(path)
-		if err != nil {
-			return exitError("invalid glob pattern %q: %v", path, err)
-		}
-		if len(matches) == 0 {
-			return exitError("no files matching %q", path)
-		}
-		for _, match := range matches {
-			sources = append(sources, builder.ArtifactSource{
-				SourcePath:  match,
-				DestPath:    "artifacts/" + filepath.Base(match),
-				ContentType: buildContentType,
-			})
-			out.Verbose("Adding %s -> artifacts/%s\n", match, filepath.Base(match))
-		}
+	sources, err = appendPositionalArtifacts(sources, artifacts, out)
+	if err != nil {
+		return err
 	}
 
-	// Add artifacts from --file flags
-	for _, fileSpec := range buildFiles {
-		src, dest := parseFileSpec(fileSpec)
-		if dest == "" {
-			dest = "artifacts/" + filepath.Base(src)
-		}
-		sources = append(sources, builder.ArtifactSource{
-			SourcePath:  src,
-			DestPath:    dest,
-			ContentType: buildContentType,
-		})
-		out.Verbose("Adding %s -> %s\n", src, dest)
+	sources = appendFlagArtifacts(sources, out)
+
+	sources, err = appendStdinArtifact(sources, out)
+	if err != nil {
+		return err
 	}
 
-	// Add artifact from stdin
-	if buildStdin != "" {
-		// SECURITY: Enforce artifact size limit on stdin to prevent memory exhaustion.
-		// Without this limit, a malicious pipe could send unbounded data.
-		data, err := limits.ReadAllWithLimit(os.Stdin, limits.Artifact.Bytes())
-		if err != nil {
-			if _, ok := err.(*limits.ErrSizeLimitExceeded); ok {
-				return exitError("stdin exceeds maximum artifact size (%d bytes)", limits.Artifact.Bytes())
-			}
-			return exitError("failed to read stdin: %v", err)
-		}
-		destPath := buildStdin
-		if !strings.HasPrefix(destPath, "artifacts/") {
-			destPath = "artifacts/" + destPath
-		}
-		sources = append(sources, builder.ArtifactSource{
-			Data:        data,
-			DestPath:    destPath,
-			ContentType: buildContentType,
-		})
-		out.Verbose("Adding stdin -> %s\n", destPath)
-	}
-
-	// Add artifacts to builder
 	if err := b.AddArtifacts(sources); err != nil {
 		return exitError("failed to add artifacts: %v", err)
 	}
 
-	// Build the pack
 	buildSpinner := out.StartSpinner("Building pack...")
 	if err := b.Build(outputPath); err != nil {
 		buildSpinner.Fail("Build failed")
@@ -194,19 +115,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 	buildSpinner.Success("Pack created")
 
-	// Output result
-	if out.IsJSON() {
-		return out.JSON(map[string]interface{}{
-			"path":   outputPath,
-			"stream": stream,
-		})
-	}
-
-	out.Success("Created %s", outputPath)
-	out.Print("  Stream: %s\n", stream)
-	out.Print("  Use 'epack inspect %s' to view contents\n", outputPath)
-
-	return nil
+	return printBuildResult(out, outputPath, stream)
 }
 
 // parseSource parses "name:version" or just "name"
@@ -236,4 +145,129 @@ func parseFileSpec(s string) (src, dest string) {
 		dest = parts[1]
 	}
 	return
+}
+
+func resolveBuildOutputPath(out *output.Writer, args []string) (string, []string, error) {
+	outputPath := buildOutput
+	artifacts := args
+	if outputPath != "" {
+		return outputPath, artifacts, nil
+	}
+	if len(args) >= 1 {
+		return args[0], args[1:], nil
+	}
+	if out.IsTTY() && !out.IsJSON() {
+		path, err := out.PromptRequired("Output path: ")
+		if err != nil {
+			return "", nil, exitError("output path required: specify as first argument or with --output")
+		}
+		return path, artifacts, nil
+	}
+	return "", nil, exitError("output path required: specify as first argument or with --output")
+}
+
+func resolveBuildStream(out *output.Writer) (string, error) {
+	if buildStream != "" {
+		return buildStream, nil
+	}
+	if out.IsTTY() && !out.IsJSON() {
+		s, err := out.PromptRequired("Stream identifier (e.g., myorg/prod): ")
+		if err != nil {
+			return "", exitError("--stream is required")
+		}
+		return s, nil
+	}
+	return "", exitError("--stream is required")
+}
+
+func ensureBuildOutputWritable(outputPath string) error {
+	if buildForce {
+		return nil
+	}
+	if _, err := os.Stat(outputPath); err == nil {
+		return exitError("output file %q already exists (use --force to overwrite)", outputPath)
+	}
+	return nil
+}
+
+func addBuildSources(b *builder.Builder) {
+	for _, src := range buildSources {
+		name, version := parseSource(src)
+		b.AddSource(name, version)
+	}
+}
+
+func appendPositionalArtifacts(sources []builder.ArtifactSource, artifacts []string, out *output.Writer) ([]builder.ArtifactSource, error) {
+	for _, path := range artifacts {
+		matches, err := filepath.Glob(path)
+		if err != nil {
+			return nil, exitError("invalid glob pattern %q: %v", path, err)
+		}
+		if len(matches) == 0 {
+			return nil, exitError("no files matching %q", path)
+		}
+		for _, match := range matches {
+			dest := "artifacts/" + filepath.Base(match)
+			sources = append(sources, builder.ArtifactSource{
+				SourcePath:  match,
+				DestPath:    dest,
+				ContentType: buildContentType,
+			})
+			out.Verbose("Adding %s -> %s\n", match, dest)
+		}
+	}
+	return sources, nil
+}
+
+func appendFlagArtifacts(sources []builder.ArtifactSource, out *output.Writer) []builder.ArtifactSource {
+	for _, fileSpec := range buildFiles {
+		src, dest := parseFileSpec(fileSpec)
+		if dest == "" {
+			dest = "artifacts/" + filepath.Base(src)
+		}
+		sources = append(sources, builder.ArtifactSource{
+			SourcePath:  src,
+			DestPath:    dest,
+			ContentType: buildContentType,
+		})
+		out.Verbose("Adding %s -> %s\n", src, dest)
+	}
+	return sources
+}
+
+func appendStdinArtifact(sources []builder.ArtifactSource, out *output.Writer) ([]builder.ArtifactSource, error) {
+	if buildStdin == "" {
+		return sources, nil
+	}
+	data, err := limits.ReadAllWithLimit(os.Stdin, limits.Artifact.Bytes())
+	if err != nil {
+		if _, ok := err.(*limits.ErrSizeLimitExceeded); ok {
+			return nil, exitError("stdin exceeds maximum artifact size (%d bytes)", limits.Artifact.Bytes())
+		}
+		return nil, exitError("failed to read stdin: %v", err)
+	}
+	destPath := buildStdin
+	if !strings.HasPrefix(destPath, "artifacts/") {
+		destPath = "artifacts/" + destPath
+	}
+	sources = append(sources, builder.ArtifactSource{
+		Data:        data,
+		DestPath:    destPath,
+		ContentType: buildContentType,
+	})
+	out.Verbose("Adding stdin -> %s\n", destPath)
+	return sources, nil
+}
+
+func printBuildResult(out *output.Writer, outputPath, stream string) error {
+	if out.IsJSON() {
+		return out.JSON(map[string]interface{}{
+			"path":   outputPath,
+			"stream": stream,
+		})
+	}
+	out.Success("Created %s", outputPath)
+	out.Print("  Stream: %s\n", stream)
+	out.Print("  Use 'epack inspect %s' to view contents\n", outputPath)
+	return nil
 }

@@ -125,7 +125,9 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 		opts := remote.AdapterExecutorOptions{
 			Stderr: os.Stderr,
 			Verification: remote.VerificationOptions{
-				AllowUnverifiedSource: whoamiInsecureAllowUnpinned,
+				Unsafe: remote.VerificationUnsafeOverrides{
+					AllowUnverifiedSource: whoamiInsecureAllowUnpinned,
+				},
 			},
 		}
 

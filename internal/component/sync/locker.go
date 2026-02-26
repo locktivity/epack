@@ -66,9 +66,35 @@ func (l *Locker) Lock(ctx context.Context, cfg *config.JobConfig, opts LockOpts)
 		return nil, err
 	}
 
-	var results []LockResult
+	collectorResults, err := l.lockCollectors(ctx, cfg.Collectors, lf, opts)
+	if err != nil {
+		return nil, err
+	}
 
-	collectorResults, err := lockByKind(ctx, cfg.Collectors, lf, opts,
+	toolResults, err := l.lockTools(ctx, cfg.Tools, lf, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	remoteResults, err := l.lockRemotes(ctx, cfg.Remotes, lf, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Save lockfile
+	if err := lf.Save(l.LockfilePath); err != nil {
+		return nil, fmt.Errorf("saving lockfile: %w", err)
+	}
+
+	results := make([]LockResult, 0, len(collectorResults)+len(toolResults)+len(remoteResults))
+	results = append(results, collectorResults...)
+	results = append(results, toolResults...)
+	results = append(results, remoteResults...)
+	return results, nil
+}
+
+func (l *Locker) lockCollectors(ctx context.Context, collectors map[string]config.CollectorConfig, lf *lockfile.LockFile, opts LockOpts) ([]LockResult, error) {
+	return lockByKind(ctx, collectors, lf, opts,
 		func(ctx context.Context, name string, collector config.CollectorConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
 			if collector.Source == "" {
 				result, err := l.lockExternalCollector(ctx, name, collector, lf, opts)
@@ -83,12 +109,10 @@ func (l *Locker) Lock(ctx context.Context, cfg *config.JobConfig, opts LockOpts)
 			}
 			return result, nil
 		})
-	if err != nil {
-		return nil, err
-	}
-	results = append(results, collectorResults...)
+}
 
-	toolResults, err := lockByKind(ctx, cfg.Tools, lf, opts,
+func (l *Locker) lockTools(ctx context.Context, tools map[string]config.ToolConfig, lf *lockfile.LockFile, opts LockOpts) ([]LockResult, error) {
+	return lockByKind(ctx, tools, lf, opts,
 		func(ctx context.Context, name string, tool config.ToolConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
 			if tool.Source == "" {
 				result, err := l.lockExternalTool(ctx, name, tool, lf, opts)
@@ -103,12 +127,10 @@ func (l *Locker) Lock(ctx context.Context, cfg *config.JobConfig, opts LockOpts)
 			}
 			return result, nil
 		})
-	if err != nil {
-		return nil, err
-	}
-	results = append(results, toolResults...)
+}
 
-	remoteResults, err := lockByKind(ctx, cfg.Remotes, lf, opts,
+func (l *Locker) lockRemotes(ctx context.Context, remotes map[string]config.RemoteConfig, lf *lockfile.LockFile, opts LockOpts) ([]LockResult, error) {
+	return lockByKind(ctx, remotes, lf, opts,
 		func(ctx context.Context, name string, remoteCfg config.RemoteConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
 			if remoteCfg.Source == "" {
 				// Adapter-only remotes don't need locking.
@@ -127,17 +149,6 @@ func (l *Locker) Lock(ctx context.Context, cfg *config.JobConfig, opts LockOpts)
 			}
 			return result, nil
 		})
-	if err != nil {
-		return nil, err
-	}
-	results = append(results, remoteResults...)
-
-	// Save lockfile
-	if err := lf.Save(l.LockfilePath); err != nil {
-		return nil, fmt.Errorf("saving lockfile: %w", err)
-	}
-
-	return results, nil
 }
 
 type lockKindFunc[T any] func(context.Context, string, T, *lockfile.LockFile, LockOpts) (*LockResult, error)
@@ -171,181 +182,20 @@ func lockByKind[T any](
 
 // lockSourceCollector locks a source-based collector.
 func (l *Locker) lockSourceCollector(ctx context.Context, name string, cfg config.CollectorConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
-	owner, repo, versionConstraint, err := github.ParseSource(cfg.Source)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build source string for registry calls
-	source := fmt.Sprintf("%s/%s", owner, repo)
-
-	// Resolve version using registry
-	selectedTag, err := l.Registry.ResolveVersion(ctx, source, versionConstraint)
-	if err != nil {
-		return nil, fmt.Errorf("resolving version: %w", err)
-	}
-
-	// Fetch the selected release
-	release, err := l.Registry.FetchRelease(ctx, source, selectedTag)
-	if err != nil {
-		return nil, fmt.Errorf("fetching release %s: %w", selectedTag, err)
-	}
-
-	// Determine platforms to lock
-	platforms := l.resolvePlatforms(opts, release, name)
-	if len(platforms) == 0 {
-		return nil, fmt.Errorf("no platforms to lock")
-	}
-
-	// Check if this is new or updated
-	existing, exists := lf.GetCollector(name)
-	isNew := !exists
-	updated := exists && existing.Version != selectedTag
-
-	// Lock each platform
-	lockedPlatforms := make(map[string]componenttypes.LockedPlatform)
-	var signer *componenttypes.LockedSigner
-
-	for _, plat := range platforms {
-		goos, goarch := platform.Split(plat)
-
-		// Find binary asset
-		asset, err := l.Registry.FindBinaryAsset(release, name, goos, goarch)
-		if err != nil {
-			// Platform not available in release - skip if AllPlatforms, error otherwise
-			if opts.AllPlatforms {
-				continue
+	return l.lockSourceComponent(ctx, name, cfg.Source, name, "collector", opts,
+		func() (string, map[string]componenttypes.LockedPlatform, bool) {
+			existing, exists := lf.GetCollector(name)
+			return existing.Version, existing.Platforms, exists
+		},
+		func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
+			lf.Collectors[name] = lockfile.LockedCollector{
+				Source:    sourceURI,
+				Version:   selectedTag,
+				Signer:    signer,
+				LockedAt:  timestamp.Now().String(),
+				Platforms: platforms,
 			}
-			return nil, fmt.Errorf("finding asset for %s: %w", plat, err)
-		}
-
-		// Download to temp file for verification
-		tmpDir, err := os.MkdirTemp("", "epack-lock-*")
-		if err != nil {
-			return nil, fmt.Errorf("creating temp dir: %w", err)
-		}
-		defer func() { _ = os.RemoveAll(tmpDir) }()
-
-		// Sanitize asset name to prevent path traversal
-		safeBinaryName, err := SanitizeAssetName(asset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("invalid binary asset name: %w", err)
-		}
-
-		binaryPath := filepath.Join(tmpDir, safeBinaryName)
-		if err := l.Registry.DownloadAsset(ctx, asset.URL, binaryPath); err != nil {
-			return nil, fmt.Errorf("downloading %s: %w", asset.Name, err)
-		}
-
-		// Find and download sigstore bundle
-		bundleAsset, err := l.Registry.FindSigstoreBundle(release, asset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("finding sigstore bundle for %s: %w", asset.Name, err)
-		}
-
-		// Sanitize bundle asset name to prevent path traversal
-		safeBundleName, err := SanitizeAssetName(bundleAsset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("invalid bundle asset name: %w", err)
-		}
-
-		bundlePath := filepath.Join(tmpDir, safeBundleName)
-		if err := l.Registry.DownloadAsset(ctx, bundleAsset.URL, bundlePath); err != nil {
-			return nil, fmt.Errorf("downloading sigstore bundle: %w", err)
-		}
-
-		// SECURITY: Build expected identity from declared source and selected tag.
-		// This prevents collector substitution attacks where an attacker's signed
-		// binary could be locked in place of the declared collector.
-		expectedRepoURI := BuildGitHubRepoURL(owner, repo)
-		expectedRef := BuildGitHubRefTag(selectedTag)
-		expectedIdentity := &ExpectedIdentity{
-			SourceRepositoryURI: expectedRepoURI,
-			SourceRepositoryRef: expectedRef,
-		}
-
-		// Verify sigstore signature with identity enforcement.
-		// This MUST match the declared source repository and selected tag.
-		sigResult, err := VerifySigstoreBundle(bundlePath, binaryPath, expectedIdentity)
-		if err != nil {
-			return nil, fmt.Errorf("verifying sigstore signature: %w (expected repo=%s, ref=%s)", err, expectedRepoURI, expectedRef)
-		}
-
-		// Defense in depth: verify returned claims match expected
-		if sigResult.SourceRepositoryURI != expectedRepoURI {
-			return nil, fmt.Errorf("sigstore certificate source_repository_uri mismatch for %s: expected %q, got %q",
-				name, expectedRepoURI, sigResult.SourceRepositoryURI)
-		}
-		if sigResult.SourceRepositoryRef != expectedRef {
-			return nil, fmt.Errorf("sigstore certificate source_repository_ref mismatch for %s: expected %q, got %q",
-				name, expectedRef, sigResult.SourceRepositoryRef)
-		}
-
-		// Capture and validate signer (must be same for all platforms)
-		platformSigner := &componenttypes.LockedSigner{
-			Issuer:              sigResult.Issuer,
-			SourceRepositoryURI: sigResult.SourceRepositoryURI,
-			SourceRepositoryRef: sigResult.SourceRepositoryRef,
-		}
-		if signer == nil {
-			signer = platformSigner
-		} else {
-			// Validate signer matches across platforms
-			if signer.Issuer != platformSigner.Issuer ||
-				signer.SourceRepositoryURI != platformSigner.SourceRepositoryURI ||
-				signer.SourceRepositoryRef != platformSigner.SourceRepositoryRef {
-				return nil, fmt.Errorf("signer mismatch across platforms for %s: %s has different signer than previous platforms", name, plat)
-			}
-		}
-
-		// Compute digest
-		digest, err := ComputeDigest(binaryPath)
-		if err != nil {
-			return nil, fmt.Errorf("computing digest: %w", err)
-		}
-
-		lockedPlatforms[plat] = componenttypes.LockedPlatform{
-			Digest: digest,
-			Asset:  asset.Name,
-		}
-	}
-
-	if len(lockedPlatforms) == 0 {
-		return nil, fmt.Errorf("no platforms could be locked")
-	}
-
-	// Merge with existing platforms if additive mode
-	if exists && !opts.AllPlatforms {
-		for p, entry := range existing.Platforms {
-			if _, locked := lockedPlatforms[p]; !locked {
-				lockedPlatforms[p] = entry
-			}
-		}
-	}
-
-	// Update lockfile entry
-	lf.Collectors[name] = lockfile.LockedCollector{
-		Source:    BuildSourceURI(owner, repo),
-		Version:   selectedTag,
-		Signer:    signer,
-		LockedAt:  timestamp.Now().String(),
-		Platforms: lockedPlatforms,
-	}
-
-	lockedPlatformNames := make([]string, 0, len(lockedPlatforms))
-	for p := range lockedPlatforms {
-		lockedPlatformNames = append(lockedPlatformNames, p)
-	}
-	sort.Strings(lockedPlatformNames) // Deterministic ordering
-
-	return &LockResult{
-		Name:      name,
-		Kind:      "collector",
-		Version:   selectedTag,
-		Platforms: lockedPlatformNames,
-		IsNew:     isNew,
-		Updated:   updated,
-	}, nil
+		})
 }
 
 // lockExternalCollector locks an external binary collector (digest only).
@@ -434,178 +284,20 @@ func (l *Locker) DetectAvailablePlatforms(release *ReleaseInfo, componentName st
 // lockSourceTool locks a source-based tool.
 // Tools use the same locking mechanism as collectors.
 func (l *Locker) lockSourceTool(ctx context.Context, name string, cfg config.ToolConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
-	owner, repo, versionConstraint, err := github.ParseSource(cfg.Source)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build source string for registry calls
-	source := fmt.Sprintf("%s/%s", owner, repo)
-
-	// Resolve version using registry
-	selectedTag, err := l.Registry.ResolveVersion(ctx, source, versionConstraint)
-	if err != nil {
-		return nil, fmt.Errorf("resolving version: %w", err)
-	}
-
-	// Fetch the selected release
-	release, err := l.Registry.FetchRelease(ctx, source, selectedTag)
-	if err != nil {
-		return nil, fmt.Errorf("fetching release %s: %w", selectedTag, err)
-	}
-
-	// Determine platforms to lock
-	platforms := l.resolvePlatforms(opts, release, name)
-	if len(platforms) == 0 {
-		return nil, fmt.Errorf("no platforms to lock")
-	}
-
-	// Check if this is new or updated
-	existing, exists := lf.GetTool(name)
-	isNew := !exists
-	updated := exists && existing.Version != selectedTag
-
-	// Lock each platform
-	lockedPlatforms := make(map[string]componenttypes.LockedPlatform)
-	var signer *componenttypes.LockedSigner
-
-	for _, plat := range platforms {
-		goos, goarch := platform.Split(plat)
-
-		// Find binary asset
-		asset, err := l.Registry.FindBinaryAsset(release, name, goos, goarch)
-		if err != nil {
-			// Platform not available in release - skip if AllPlatforms, error otherwise
-			if opts.AllPlatforms {
-				continue
+	return l.lockSourceComponent(ctx, name, cfg.Source, name, "tool", opts,
+		func() (string, map[string]componenttypes.LockedPlatform, bool) {
+			existing, exists := lf.GetTool(name)
+			return existing.Version, existing.Platforms, exists
+		},
+		func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
+			lf.Tools[name] = lockfile.LockedTool{
+				Source:    sourceURI,
+				Version:   selectedTag,
+				Signer:    signer,
+				LockedAt:  timestamp.Now().String(),
+				Platforms: platforms,
 			}
-			return nil, fmt.Errorf("finding asset for %s: %w", plat, err)
-		}
-
-		// Download to temp file for verification
-		tmpDir, err := os.MkdirTemp("", "epack-lock-*")
-		if err != nil {
-			return nil, fmt.Errorf("creating temp dir: %w", err)
-		}
-		defer func() { _ = os.RemoveAll(tmpDir) }()
-
-		// Sanitize asset name to prevent path traversal
-		safeBinaryName, err := SanitizeAssetName(asset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("invalid binary asset name: %w", err)
-		}
-
-		binaryPath := filepath.Join(tmpDir, safeBinaryName)
-		if err := l.Registry.DownloadAsset(ctx, asset.URL, binaryPath); err != nil {
-			return nil, fmt.Errorf("downloading %s: %w", asset.Name, err)
-		}
-
-		// Find and download sigstore bundle
-		bundleAsset, err := l.Registry.FindSigstoreBundle(release, asset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("finding sigstore bundle for %s: %w", asset.Name, err)
-		}
-
-		// Sanitize bundle asset name to prevent path traversal
-		safeBundleName, err := SanitizeAssetName(bundleAsset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("invalid bundle asset name: %w", err)
-		}
-
-		bundlePath := filepath.Join(tmpDir, safeBundleName)
-		if err := l.Registry.DownloadAsset(ctx, bundleAsset.URL, bundlePath); err != nil {
-			return nil, fmt.Errorf("downloading sigstore bundle: %w", err)
-		}
-
-		// SECURITY: Build expected identity from declared source and selected tag.
-		expectedRepoURI := BuildGitHubRepoURL(owner, repo)
-		expectedRef := BuildGitHubRefTag(selectedTag)
-		expectedIdentity := &ExpectedIdentity{
-			SourceRepositoryURI: expectedRepoURI,
-			SourceRepositoryRef: expectedRef,
-		}
-
-		// Verify sigstore signature with identity enforcement.
-		sigResult, err := VerifySigstoreBundle(bundlePath, binaryPath, expectedIdentity)
-		if err != nil {
-			return nil, fmt.Errorf("verifying sigstore signature: %w (expected repo=%s, ref=%s)", err, expectedRepoURI, expectedRef)
-		}
-
-		// Defense in depth: verify returned claims match expected
-		if sigResult.SourceRepositoryURI != expectedRepoURI {
-			return nil, fmt.Errorf("sigstore certificate source_repository_uri mismatch for %s: expected %q, got %q",
-				name, expectedRepoURI, sigResult.SourceRepositoryURI)
-		}
-		if sigResult.SourceRepositoryRef != expectedRef {
-			return nil, fmt.Errorf("sigstore certificate source_repository_ref mismatch for %s: expected %q, got %q",
-				name, expectedRef, sigResult.SourceRepositoryRef)
-		}
-
-		// Capture and validate signer (must be same for all platforms)
-		platformSigner := &componenttypes.LockedSigner{
-			Issuer:              sigResult.Issuer,
-			SourceRepositoryURI: sigResult.SourceRepositoryURI,
-			SourceRepositoryRef: sigResult.SourceRepositoryRef,
-		}
-		if signer == nil {
-			signer = platformSigner
-		} else {
-			// Validate signer matches across platforms
-			if signer.Issuer != platformSigner.Issuer ||
-				signer.SourceRepositoryURI != platformSigner.SourceRepositoryURI ||
-				signer.SourceRepositoryRef != platformSigner.SourceRepositoryRef {
-				return nil, fmt.Errorf("signer mismatch across platforms for %s: %s has different signer than previous platforms", name, plat)
-			}
-		}
-
-		// Compute digest
-		digest, err := ComputeDigest(binaryPath)
-		if err != nil {
-			return nil, fmt.Errorf("computing digest: %w", err)
-		}
-
-		lockedPlatforms[plat] = componenttypes.LockedPlatform{
-			Digest: digest,
-			Asset:  asset.Name,
-		}
-	}
-
-	if len(lockedPlatforms) == 0 {
-		return nil, fmt.Errorf("no platforms could be locked")
-	}
-
-	// Merge with existing platforms if additive mode
-	if exists && !opts.AllPlatforms {
-		for p, entry := range existing.Platforms {
-			if _, locked := lockedPlatforms[p]; !locked {
-				lockedPlatforms[p] = entry
-			}
-		}
-	}
-
-	// Update lockfile entry
-	lf.Tools[name] = lockfile.LockedTool{
-		Source:    BuildSourceURI(owner, repo),
-		Version:   selectedTag,
-		Signer:    signer,
-		LockedAt:  timestamp.Now().String(),
-		Platforms: lockedPlatforms,
-	}
-
-	lockedPlatformNames := make([]string, 0, len(lockedPlatforms))
-	for p := range lockedPlatforms {
-		lockedPlatformNames = append(lockedPlatformNames, p)
-	}
-	sort.Strings(lockedPlatformNames) // Deterministic ordering
-
-	return &LockResult{
-		Name:      name,
-		Kind:      "tool",
-		Version:   selectedTag,
-		Platforms: lockedPlatformNames,
-		IsNew:     isNew,
-		Updated:   updated,
-	}, nil
+		})
 }
 
 // lockExternalTool locks an external binary tool (digest only).
@@ -653,185 +345,219 @@ func (l *Locker) lockExternalTool(ctx context.Context, name string, cfg config.T
 // lockSourceRemote locks a source-based remote adapter.
 // Remote adapters use the same locking mechanism as collectors and tools.
 func (l *Locker) lockSourceRemote(ctx context.Context, name string, cfg config.RemoteConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
-	owner, repo, versionConstraint, err := github.ParseSource(cfg.Source)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build source string for registry calls
-	source := fmt.Sprintf("%s/%s", owner, repo)
-
-	// Resolve version using registry
-	selectedTag, err := l.Registry.ResolveVersion(ctx, source, versionConstraint)
-	if err != nil {
-		return nil, fmt.Errorf("resolving version: %w", err)
-	}
-
-	// Fetch the selected release
-	release, err := l.Registry.FetchRelease(ctx, source, selectedTag)
-	if err != nil {
-		return nil, fmt.Errorf("fetching release %s: %w", selectedTag, err)
-	}
-
-	// Get the effective adapter name for binary asset lookup
 	adapterName := cfg.EffectiveAdapter()
 	if adapterName == "" {
 		return nil, fmt.Errorf("cannot determine adapter name for remote %q", name)
 	}
 	binaryName := "epack-remote-" + adapterName
+	return l.lockSourceComponent(ctx, name, cfg.Source, binaryName, "remote", opts,
+		func() (string, map[string]componenttypes.LockedPlatform, bool) {
+			existing, exists := lf.GetRemote(name)
+			return existing.Version, existing.Platforms, exists
+		},
+		func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
+			lf.Remotes[name] = lockfile.LockedRemote{
+				Source:    sourceURI,
+				Version:   selectedTag,
+				Signer:    signer,
+				LockedAt:  timestamp.Now().String(),
+				Platforms: platforms,
+			}
+		})
+}
 
-	// Determine platforms to lock
-	platforms := l.resolvePlatforms(opts, release, binaryName)
+func (l *Locker) lockSourceComponent(
+	ctx context.Context,
+	name, sourceRef, binaryLookupName, kind string,
+	opts LockOpts,
+	getExisting func() (version string, platforms map[string]componenttypes.LockedPlatform, exists bool),
+	updateEntry func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform),
+) (*LockResult, error) {
+	owner, repo, versionConstraint, err := github.ParseSource(sourceRef)
+	if err != nil {
+		return nil, err
+	}
+
+	source := fmt.Sprintf("%s/%s", owner, repo)
+	selectedTag, err := l.Registry.ResolveVersion(ctx, source, versionConstraint)
+	if err != nil {
+		return nil, fmt.Errorf("resolving version: %w", err)
+	}
+
+	release, err := l.Registry.FetchRelease(ctx, source, selectedTag)
+	if err != nil {
+		return nil, fmt.Errorf("fetching release %s: %w", selectedTag, err)
+	}
+
+	platforms := l.resolvePlatforms(opts, release, binaryLookupName)
 	if len(platforms) == 0 {
 		return nil, fmt.Errorf("no platforms to lock")
 	}
 
-	// Check if this is new or updated
-	existing, exists := lf.GetRemote(name)
+	existingVersion, existingPlatforms, exists := getExisting()
 	isNew := !exists
-	updated := exists && existing.Version != selectedTag
+	updated := exists && existingVersion != selectedTag
 
-	// Lock each platform
-	lockedPlatforms := make(map[string]componenttypes.LockedPlatform)
-	var signer *componenttypes.LockedSigner
-
-	for _, plat := range platforms {
-		goos, goarch := platform.Split(plat)
-
-		// Find binary asset
-		asset, err := l.Registry.FindBinaryAsset(release, binaryName, goos, goarch)
-		if err != nil {
-			// Platform not available in release - skip if AllPlatforms, error otherwise
-			if opts.AllPlatforms {
-				continue
-			}
-			return nil, fmt.Errorf("finding asset for %s: %w", plat, err)
-		}
-
-		// Download to temp file for verification
-		tmpDir, err := os.MkdirTemp("", "epack-lock-*")
-		if err != nil {
-			return nil, fmt.Errorf("creating temp dir: %w", err)
-		}
-		defer func() { _ = os.RemoveAll(tmpDir) }()
-
-		// Sanitize asset name to prevent path traversal
-		safeBinaryName, err := SanitizeAssetName(asset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("invalid binary asset name: %w", err)
-		}
-
-		binaryPath := filepath.Join(tmpDir, safeBinaryName)
-		if err := l.Registry.DownloadAsset(ctx, asset.URL, binaryPath); err != nil {
-			return nil, fmt.Errorf("downloading %s: %w", asset.Name, err)
-		}
-
-		// Find and download sigstore bundle
-		bundleAsset, err := l.Registry.FindSigstoreBundle(release, asset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("finding sigstore bundle for %s: %w", asset.Name, err)
-		}
-
-		// Sanitize bundle asset name to prevent path traversal
-		safeBundleName, err := SanitizeAssetName(bundleAsset.Name)
-		if err != nil {
-			return nil, fmt.Errorf("invalid bundle asset name: %w", err)
-		}
-
-		bundlePath := filepath.Join(tmpDir, safeBundleName)
-		if err := l.Registry.DownloadAsset(ctx, bundleAsset.URL, bundlePath); err != nil {
-			return nil, fmt.Errorf("downloading sigstore bundle: %w", err)
-		}
-
-		// SECURITY: Build expected identity from declared source and selected tag.
-		expectedRepoURI := BuildGitHubRepoURL(owner, repo)
-		expectedRef := BuildGitHubRefTag(selectedTag)
-		expectedIdentity := &ExpectedIdentity{
-			SourceRepositoryURI: expectedRepoURI,
-			SourceRepositoryRef: expectedRef,
-		}
-
-		// Verify sigstore signature with identity enforcement.
-		sigResult, err := VerifySigstoreBundle(bundlePath, binaryPath, expectedIdentity)
-		if err != nil {
-			return nil, fmt.Errorf("verifying sigstore signature: %w (expected repo=%s, ref=%s)", err, expectedRepoURI, expectedRef)
-		}
-
-		// Defense in depth: verify returned claims match expected
-		if sigResult.SourceRepositoryURI != expectedRepoURI {
-			return nil, fmt.Errorf("sigstore certificate source_repository_uri mismatch for %s: expected %q, got %q",
-				name, expectedRepoURI, sigResult.SourceRepositoryURI)
-		}
-		if sigResult.SourceRepositoryRef != expectedRef {
-			return nil, fmt.Errorf("sigstore certificate source_repository_ref mismatch for %s: expected %q, got %q",
-				name, expectedRef, sigResult.SourceRepositoryRef)
-		}
-
-		// Capture and validate signer (must be same for all platforms)
-		platformSigner := &componenttypes.LockedSigner{
-			Issuer:              sigResult.Issuer,
-			SourceRepositoryURI: sigResult.SourceRepositoryURI,
-			SourceRepositoryRef: sigResult.SourceRepositoryRef,
-		}
-		if signer == nil {
-			signer = platformSigner
-		} else {
-			// Validate signer matches across platforms
-			if signer.Issuer != platformSigner.Issuer ||
-				signer.SourceRepositoryURI != platformSigner.SourceRepositoryURI ||
-				signer.SourceRepositoryRef != platformSigner.SourceRepositoryRef {
-				return nil, fmt.Errorf("signer mismatch across platforms for %s: %s has different signer than previous platforms", name, plat)
-			}
-		}
-
-		// Compute digest
-		digest, err := ComputeDigest(binaryPath)
-		if err != nil {
-			return nil, fmt.Errorf("computing digest: %w", err)
-		}
-
-		lockedPlatforms[plat] = componenttypes.LockedPlatform{
-			Digest: digest,
-			Asset:  asset.Name,
-		}
+	lockedPlatforms, signer, err := l.lockSourcePlatforms(ctx, name, binaryLookupName, owner, repo, selectedTag, release, platforms, opts)
+	if err != nil {
+		return nil, err
 	}
-
 	if len(lockedPlatforms) == 0 {
 		return nil, fmt.Errorf("no platforms could be locked")
 	}
 
-	// Merge with existing platforms if additive mode
 	if exists && !opts.AllPlatforms {
-		for p, entry := range existing.Platforms {
-			if _, locked := lockedPlatforms[p]; !locked {
+		for p, entry := range existingPlatforms {
+			if _, alreadyLocked := lockedPlatforms[p]; !alreadyLocked {
 				lockedPlatforms[p] = entry
 			}
 		}
 	}
 
-	// Update lockfile entry
-	lf.Remotes[name] = lockfile.LockedRemote{
-		Source:    BuildSourceURI(owner, repo),
-		Version:   selectedTag,
-		Signer:    signer,
-		LockedAt:  timestamp.Now().String(),
-		Platforms: lockedPlatforms,
-	}
+	updateEntry(BuildSourceURI(owner, repo), selectedTag, signer, lockedPlatforms)
 
 	lockedPlatformNames := make([]string, 0, len(lockedPlatforms))
 	for p := range lockedPlatforms {
 		lockedPlatformNames = append(lockedPlatformNames, p)
 	}
-	sort.Strings(lockedPlatformNames) // Deterministic ordering
+	sort.Strings(lockedPlatformNames)
 
 	return &LockResult{
 		Name:      name,
-		Kind:      "remote",
+		Kind:      kind,
 		Version:   selectedTag,
 		Platforms: lockedPlatformNames,
 		IsNew:     isNew,
 		Updated:   updated,
 	}, nil
+}
+
+func (l *Locker) lockSourcePlatforms(
+	ctx context.Context,
+	name, binaryLookupName, owner, repo, selectedTag string,
+	release *ReleaseInfo,
+	platforms []string,
+	opts LockOpts,
+) (map[string]componenttypes.LockedPlatform, *componenttypes.LockedSigner, error) {
+	lockedPlatforms := make(map[string]componenttypes.LockedPlatform)
+	var signer *componenttypes.LockedSigner
+
+	for _, plat := range platforms {
+		locked, platformSigner, err := l.lockOneSourcePlatform(ctx, name, binaryLookupName, owner, repo, selectedTag, release, plat, opts)
+		if err != nil {
+			return nil, nil, err
+		}
+		if locked == nil {
+			continue
+		}
+
+		if signer == nil {
+			signer = platformSigner
+		} else if err := ensureSignerMatches(signer, platformSigner, name, plat); err != nil {
+			return nil, nil, err
+		}
+		lockedPlatforms[plat] = *locked
+	}
+
+	return lockedPlatforms, signer, nil
+}
+
+func (l *Locker) lockOneSourcePlatform(
+	ctx context.Context,
+	name, binaryLookupName, owner, repo, selectedTag string,
+	release *ReleaseInfo,
+	plat string,
+	opts LockOpts,
+) (*componenttypes.LockedPlatform, *componenttypes.LockedSigner, error) {
+	goos, goarch := platform.Split(plat)
+	asset, err := l.Registry.FindBinaryAsset(release, binaryLookupName, goos, goarch)
+	if err != nil {
+		if opts.AllPlatforms {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("finding asset for %s: %w", plat, err)
+	}
+
+	digest, platformSigner, err := l.verifyAndDigestAsset(ctx, name, owner, repo, selectedTag, release, asset)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &componenttypes.LockedPlatform{Digest: digest, Asset: asset.Name}, platformSigner, nil
+}
+
+func (l *Locker) verifyAndDigestAsset(
+	ctx context.Context,
+	name, owner, repo, selectedTag string,
+	release *ReleaseInfo,
+	asset *AssetInfo,
+) (string, *componenttypes.LockedSigner, error) {
+	tmpDir, err := os.MkdirTemp("", "epack-lock-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	safeBinaryName, err := SanitizeAssetName(asset.Name)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid binary asset name: %w", err)
+	}
+	binaryPath := filepath.Join(tmpDir, safeBinaryName)
+	if err := l.Registry.DownloadAsset(ctx, asset.URL, binaryPath); err != nil {
+		return "", nil, fmt.Errorf("downloading %s: %w", asset.Name, err)
+	}
+
+	bundleAsset, err := l.Registry.FindSigstoreBundle(release, asset.Name)
+	if err != nil {
+		return "", nil, fmt.Errorf("finding sigstore bundle for %s: %w", asset.Name, err)
+	}
+	safeBundleName, err := SanitizeAssetName(bundleAsset.Name)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid bundle asset name: %w", err)
+	}
+	bundlePath := filepath.Join(tmpDir, safeBundleName)
+	if err := l.Registry.DownloadAsset(ctx, bundleAsset.URL, bundlePath); err != nil {
+		return "", nil, fmt.Errorf("downloading sigstore bundle: %w", err)
+	}
+
+	expectedRepoURI := BuildGitHubRepoURL(owner, repo)
+	expectedRef := BuildGitHubRefTag(selectedTag)
+	expectedIdentity := &ExpectedIdentity{
+		SourceRepositoryURI: expectedRepoURI,
+		SourceRepositoryRef: expectedRef,
+	}
+	sigResult, err := VerifySigstoreBundle(bundlePath, binaryPath, expectedIdentity)
+	if err != nil {
+		return "", nil, fmt.Errorf("verifying sigstore signature: %w (expected repo=%s, ref=%s)", err, expectedRepoURI, expectedRef)
+	}
+	if sigResult.SourceRepositoryURI != expectedRepoURI {
+		return "", nil, fmt.Errorf("sigstore certificate source_repository_uri mismatch for %s: expected %q, got %q",
+			name, expectedRepoURI, sigResult.SourceRepositoryURI)
+	}
+	if sigResult.SourceRepositoryRef != expectedRef {
+		return "", nil, fmt.Errorf("sigstore certificate source_repository_ref mismatch for %s: expected %q, got %q",
+			name, expectedRef, sigResult.SourceRepositoryRef)
+	}
+
+	digest, err := ComputeDigest(binaryPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("computing digest: %w", err)
+	}
+
+	return digest, &componenttypes.LockedSigner{
+		Issuer:              sigResult.Issuer,
+		SourceRepositoryURI: sigResult.SourceRepositoryURI,
+		SourceRepositoryRef: sigResult.SourceRepositoryRef,
+	}, nil
+}
+
+func ensureSignerMatches(base, candidate *componenttypes.LockedSigner, name, platform string) error {
+	if base.Issuer != candidate.Issuer ||
+		base.SourceRepositoryURI != candidate.SourceRepositoryURI ||
+		base.SourceRepositoryRef != candidate.SourceRepositoryRef {
+		return fmt.Errorf("signer mismatch across platforms for %s: %s has different signer than previous platforms", name, platform)
+	}
+	return nil
 }
 
 // lockExternalRemote locks an external binary remote adapter (digest only).

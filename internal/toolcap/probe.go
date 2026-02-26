@@ -5,12 +5,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/jsonutil"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/toolprotocol"
 )
 
@@ -38,8 +38,18 @@ func Probe(ctx context.Context, binaryPath string) (*toolprotocol.Capabilities, 
 	// environment variables like AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, or proxy credentials.
 	// Only pass minimal safe env vars plus EPACK_MODE to signal probe mode.
 	env := append(execsafe.BuildRestrictedEnvSafe(os.Environ(), false), "EPACK_MODE=capabilities")
-	cmd := exec.CommandContext(ctx, binaryPath, "--capabilities")
-	cmd.Env = env
+	cmd, cancel, err := procexec.CommandChecked(ctx, procexec.Spec{
+		Path:                binaryPath,
+		Args:                []string{"--capabilities"},
+		Env:                 env,
+		EnforceEnvAllowlist: true,
+		AllowedEnv:          append(append([]string{}, execsafe.AllowedEnvVars...), "PATH"),
+		AllowedEnvPrefixes:  []string{"EPACK_"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
 
 	// SECURITY: Use bounded writers to prevent OOM from malicious tools
 	// that might return gigabytes of data in their --capabilities response.

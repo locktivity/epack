@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/redact"
 	"github.com/locktivity/epack/internal/safejson"
 	"golang.org/x/time/rate"
@@ -159,13 +159,15 @@ func queryCapabilitiesInternal(ctx context.Context, binaryPath string, cleanup f
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), true)
 	env = append(env, "EPACK_REMOTE_PROTOCOL_VERSION=1")
 
-	cmd := exec.CommandContext(ctx, binaryPath, CommandCapabilities)
-	cmd.Env = env
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := procexec.Run(ctx, procexec.Spec{
+		Path:   binaryPath,
+		Args:   []string{CommandCapabilities},
+		Env:    env,
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}); err != nil {
 		// SECURITY: Redact stderr in error messages to prevent secret leakage
 		return nil, fmt.Errorf("capabilities query failed: %w (stderr: %s)", err, redact.Sensitive(stderr.String()))
 	}
@@ -353,21 +355,22 @@ func (e *Executor) execute(ctx context.Context, command string, req any, resp an
 	env = execsafe.AppendAllowedSecrets(env, e.Secrets, os.Getenv)
 
 	// Execute command
-	cmd := exec.CommandContext(ctx, e.BinaryPath, command)
-	cmd.Env = env
-	cmd.Stdin = bytes.NewReader(reqJSON)
-
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	stderrWriter := io.Writer(&stderr)
 	if e.Stderr != nil {
 		// SECURITY: Wrap user-facing stderr writer with redaction to prevent
 		// malicious adapters from emitting secrets in their stderr output.
-		cmd.Stderr = io.MultiWriter(&stderr, &redactingWriter{w: e.Stderr})
-	} else {
-		cmd.Stderr = &stderr
+		stderrWriter = io.MultiWriter(&stderr, &redactingWriter{w: e.Stderr})
 	}
 
-	if err := cmd.Run(); err != nil {
+	if err := procexec.Run(ctx, procexec.Spec{
+		Path:   e.BinaryPath,
+		Args:   []string{command},
+		Env:    env,
+		Stdin:  bytes.NewReader(reqJSON),
+		Stdout: &stdout,
+		Stderr: stderrWriter,
+	}); err != nil {
 		// Check for error response in stdout first
 		if stdout.Len() > 0 {
 			var errResp ErrorResponse

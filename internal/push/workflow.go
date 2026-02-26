@@ -9,17 +9,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/netpolicy"
+	"github.com/locktivity/epack/internal/netpolicy/adapterurl"
 	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/progress"
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/pack"
 )
 
@@ -32,6 +33,15 @@ type UploadProgressCallback func(written, total int64)
 
 // Options configures a push operation.
 type Options struct {
+	// Secure defaults.
+	Secure struct {
+		Frozen bool
+	}
+	// Explicit insecure overrides.
+	Unsafe struct {
+		AllowUnpinned bool
+	}
+
 	// Remote is the name of the remote to push to (required).
 	Remote string
 
@@ -59,14 +69,6 @@ type Options struct {
 
 	// NonInteractive disables interactive prompts.
 	NonInteractive bool
-
-	// Frozen requires all adapters to be pinned with digests (CI mode).
-	// SECURITY: When true, adapters must be verified against lockfile digests.
-	Frozen bool
-
-	// InsecureAllowUnpinned allows execution of adapters not pinned in lockfile.
-	// SECURITY WARNING: This bypasses digest verification for source-based adapters.
-	InsecureAllowUnpinned bool
 
 	// Stderr is where adapter stderr output is written.
 	// If nil, os.Stderr is used.
@@ -114,6 +116,15 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Remote == "" {
 		return nil, fmt.Errorf("remote is required")
 	}
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        opts.Secure.Frozen,
+		AllowUnpinned: opts.Unsafe.AllowUnpinned,
+	}).Enforce(); err != nil {
+		return nil, err
+	}
+	if err := securitypolicy.EnforceStrictProduction("push", opts.Unsafe.AllowUnpinned); err != nil {
+		return nil, err
+	}
 	if opts.PackPath == "" {
 		return nil, fmt.Errorf("pack path is required")
 	}
@@ -123,167 +134,42 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 		stderr = os.Stderr
 	}
 
-	// Helper to emit step callbacks
-	step := func(name string, started bool) {
-		if opts.OnStep != nil {
-			opts.OnStep(name, started)
-		}
-	}
-
-	// Step 1: Load and verify pack
-	step("Verifying pack integrity", true)
-	absPackPath, err := filepath.Abs(opts.PackPath)
-	if err != nil {
-		return nil, fmt.Errorf("resolving pack path: %w", err)
-	}
-
-	p, err := pack.Open(absPackPath)
-	if err != nil {
-		return nil, fmt.Errorf("opening pack: %w", err)
-	}
-	defer func() { _ = p.Close() }()
-
-	if err := p.VerifyIntegrity(); err != nil {
-		return nil, fmt.Errorf("pack verification failed: %w", err)
-	}
-	step("Verifying pack integrity", false)
-
-	packInfo, err := os.Stat(absPackPath)
-	if err != nil {
-		return nil, fmt.Errorf("getting pack info: %w", err)
-	}
-
-	packDigest := p.Manifest().PackDigest
-	packSize := packInfo.Size()
-
-	// Step 2: Load remote configuration
-	step("Loading remote configuration", true)
-	projectRoot, err := project.FindRoot("")
-	if err != nil {
-		return nil, fmt.Errorf("finding project root: %w", err)
-	}
-
-	configPath := filepath.Join(projectRoot, "epack.yaml")
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("loading config: %w", err)
-	}
-
-	remoteCfg, err := remote.ResolveRemoteConfig(cfg, opts.Remote, opts.Environment)
+	step := newPushStepEmitter(opts.OnStep)
+	absPackPath, packDigest, packSize, err := verifyPushPack(opts.PackPath, step)
 	if err != nil {
 		return nil, err
 	}
-	step("Loading remote configuration", false)
-
-	// Step 3: Resolve adapter binary path (with auto-install if needed)
-	step("Resolving adapter", true)
-
-	// Wrap step callback for remote package
-	remoteStep := remote.StepCallback(step)
-
-	exec, caps, err := remote.PrepareAdapterExecutor(
-		ctx, projectRoot, opts.Remote, cfg, remoteCfg,
-		remote.AdapterExecutorOptions{
-			PromptInstall: opts.PromptInstallAdapter,
-			Step:          remoteStep,
-			Stderr:        stderr,
-			Verification: remote.VerificationOptions{
-				Frozen:                opts.Frozen,
-				AllowUnverifiedSource: opts.InsecureAllowUnpinned,
-			},
-		})
+	projectRoot, cfg, remoteCfg, err := loadPushRemoteConfig(opts, step)
+	if err != nil {
+		return nil, err
+	}
+	exec, caps, err := preparePushAdapter(ctx, opts, step, stderr, projectRoot, cfg, remoteCfg)
 	if err != nil {
 		return nil, err
 	}
 	defer exec.Close()
-
 	if !caps.SupportsPrepareFinalize() {
 		return nil, fmt.Errorf("adapter does not support prepare/finalize upload protocol")
 	}
-	step("Resolving adapter", false)
-
-	// Step 4: Build target config with overrides
-	target := remote.TargetConfig{
-		Workspace:   remoteCfg.Target.Workspace,
-		Environment: remoteCfg.Target.Environment,
-	}
-	if opts.Workspace != "" {
-		target.Workspace = opts.Workspace
-	}
-
-	// Merge labels from config and options
-	labels := append([]string{}, remoteCfg.Release.Labels...)
-	labels = append(labels, opts.Labels...)
-
-	// Build release info
-	releaseInfo := remote.ReleaseInfo{
-		Labels: labels,
-		Notes:  opts.Notes,
-	}
-	if releaseInfo.Notes == "" {
-		releaseInfo.Notes = remoteCfg.Release.Notes
-	}
-
-	// Add source info from environment variables
-	if remoteCfg.Release.Source != nil {
-		releaseInfo.Source = buildSourceInfo(remoteCfg.Release.Source)
-	}
-
-	// Step 5: Execute push workflow
-	step("Preparing upload", true)
-
-	// Call push.prepare
-	prepReq := &remote.PrepareRequest{
-		Remote: opts.Remote,
-		Target: target,
-		Pack: remote.PackInfo{
-			Path:      absPackPath,
-			Digest:    packDigest,
-			SizeBytes: packSize,
-		},
-		Release: releaseInfo,
-	}
-
-	prepResp, err := exec.Prepare(ctx, prepReq)
+	target := buildPushTarget(remoteCfg, opts)
+	releaseInfo := buildReleaseInfo(remoteCfg, opts)
+	prepResp, err := runPushPrepare(ctx, exec, opts.Remote, target, absPackPath, packDigest, packSize, releaseInfo, step)
 	if err != nil {
-		return nil, fmt.Errorf("push.prepare failed: %w", err)
+		return nil, err
 	}
-	step("Preparing upload", false)
-
-	// Step 6: Perform HTTP upload (skip if method is "skip" - pack already exists)
-	if prepResp.Upload.Method != "skip" {
-		step("Uploading pack", true)
-		if err := uploadPackWithProgress(ctx, absPackPath, prepResp.Upload, remoteCfg.Transport, opts.OnUploadProgress); err != nil {
-			return nil, fmt.Errorf("upload failed: %w", err)
-		}
-		step("Uploading pack", false)
+	if err := maybeRunPushUpload(ctx, absPackPath, prepResp.Upload, remoteCfg.Transport, opts.OnUploadProgress, step); err != nil {
+		return nil, err
 	}
-
-	// Step 7: Call push.finalize
-	step("Finalizing release", true)
-	finalReq := &remote.FinalizeRequest{
-		Remote: opts.Remote,
-		Target: target,
-		Pack: remote.PackInfo{
-			Path:      absPackPath,
-			Digest:    packDigest,
-			SizeBytes: packSize,
-		},
-		FinalizeToken: prepResp.FinalizeToken,
-	}
-
-	finalResp, err := exec.Finalize(ctx, finalReq)
+	finalResp, err := runPushFinalize(ctx, exec, opts.Remote, target, absPackPath, packDigest, packSize, prepResp.FinalizeToken, step)
 	if err != nil {
-		return nil, fmt.Errorf("push.finalize failed: %w", err)
+		return nil, err
 	}
-	step("Finalizing release", false)
 
 	result := &Result{
 		Release: &finalResp.Release,
 		Links:   finalResp.Links,
 	}
 
-	// Step 8: Sync runs (unless disabled)
 	if !opts.NoRuns && remoteCfg.Runs.SyncEnabled() && caps.SupportsRunsSync() {
 		step("Syncing runs", true)
 		syncedRuns, failedRuns, syncErr := syncRuns(ctx, exec, target, packDigest, absPackPath, remoteCfg, opts.RunsPaths)
@@ -295,9 +181,164 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 
-	// Step 9: Write receipt
+	result.ReceiptPath = writePushReceipt(opts.Remote, target, absPackPath, packDigest, packSize, finalResp, result, stderr)
+
+	return result, nil
+}
+
+func newPushStepEmitter(cb StepCallback) StepCallback {
+	return func(name string, started bool) {
+		if cb != nil {
+			cb(name, started)
+		}
+	}
+}
+
+func verifyPushPack(packPath string, step StepCallback) (string, string, int64, error) {
+	step("Verifying pack integrity", true)
+	defer step("Verifying pack integrity", false)
+
+	absPackPath, err := filepath.Abs(packPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("resolving pack path: %w", err)
+	}
+	p, err := pack.Open(absPackPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("opening pack: %w", err)
+	}
+	defer func() { _ = p.Close() }()
+
+	if err := p.VerifyIntegrity(); err != nil {
+		return "", "", 0, fmt.Errorf("pack verification failed: %w", err)
+	}
+	packInfo, err := os.Stat(absPackPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("getting pack info: %w", err)
+	}
+	return absPackPath, p.Manifest().PackDigest, packInfo.Size(), nil
+}
+
+func loadPushRemoteConfig(opts Options, step StepCallback) (string, *config.JobConfig, *config.RemoteConfig, error) {
+	step("Loading remote configuration", true)
+	defer step("Loading remote configuration", false)
+
+	projectRoot, err := project.FindRoot("")
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("finding project root: %w", err)
+	}
+	cfg, err := config.Load(filepath.Join(projectRoot, "epack.yaml"))
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("loading config: %w", err)
+	}
+	remoteCfg, err := remote.ResolveRemoteConfig(cfg, opts.Remote, opts.Environment)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return projectRoot, cfg, remoteCfg, nil
+}
+
+func preparePushAdapter(ctx context.Context, opts Options, step StepCallback, stderr io.Writer, projectRoot string, cfg *config.JobConfig, remoteCfg *config.RemoteConfig) (*remote.Executor, *remote.Capabilities, error) {
+	step("Resolving adapter", true)
+	defer step("Resolving adapter", false)
+	return remote.PrepareAdapterExecutor(
+		ctx, projectRoot, opts.Remote, cfg, remoteCfg,
+		remote.AdapterExecutorOptions{
+			PromptInstall: opts.PromptInstallAdapter,
+			Step:          remote.StepCallback(step),
+			Stderr:        stderr,
+			Verification: remote.VerificationOptions{
+				Secure: remote.VerificationSecureOptions{
+					Frozen: opts.Secure.Frozen,
+				},
+				Unsafe: remote.VerificationUnsafeOverrides{
+					AllowUnverifiedSource: opts.Unsafe.AllowUnpinned,
+				},
+			},
+		},
+	)
+}
+
+func buildPushTarget(remoteCfg *config.RemoteConfig, opts Options) remote.TargetConfig {
+	target := remote.TargetConfig{
+		Workspace:   remoteCfg.Target.Workspace,
+		Environment: remoteCfg.Target.Environment,
+	}
+	if opts.Workspace != "" {
+		target.Workspace = opts.Workspace
+	}
+	return target
+}
+
+func buildReleaseInfo(remoteCfg *config.RemoteConfig, opts Options) remote.ReleaseInfo {
+	labels := append([]string{}, remoteCfg.Release.Labels...)
+	labels = append(labels, opts.Labels...)
+	releaseInfo := remote.ReleaseInfo{
+		Labels: labels,
+		Notes:  opts.Notes,
+	}
+	if releaseInfo.Notes == "" {
+		releaseInfo.Notes = remoteCfg.Release.Notes
+	}
+	if remoteCfg.Release.Source != nil {
+		releaseInfo.Source = buildSourceInfo(remoteCfg.Release.Source)
+	}
+	return releaseInfo
+}
+
+func runPushPrepare(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, absPackPath, packDigest string, packSize int64, releaseInfo remote.ReleaseInfo, step StepCallback) (*remote.PrepareResponse, error) {
+	step("Preparing upload", true)
+	defer step("Preparing upload", false)
+
+	prepResp, err := exec.Prepare(ctx, &remote.PrepareRequest{
+		Remote: remoteName,
+		Target: target,
+		Pack: remote.PackInfo{
+			Path:      absPackPath,
+			Digest:    packDigest,
+			SizeBytes: packSize,
+		},
+		Release: releaseInfo,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("push.prepare failed: %w", err)
+	}
+	return prepResp, nil
+}
+
+func maybeRunPushUpload(ctx context.Context, absPackPath string, upload remote.UploadInfo, transport config.RemoteTransport, onProgress UploadProgressCallback, step StepCallback) error {
+	if upload.Method == "skip" {
+		return nil
+	}
+	step("Uploading pack", true)
+	defer step("Uploading pack", false)
+	if err := uploadPackWithProgress(ctx, absPackPath, upload, transport, onProgress); err != nil {
+		return fmt.Errorf("upload failed: %w", err)
+	}
+	return nil
+}
+
+func runPushFinalize(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, absPackPath, packDigest string, packSize int64, finalizeToken string, step StepCallback) (*remote.FinalizeResponse, error) {
+	step("Finalizing release", true)
+	defer step("Finalizing release", false)
+	finalResp, err := exec.Finalize(ctx, &remote.FinalizeRequest{
+		Remote: remoteName,
+		Target: target,
+		Pack: remote.PackInfo{
+			Path:      absPackPath,
+			Digest:    packDigest,
+			SizeBytes: packSize,
+		},
+		FinalizeToken: finalizeToken,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("push.finalize failed: %w", err)
+	}
+	return finalResp, nil
+}
+
+func writePushReceipt(remoteName string, target remote.TargetConfig, absPackPath, packDigest string, packSize int64, finalResp *remote.FinalizeResponse, result *Result, stderr io.Writer) string {
 	receipt := NewReceipt(
-		opts.Remote,
+		remoteName,
 		target,
 		absPackPath,
 		packDigest,
@@ -307,18 +348,14 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 		result.SyncedRuns,
 		result.FailedRuns,
 	)
-
 	writer := &ReceiptWriter{
 		BaseDir: filepath.Join(packpath.SidecarDir(absPackPath), "receipts", "push"),
 	}
 	receiptPath, err := writer.Write(receipt)
 	if err != nil {
-		// Log but don't fail - receipt is for audit, not critical path
 		_, _ = fmt.Fprintf(stderr, "Warning: failed to write receipt: %v\n", err)
 	}
-	result.ReceiptPath = receiptPath
-
-	return result, nil
+	return receiptPath
 }
 
 // buildSourceInfo builds source info from environment variables.
@@ -591,36 +628,18 @@ func computeSHA256(data []byte) string {
 // legitimately need to return URLs to various cloud storage providers (S3, GCS, Azure, etc.).
 // The pack digest verification provides integrity protection after download.
 func validateAdapterURL(rawURL string, allowLoopbackHTTP bool) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("malformed URL: %w", err)
+	if err := adapterurl.Validate(rawURL, allowLoopbackHTTP); err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventSSRFBlockedURL,
+			Component:   "remote_adapter",
+			Description: "blocked adapter-provided push URL",
+			Attrs: map[string]string{
+				"url": rawURL,
+			},
+		})
+		return err
 	}
-
-	hostname := parsed.Hostname()
-	isLoopback := netpolicy.IsLoopback(hostname)
-
-	// SECURITY: Require HTTPS for all non-loopback URLs.
-	// This prevents:
-	// - Credential sniffing on the network
-	// - MITM attacks injecting malicious content
-	// - Downgrade attacks
-	switch parsed.Scheme {
-	case "https":
-		// Always allowed
-		return nil
-	case "http":
-		// SECURITY: HTTP to localhost requires explicit opt-in via transport config.
-		// Even localhost HTTP can be dangerous (malicious local services, SSRF to internal APIs).
-		if isLoopback && allowLoopbackHTTP {
-			return nil
-		}
-		if isLoopback {
-			return fmt.Errorf("HTTP to localhost requires allow_loopback_http: true in remote transport config")
-		}
-		return fmt.Errorf("HTTP scheme not allowed for non-localhost URL %q; HTTPS required", hostname)
-	default:
-		return fmt.Errorf("scheme %q not allowed; must be https", parsed.Scheme)
-	}
+	return nil
 }
 
 // validateFileRoot validates that filePath is contained within the specified root directory.
@@ -629,28 +648,5 @@ func validateAdapterURL(rawURL string, allowLoopbackHTTP bool) error {
 // operations use O_NOFOLLOW to provide TOCTOU-safe symlink rejection. This pre-check
 // adds defense-in-depth by rejecting obvious traversal attempts early.
 func validateFileRoot(filePath, fileRoot string) error {
-	// Get absolute paths for comparison
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		return fmt.Errorf("resolving file path: %w", err)
-	}
-
-	absRoot, err := filepath.Abs(fileRoot)
-	if err != nil {
-		return fmt.Errorf("resolving file root: %w", err)
-	}
-
-	// Ensure root ends with separator for prefix comparison
-	rootWithSep := absRoot
-	if !strings.HasSuffix(rootWithSep, string(filepath.Separator)) {
-		rootWithSep += string(filepath.Separator)
-	}
-
-	// Check containment
-	if !strings.HasPrefix(absPath, rootWithSep) && absPath != absRoot {
-		return errors.E(errors.PathTraversal,
-			fmt.Sprintf("file path %q escapes configured file_root %q", filePath, fileRoot), nil)
-	}
-
-	return nil
+	return adapterurl.ValidateFileRoot(filePath, fileRoot)
 }

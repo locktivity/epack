@@ -117,38 +117,9 @@ func runExtract(cmd *cobra.Command, args []string) error {
 func runExtractDryRun(p *pack.Pack, requestedPaths []string, out *output.Writer) error {
 	manifest := p.Manifest()
 
-	// Filter artifacts based on options
-	var toExtract []pack.Artifact
-	for _, artifact := range manifest.Artifacts {
-		if artifact.Type != "embedded" {
-			continue
-		}
-
-		// Check if this artifact matches the extraction criteria
-		if len(requestedPaths) > 0 {
-			// Check if path is in requested list
-			found := false
-			for _, reqPath := range requestedPaths {
-				if artifact.Path == reqPath {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
-		} else if extractFilter != "" {
-			// Apply glob filter
-			matched, err := filepath.Match(extractFilter, filepath.Base(artifact.Path))
-			if err != nil || !matched {
-				continue
-			}
-		} else if !extractAll {
-			// If no paths, filter, or --all, nothing to extract
-			continue
-		}
-
-		toExtract = append(toExtract, artifact)
+	toExtract, err := selectArtifactsForDryRun(manifest.Artifacts, requestedPaths)
+	if err != nil {
+		return err
 	}
 
 	if len(toExtract) == 0 {
@@ -156,21 +127,10 @@ func runExtractDryRun(p *pack.Pack, requestedPaths []string, out *output.Writer)
 		return nil
 	}
 
-	// Calculate total size
-	var totalSize int64
-	for _, artifact := range toExtract {
-		if artifact.Size != nil {
-			size, _ := artifact.Size.Int64()
-			totalSize += size
-		}
-	}
+	totalSize := calculateTotalArtifactSize(toExtract)
 
-	// Output result
 	if out.IsJSON() {
-		paths := make([]string, len(toExtract))
-		for i, a := range toExtract {
-			paths[i] = a.Path
-		}
+		paths := artifactPaths(toExtract)
 		return out.JSON(map[string]interface{}{
 			"dry_run":       true,
 			"would_extract": paths,
@@ -193,4 +153,61 @@ func runExtractDryRun(p *pack.Pack, requestedPaths []string, out *output.Writer)
 	}
 
 	return nil
+}
+
+func selectArtifactsForDryRun(artifacts []pack.Artifact, requestedPaths []string) ([]pack.Artifact, error) {
+	var toExtract []pack.Artifact
+	for _, artifact := range artifacts {
+		if artifact.Type != "embedded" {
+			continue
+		}
+		include, err := shouldExtractArtifact(artifact, requestedPaths)
+		if err != nil {
+			return nil, err
+		}
+		if include {
+			toExtract = append(toExtract, artifact)
+		}
+	}
+	return toExtract, nil
+}
+
+func shouldExtractArtifact(artifact pack.Artifact, requestedPaths []string) (bool, error) {
+	if len(requestedPaths) > 0 {
+		for _, reqPath := range requestedPaths {
+			if artifact.Path == reqPath {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	if extractFilter != "" {
+		matched, err := filepath.Match(extractFilter, filepath.Base(artifact.Path))
+		if err != nil {
+			return false, exitError("invalid --filter pattern %q: %v", extractFilter, err)
+		}
+		return matched, nil
+	}
+
+	return extractAll, nil
+}
+
+func calculateTotalArtifactSize(artifacts []pack.Artifact) int64 {
+	var total int64
+	for _, artifact := range artifacts {
+		if artifact.Size != nil {
+			size, _ := artifact.Size.Int64()
+			total += size
+		}
+	}
+	return total
+}
+
+func artifactPaths(artifacts []pack.Artifact) []string {
+	paths := make([]string, len(artifacts))
+	for i, a := range artifacts {
+		paths[i] = a.Path
+	}
+	return paths
 }

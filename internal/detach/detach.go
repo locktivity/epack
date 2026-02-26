@@ -6,13 +6,14 @@
 package detach
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/locktivity/epack/internal/jobs"
+	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/project"
 )
 
@@ -114,13 +115,20 @@ func Spawn(opts Options) (*Result, error) {
 	execArgs = append(execArgs, opts.Flags...)
 
 	// Create the background command
-	bgCmd := exec.Command(executable, execArgs...)
-	bgCmd.Stdout = logFile
-	bgCmd.Stderr = logFile
-	bgCmd.Dir = workDir
-
-	// Detach from parent process
-	bgCmd.Stdin = nil
+	bgCmd, cmdCancel, err := procexec.CommandChecked(context.Background(), procexec.Spec{
+		Path:             executable,
+		Args:             execArgs,
+		Dir:              workDir,
+		Stdout:           logFile,
+		Stderr:           logFile,
+		EnforceDirPolicy: true,
+		AllowedDirRoots:  []string{workDir},
+	})
+	if err != nil {
+		_ = logFile.Close()
+		return nil, fmt.Errorf("building background process command: %w", err)
+	}
+	defer cmdCancel()
 
 	// Start the background process
 	if err := bgCmd.Start(); err != nil {
@@ -156,10 +164,9 @@ func Spawn(opts Options) (*Result, error) {
 			// Process completed normally
 			exitCode := 0
 			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					exitCode = exitErr.ExitCode()
-				} else {
-					exitCode = 1
+				exitCode = 1
+				if bgCmd.ProcessState != nil {
+					exitCode = bgCmd.ProcessState.ExitCode()
 				}
 			}
 			_ = mgr.Complete(jobID, exitCode, nil)

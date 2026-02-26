@@ -3,12 +3,15 @@
 package collectorcmd
 
 import (
+	"fmt"
 	"path/filepath"
 	"time"
 
 	"github.com/locktivity/epack/internal/collector"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -78,6 +81,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	out := getOutput(cmd)
 
+	if err := validateRunFlags(); err != nil {
+		return handleCollectorError(err)
+	}
+
 	cfg, err := loadConfig(runConfigPath)
 	if err != nil {
 		return err
@@ -96,13 +103,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	// Build options from flags
 	opts := collector.RunAndBuildOpts{
-		WorkDir:                 workDir,
-		OutputPath:              runOutput,
-		Frozen:                  runFrozen,
-		Timeout:                 runTimeout,
-		Only:                    only,
-		InsecureAllowUnverified: runInsecureAllowUnverified,
-		InsecureAllowUnpinned:   runInsecureAllowUnpinned,
+		Secure: collector.SecureRunOptions{
+			Frozen:  runFrozen,
+			Only:    only,
+			Timeout: runTimeout,
+		},
+		Unsafe: collector.UnsafeOverrides{
+			AllowUnverifiedInstall: runInsecureAllowUnverified,
+			AllowUnpinned:          runInsecureAllowUnpinned,
+		},
+		WorkDir:    workDir,
+		OutputPath: runOutput,
 	}
 
 	// Print mode header
@@ -144,5 +155,31 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	out.Print("\nEvidence pack written to %s\n", result.PackPath)
+	return nil
+}
+
+func validateRunFlags() error {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        runFrozen,
+		AllowUnpinned: runInsecureAllowUnpinned,
+	}).Enforce(); err != nil {
+		return err
+	}
+	hasUnsafeOverrides := runInsecureAllowUnverified || runInsecureAllowUnpinned
+	if err := securitypolicy.EnforceStrictProduction("collector_run_cli", hasUnsafeOverrides); err != nil {
+		return err
+	}
+	if hasUnsafeOverrides {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "collector_run",
+			Name:        "run",
+			Description: "collector run command running with insecure execution override",
+			Attrs: map[string]string{
+				"allow_unverified_install": fmt.Sprintf("%t", runInsecureAllowUnverified),
+				"allow_unpinned":           fmt.Sprintf("%t", runInsecureAllowUnpinned),
+			},
+		})
+	}
 	return nil
 }

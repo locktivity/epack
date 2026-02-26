@@ -275,35 +275,12 @@ func (c *Client) ListReleases(ctx context.Context, owner, repo string) ([]Releas
 // The allowLoopbackHTTP flag (test-only) permits HTTP to localhost/127.0.0.1
 // but NEVER sends auth headers over HTTP.
 func (c *Client) DownloadAsset(ctx context.Context, assetURL, destPath string) error {
-	// Validate URL host is trusted before sending any credentials
 	currentURL := assetURL
 
 	for redirects := 0; redirects <= limits.MaxHTTPRedirects; redirects++ {
-		parsedURL, err := url.Parse(currentURL)
+		parsedURL, _, err := c.validateAssetURL(currentURL)
 		if err != nil {
-			return fmt.Errorf("invalid asset URL: %w", err)
-		}
-
-		hostname := parsedURL.Hostname()
-		isLoopback := netpolicy.IsLoopback(hostname)
-
-		// SECURITY: Reject all HTTP URLs unless explicitly allowed for testing.
-		// Even loopback HTTP is dangerous - a malicious release asset URL could
-		// point to http://127.0.0.1:PORT to exfiltrate data to a local listener.
-		if parsedURL.Scheme == "http" {
-			if !isLoopback {
-				return fmt.Errorf("refusing to download over HTTP from %q: HTTPS required", parsedURL.Host)
-			}
-			if !c.allowLoopbackHTTP {
-				return fmt.Errorf("refusing to download over HTTP from loopback %q: HTTPS required (use test client for HTTP)", parsedURL.Host)
-			}
-			// Loopback HTTP allowed for testing - but auth headers are never sent (see setHeadersForHost)
-		}
-
-		// Validate each URL (initial and redirect destinations) against allowlist
-		// For loopback addresses (testing with allowLoopbackHTTP), skip host allowlist check
-		if !isLoopback && !c.policy.IsTrustedAssetHost(hostname) {
-			return fmt.Errorf("refusing to download from untrusted host %q (not in allowlist)", parsedURL.Host)
+			return err
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, currentURL, nil)
@@ -320,64 +297,90 @@ func (c *Client) DownloadAsset(ctx context.Context, assetURL, destPath string) e
 			return fmt.Errorf("downloading asset: %w", err)
 		}
 
-		// Handle redirects manually to validate each destination
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		nextURL, redirected, err := resolveRedirect(resp, parsedURL)
+		if err != nil {
 			_ = resp.Body.Close()
-			location := resp.Header.Get("Location")
-			if location == "" {
-				return fmt.Errorf("redirect response missing Location header")
-			}
-			// Resolve relative redirects
-			redirectURL, err := parsedURL.Parse(location)
-			if err != nil {
-				return fmt.Errorf("invalid redirect URL: %w", err)
-			}
-			currentURL = redirectURL.String()
+			return err
+		}
+		if redirected {
+			_ = resp.Body.Close()
+			currentURL = nextURL
 			continue
 		}
 
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status %d downloading asset", resp.StatusCode)
-		}
-
-		// Check Content-Length if provided
-		if resp.ContentLength > limits.AssetDownload.Bytes() {
-			return fmt.Errorf("asset size %d exceeds maximum allowed size %d bytes", resp.ContentLength, limits.AssetDownload.Bytes())
-		}
-
-		// SECURITY: Use TOCTOU-safe file creation with O_NOFOLLOW (Unix) or
-		// reparse point detection (Windows). This atomically refuses symlinks
-		// during the open operation, eliminating the race between Lstat and Open.
-		//
-		// The file will be created if it doesn't exist, or truncated if it does
-		// (as a regular file). If it's a symlink, the operation fails atomically.
-		f, err := safefile.OpenForWrite(destPath)
+		err = c.writeAssetResponse(resp, destPath)
+		_ = resp.Body.Close()
 		if err != nil {
-			return fmt.Errorf("creating file: %w", err)
+			return err
 		}
-
-		// Use LimitReader to enforce maximum size even if Content-Length is missing or wrong
-		limitedReader := io.LimitReader(resp.Body, limits.AssetDownload.Bytes()+1)
-		written, err := io.Copy(f, limitedReader)
-		_ = f.Close()
-
-		if err != nil {
-			_ = os.Remove(destPath) // Clean up partial file
-			return fmt.Errorf("writing asset: %w", err)
-		}
-
-		// Check if we hit the limit (meaning file was too large)
-		if written > limits.AssetDownload.Bytes() {
-			_ = os.Remove(destPath) // Clean up
-			return fmt.Errorf("asset exceeded maximum allowed size %d bytes", limits.AssetDownload.Bytes())
-		}
-
 		return nil
 	}
 
 	return fmt.Errorf("too many redirects (max %d)", limits.MaxHTTPRedirects)
+}
+
+func (c *Client) validateAssetURL(rawURL string) (*url.URL, bool, error) {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid asset URL: %w", err)
+	}
+	hostname := parsedURL.Hostname()
+	isLoopback := netpolicy.IsLoopback(hostname)
+
+	if parsedURL.Scheme == "http" {
+		if !isLoopback {
+			return nil, false, fmt.Errorf("refusing to download over HTTP from %q: HTTPS required", parsedURL.Host)
+		}
+		if !c.allowLoopbackHTTP {
+			return nil, false, fmt.Errorf("refusing to download over HTTP from loopback %q: HTTPS required (use test client for HTTP)", parsedURL.Host)
+		}
+	}
+
+	if !isLoopback && !c.policy.IsTrustedAssetHost(hostname) {
+		return nil, false, fmt.Errorf("refusing to download from untrusted host %q (not in allowlist)", parsedURL.Host)
+	}
+	return parsedURL, isLoopback, nil
+}
+
+func resolveRedirect(resp *http.Response, parsedURL *url.URL) (string, bool, error) {
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		return "", false, nil
+	}
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", false, fmt.Errorf("redirect response missing Location header")
+	}
+	redirectURL, err := parsedURL.Parse(location)
+	if err != nil {
+		return "", false, fmt.Errorf("invalid redirect URL: %w", err)
+	}
+	return redirectURL.String(), true, nil
+}
+
+func (c *Client) writeAssetResponse(resp *http.Response, destPath string) error {
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d downloading asset", resp.StatusCode)
+	}
+	if resp.ContentLength > limits.AssetDownload.Bytes() {
+		return fmt.Errorf("asset size %d exceeds maximum allowed size %d bytes", resp.ContentLength, limits.AssetDownload.Bytes())
+	}
+
+	f, err := safefile.OpenForWrite(destPath)
+	if err != nil {
+		return fmt.Errorf("creating file: %w", err)
+	}
+	limitedReader := io.LimitReader(resp.Body, limits.AssetDownload.Bytes()+1)
+	written, err := io.Copy(f, limitedReader)
+	_ = f.Close()
+	if err != nil {
+		_ = os.Remove(destPath)
+		return fmt.Errorf("writing asset: %w", err)
+	}
+	if written > limits.AssetDownload.Bytes() {
+		_ = os.Remove(destPath)
+		return fmt.Errorf("asset exceeded maximum allowed size %d bytes", limits.AssetDownload.Bytes())
+	}
+	return nil
 }
 
 // FindBinaryAsset finds the binary asset for a specific platform.

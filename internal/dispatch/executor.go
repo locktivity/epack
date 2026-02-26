@@ -2,12 +2,13 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/execsafe"
+	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/toolcap"
 	"github.com/locktivity/epack/internal/toolprotocol"
 	"github.com/locktivity/epack/internal/version"
@@ -28,20 +29,22 @@ func queryCapabilitiesWithTimeout(binaryPath string) (*toolprotocol.Capabilities
 // is cancelled, the subprocess is terminated via SIGKILL (on Unix) or TerminateProcess
 // (on Windows).
 func execToolWithProtocol(ctx context.Context, binaryPath, binaryName string, args []string, env []string, runDir string) (int, error) {
-	cmd := exec.CommandContext(ctx, binaryPath, args...)
-	cmd.Env = env
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Dir = runDir // Run in the run directory
-
-	err := cmd.Run()
+	err := procexec.Run(ctx, procexec.Spec{
+		Path:   binaryPath,
+		Args:   args,
+		Dir:    runDir, // Run in the run directory.
+		Env:    env,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
 	if err != nil {
 		// Check if this was a context cancellation
 		if ctx.Err() != nil {
 			return -1, ctx.Err()
 		}
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr interface{ ExitCode() int }
+		if errors.As(err, &exitErr) {
 			return exitErr.ExitCode(), nil
 		}
 		return -1, err // Tool never ran

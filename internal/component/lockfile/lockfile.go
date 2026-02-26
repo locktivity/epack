@@ -237,57 +237,12 @@ func (lf *LockFile) Save(path string) error {
 		return err
 	}
 
-	dir := filepath.Dir(path)
-
-	// Get current working directory as the security root
-	cwd, err := os.Getwd()
+	cwd, dir, err := prepareLockfileSavePath(path)
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return err
 	}
-
-	// Handle special case where dir is "." (current directory)
-	if dir == "." {
-		dir = cwd
-	}
-
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return fmt.Errorf("resolving lockfile directory path: %w", err)
-	}
-	absCwd, err := filepath.Abs(cwd)
-	if err != nil {
-		return fmt.Errorf("resolving working directory path: %w", err)
-	}
-
-	// SECURITY: Reject paths outside cwd to ensure we always use the hardened
-	// fd-relative operations. This eliminates the race window that existed when
-	// falling back to os.Rename for paths outside cwd.
-	if !strings.HasPrefix(absDir, absCwd+string(filepath.Separator)) && absDir != absCwd {
-		return fmt.Errorf("refusing to save lockfile outside working directory: %s", path)
-	}
-
-	// Validate no symlinks in lockfile parent path ancestry.
-	// This prevents symlink-based attacks where the lockfile parent directory
-	// is a symlink pointing elsewhere, which would cause lockfile writes
-	// outside the intended location.
-	hasSymlink, err := safefile.ContainsSymlink(dir)
-	if err != nil {
-		return fmt.Errorf("checking for symlinks: %w", err)
-	}
-	if hasSymlink {
-		return fmt.Errorf("refusing to save lockfile: path contains symlink: %s", dir)
-	}
-
-	// Create directory using safefile.MkdirAll (fd-relative, race-safe)
-	if err := safefile.MkdirAll(cwd, dir); err != nil {
-		return fmt.Errorf("creating lockfile dir: %w", err)
-	}
-
-	// Check if target is a symlink (refuse to follow)
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to overwrite symlink at %s", path)
-		}
+	if err := validateLockfileSavePath(path, dir, cwd); err != nil {
+		return err
 	}
 
 	// Use deterministic marshaling to ensure consistent output order
@@ -311,26 +266,85 @@ func (lf *LockFile) Save(path string) error {
 		}
 	}()
 
-	// TOCTOU mitigation: Re-validate the directory after temp file creation.
-	// This closes the race window between initial validation and temp file creation.
-	hasSymlink, err = safefile.ContainsSymlink(dir)
-	if err != nil {
+	if err := validateLockfileRaceSafety(path, dir); err != nil {
 		_ = tmpFile.Close()
+		return err
+	}
+
+	if err := writeLockfileTempFile(tmpFile, data); err != nil {
+		return err
+	}
+
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		return fmt.Errorf("setting lockfile permissions: %w", err)
+	}
+
+	fileName := filepath.Base(path)
+	if err := safefile.Rename(cwd, tmpPath, filepath.Join(dir, fileName)); err != nil {
+		return fmt.Errorf("renaming temp lockfile: %w", err)
+	}
+
+	success = true
+	return nil
+}
+
+func prepareLockfileSavePath(path string) (cwd, dir string, err error) {
+	cwd, err = os.Getwd()
+	if err != nil {
+		return "", "", fmt.Errorf("getting working directory: %w", err)
+	}
+	dir = filepath.Dir(path)
+	if dir == "." {
+		dir = cwd
+	}
+	return cwd, dir, nil
+}
+
+func validateLockfileSavePath(path, dir, cwd string) error {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("resolving lockfile directory path: %w", err)
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return fmt.Errorf("resolving working directory path: %w", err)
+	}
+	if !strings.HasPrefix(absDir, absCwd+string(filepath.Separator)) && absDir != absCwd {
+		return fmt.Errorf("refusing to save lockfile outside working directory: %s", path)
+	}
+
+	hasSymlink, err := safefile.ContainsSymlink(dir)
+	if err != nil {
+		return fmt.Errorf("checking for symlinks: %w", err)
+	}
+	if hasSymlink {
+		return fmt.Errorf("refusing to save lockfile: path contains symlink: %s", dir)
+	}
+
+	if err := safefile.MkdirAll(cwd, dir); err != nil {
+		return fmt.Errorf("creating lockfile dir: %w", err)
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to overwrite symlink at %s", path)
+	}
+	return nil
+}
+
+func validateLockfileRaceSafety(path, dir string) error {
+	hasSymlink, err := safefile.ContainsSymlink(dir)
+	if err != nil {
 		return fmt.Errorf("checking for symlinks (race check): %w", err)
 	}
 	if hasSymlink {
-		_ = tmpFile.Close()
 		return fmt.Errorf("refusing to save lockfile (race detected): path contains symlink: %s", dir)
 	}
-
-	// Also re-check that target hasn't become a symlink during the race window
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			_ = tmpFile.Close()
-			return fmt.Errorf("refusing to overwrite symlink at %s (race detected)", path)
-		}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to overwrite symlink at %s (race detected)", path)
 	}
+	return nil
+}
 
+func writeLockfileTempFile(tmpFile *os.File, data []byte) error {
 	if _, err := tmpFile.Write(data); err != nil {
 		_ = tmpFile.Close()
 		return fmt.Errorf("writing temp lockfile: %w", err)
@@ -338,23 +352,6 @@ func (lf *LockFile) Save(path string) error {
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("closing temp lockfile: %w", err)
 	}
-
-	// Set permissions before rename
-	if err := os.Chmod(tmpPath, 0644); err != nil {
-		return fmt.Errorf("setting lockfile permissions: %w", err)
-	}
-
-	// TOCTOU-safe atomic rename: Use fd-relative rename to prevent symlink swaps
-	// between the validation above and the rename operation.
-	//
-	// Rename keeps directory fds pinned throughout the operation,
-	// preventing symlink swaps that could redirect the lockfile to an arbitrary location.
-	fileName := filepath.Base(path)
-	if err := safefile.Rename(cwd, tmpPath, filepath.Join(dir, fileName)); err != nil {
-		return fmt.Errorf("renaming temp lockfile: %w", err)
-	}
-
-	success = true
 	return nil
 }
 

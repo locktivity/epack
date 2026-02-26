@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/locktivity/epack/internal/catalog"
+	"github.com/locktivity/epack/internal/securityaudit"
 	"github.com/spf13/cobra"
 )
 
@@ -292,6 +293,17 @@ func matchTypeNameUnified(mt catalog.MatchType) string {
 
 func runUnifiedCatalogRefresh(cmd *cobra.Command, catalogURL string, jsonOutput bool, insecureAllowHTTP bool) error {
 	out := cmd.OutOrStdout()
+	if insecureAllowHTTP {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "catalog",
+			Name:        "refresh",
+			Description: "catalog refresh running with insecure HTTP override",
+			Attrs: map[string]string{
+				"insecure_allow_http": "true",
+			},
+		})
+	}
 
 	// Get cached meta for conditional request headers
 	cachedMeta := catalog.GetCachedMeta()

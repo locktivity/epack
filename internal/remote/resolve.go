@@ -17,6 +17,8 @@ import (
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/exitcode"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 )
 
 // StepCallback is called when a workflow step starts or completes.
@@ -155,6 +157,15 @@ func PrepareAdapterExecutor(
 		// TOCTOU-safe: verify digest and execute verified copy
 		exec, err = NewVerifiedExecutor(adapterPath, digestInfo.Digest, remoteCfg.EffectiveAdapter())
 		if err != nil {
+			securityaudit.Emit(securityaudit.Event{
+				Type:        securityaudit.EventVerificationFail,
+				Component:   string(componenttypes.KindRemote),
+				Name:        remoteName,
+				Description: "adapter digest verification failed",
+				Attrs: map[string]string{
+					"path": adapterPath,
+				},
+			})
 			return nil, nil, fmt.Errorf("verifying adapter: %w", err)
 		}
 	} else {
@@ -353,25 +364,38 @@ func GetAdapterDigestInfo(remoteName string, remoteCfg *config.RemoteConfig, lf 
 	return info
 }
 
-// VerificationOptions controls adapter verification behavior.
-type VerificationOptions struct {
+type VerificationSecureOptions struct {
 	// Frozen requires all adapters to be pinned with digests (CI mode).
 	Frozen bool
+}
 
-	// AllowInsecure permits execution of adapters installed with --insecure-skip-verify.
-	AllowInsecure bool
+type VerificationUnsafeOverrides struct {
+	// AllowUnverifiedInstall permits execution of adapters installed with --insecure-skip-verify.
+	AllowUnverifiedInstall bool
 
 	// AllowUnverifiedSource permits execution of source-based adapters without digest.
 	// SECURITY WARNING: This bypasses TOCTOU protection for source-based adapters.
 	AllowUnverifiedSource bool
 }
 
+// VerificationOptions controls adapter verification behavior.
+type VerificationOptions struct {
+	// Secure defaults.
+	Secure VerificationSecureOptions
+	// Explicit insecure overrides.
+	Unsafe VerificationUnsafeOverrides
+}
+
 // DefaultVerificationOptions returns secure defaults for adapter verification.
 func DefaultVerificationOptions() VerificationOptions {
 	return VerificationOptions{
-		Frozen:                false,
-		AllowInsecure:         false,
-		AllowUnverifiedSource: false,
+		Secure: VerificationSecureOptions{
+			Frozen: false,
+		},
+		Unsafe: VerificationUnsafeOverrides{
+			AllowUnverifiedInstall: false,
+			AllowUnverifiedSource:  false,
+		},
 	}
 }
 
@@ -384,46 +408,85 @@ func DefaultVerificationOptions() VerificationOptions {
 //
 // Returns nil if execution is allowed, or an error describing the security violation.
 func CheckAdapterSecurity(remoteName, binaryPath string, digestInfo AdapterDigestInfo, opts VerificationOptions) error {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        opts.Secure.Frozen,
+		AllowUnpinned: opts.Unsafe.AllowUnverifiedSource,
+	}).Enforce(); err != nil {
+		return err
+	}
+	if err := securitypolicy.EnforceStrictProduction("remote_adapter",
+		opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnverifiedSource,
+	); err != nil {
+		return err
+	}
+
 	// Check for insecure install marker
-	if err := sync.CheckInsecureMarkerAllowed(remoteName, componenttypes.KindRemote, binaryPath, opts.Frozen, opts.AllowInsecure); err != nil {
+	if err := sync.CheckInsecureMarkerAllowed(remoteName, componenttypes.KindRemote, binaryPath, opts.Secure.Frozen, opts.Unsafe.AllowUnverifiedInstall); err != nil {
 		return err
 	}
 
 	// Source-based adapter checks
 	if digestInfo.IsSourceAdapter {
 		if digestInfo.MissingDigest {
-			if opts.Frozen {
+			if opts.Secure.Frozen {
 				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 					fmt.Sprintf("remote %q missing digest in lockfile (required in --frozen mode)", remoteName),
 					"Run 'epack lock' to compute and pin digests", nil)
 			}
-			if !opts.AllowUnverifiedSource {
+			if !opts.Unsafe.AllowUnverifiedSource {
 				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 					fmt.Sprintf("remote %q missing digest in lockfile", remoteName),
 					"Run 'epack lock' to compute and pin digests, or use --insecure-allow-unpinned", nil)
 			}
+			securityaudit.Emit(securityaudit.Event{
+				Type:        securityaudit.EventInsecureBypass,
+				Component:   string(componenttypes.KindRemote),
+				Name:        remoteName,
+				Description: "allowing source adapter execution without lockfile digest",
+				Attrs: map[string]string{
+					"reason": "allow_unverified_source",
+				},
+			})
 		}
 	}
 
 	// External adapter checks (binary path in config)
 	if digestInfo.IsExternalBinary && digestInfo.MissingDigest {
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external remote %q is not pinned in lockfile (required in --frozen mode)", remoteName),
 				"Run 'epack lock' to pin external remotes", nil)
 		}
-		if !opts.AllowUnverifiedSource {
+		if !opts.Unsafe.AllowUnverifiedSource {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external remote %q is not pinned in lockfile", remoteName),
 				"Run 'epack lock' to pin external remotes, or use --insecure-allow-unpinned", nil)
 		}
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventUnpinnedExecution,
+			Component:   string(componenttypes.KindRemote),
+			Name:        remoteName,
+			Description: "executing external adapter without lockfile pin",
+			Attrs: map[string]string{
+				"reason": "allow_unverified_source",
+			},
+		})
 	}
 
 	// Frozen mode: all adapters must be verifiable
-	if opts.Frozen && digestInfo.NeedsVerification && digestInfo.Digest == "" {
+	if opts.Secure.Frozen && digestInfo.NeedsVerification && digestInfo.Digest == "" {
 		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 			fmt.Sprintf("remote %q not pinned in lockfile (required in --frozen mode)", remoteName),
 			"Run 'epack lock' to pin all remotes", nil)
+	}
+
+	if digestInfo.Digest == "" && opts.Unsafe.AllowUnverifiedSource {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   string(componenttypes.KindRemote),
+			Name:        remoteName,
+			Description: "adapter execution proceeds without digest verification",
+		})
 	}
 
 	return nil

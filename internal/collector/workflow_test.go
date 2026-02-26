@@ -1,12 +1,48 @@
 package collector
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/locktivity/epack/pack/builder"
 )
+
+func TestCollect_RejectsIncompatibleSecurityFlags(t *testing.T) {
+	_, err := Collect(context.Background(), nil, CollectOpts{
+		Secure: SecureRunOptions{
+			Frozen: true,
+		},
+		Unsafe: UnsafeOverrides{
+			AllowUnpinned: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("Collect() expected error for --frozen with --insecure-allow-unpinned")
+	}
+	if !strings.Contains(err.Error(), "--insecure-allow-unpinned cannot be used with --frozen") {
+		t.Fatalf("Collect() wrong error: %v", err)
+	}
+}
+
+func TestRunAndBuild_RejectsIncompatibleSecurityFlags(t *testing.T) {
+	_, err := RunAndBuild(context.Background(), nil, RunAndBuildOpts{
+		Secure: SecureRunOptions{
+			Frozen: true,
+		},
+		Unsafe: UnsafeOverrides{
+			AllowUnpinned: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("RunAndBuild() expected error for --frozen with --insecure-allow-unpinned")
+	}
+	if !strings.Contains(err.Error(), "--insecure-allow-unpinned cannot be used with --frozen") {
+		t.Fatalf("RunAndBuild() wrong error: %v", err)
+	}
+}
 
 // TestAddCollectorArtifacts_OutputConsistency verifies that addCollectorArtifacts
 // produces consistent output regardless of the input format.

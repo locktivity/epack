@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/cli/sigstore"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/pack"
 	"github.com/locktivity/epack/pack/merge"
 	"github.com/spf13/cobra"
@@ -96,42 +99,28 @@ Examples:
 }
 
 func runMerge(cmd *cobra.Command, args []string) error {
+	if err := validateMergeFlags(); err != nil {
+		return err
+	}
+
 	outputPath := args[0]
 	sourcePaths := args[1:]
 	out := outputWriter()
 	ctx := cmdContext(cmd)
 
-	// Interactive prompt for stream if not provided
-	stream := mergeStream
-	if stream == "" {
-		if out.IsTTY() && !out.IsJSON() {
-			s, err := out.PromptRequired("Stream identifier (e.g., myorg/merged): ")
-			if err != nil {
-				return exitError("--stream is required")
-			}
-			stream = s
-		} else {
-			return exitError("--stream is required")
-		}
+	stream, err := resolveMergeStream(out)
+	if err != nil {
+		return err
 	}
 
-	// Check if output exists
-	if !mergeForce && !mergeDryRun {
-		if _, err := os.Stat(outputPath); err == nil {
-			return exitError("output file %q already exists (use --force to overwrite)", outputPath)
-		}
+	if err := ensureMergeOutputWritable(outputPath); err != nil {
+		return err
 	}
 
-	// Build source pack list
-	var sources []merge.SourcePack
-	for _, path := range sourcePaths {
-		// Check source exists
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return exitError("source pack not found: %s", path)
-		}
-		sources = append(sources, merge.SourcePack{Path: path})
+	sources, err := buildMergeSourceList(sourcePaths)
+	if err != nil {
+		return err
 	}
-
 	if len(sources) == 0 {
 		return exitError("at least one source pack is required")
 	}
@@ -143,7 +132,6 @@ func runMerge(cmd *cobra.Command, args []string) error {
 
 	out.Verbose("Merging %d packs into %s\n", len(sources), outputPath)
 
-	// Perform merge
 	opts := merge.Options{
 		Stream:              stream,
 		MergedBy:            mergeMergedBy,
@@ -151,59 +139,34 @@ func runMerge(cmd *cobra.Command, args []string) error {
 		VerifyAttestations:  mergeIncludeAttestations && !mergeInsecureSkipAttestationVerify,
 	}
 
-	// Create verifier if verification is enabled
-	if opts.VerifyAttestations {
-		// SECURITY: Require explicit identity policy or explicit opt-out.
-		// Without this, an attacker could sign malicious attestations with
-		// any valid Sigstore identity and have them embedded in merged packs.
-		hasIdentityPolicy := mergeIssuer != "" || mergeSubject != "" || mergeSubjectRegex != ""
-		if !hasIdentityPolicy && !mergeInsecureSkipIdentityCheck {
-			return exitError("--include-attestations requires identity policy (--issuer, --subject, --subject-regex) " +
-				"or explicit --insecure-skip-identity-check to accept attestations from any signer")
-		}
-
-		cfg := sigstore.VerifierConfig{
-			TrustRootPath: mergeTrustRoot,
-			Identity: sigstore.IdentityPolicy{
-				Issuer:        mergeIssuer,
-				Subject:       mergeSubject,
-				SubjectRegexp: mergeSubjectRegex,
-			},
-			InsecureSkipIdentityCheck: mergeInsecureSkipIdentityCheck,
-		}
-		verifier, err := sigstore.NewVerifier(cfg)
-		if err != nil {
-			return exitError("failed to create verifier: %v", err)
-		}
-		opts.Verifier = verifier
+	if err := configureMergeVerifier(&opts); err != nil {
+		return err
 	}
 
 	if err := merge.Merge(ctx, sources, outputPath, opts); err != nil {
 		return exitError("failed to merge packs: %v", err)
 	}
 
-	// Output result
-	if out.IsJSON() {
-		sourceList := make([]string, len(sources))
-		for i, src := range sources {
-			sourceList[i] = src.Path
-		}
-		return out.JSON(map[string]interface{}{
-			"path":         outputPath,
-			"stream":       stream,
-			"source_packs": sourceList,
-			"merged_by":    mergeMergedBy,
+	return printMergeResult(out, outputPath, stream, sources)
+}
+
+func validateMergeFlags() error {
+	hasUnsafeOverrides := mergeInsecureSkipAttestationVerify || mergeInsecureSkipIdentityCheck
+	if err := securitypolicy.EnforceStrictProduction("merge_cli", hasUnsafeOverrides); err != nil {
+		return err
+	}
+	if hasUnsafeOverrides {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "merge",
+			Name:        "merge",
+			Description: "merge command running with insecure verification override",
+			Attrs: map[string]string{
+				"skip_attestation_verify": fmt.Sprintf("%t", mergeInsecureSkipAttestationVerify),
+				"skip_identity_check":     fmt.Sprintf("%t", mergeInsecureSkipIdentityCheck),
+			},
 		})
 	}
-
-	out.Success("Merged %d packs into %s", len(sources), outputPath)
-	out.Print("  Stream: %s\n", stream)
-	if mergeIncludeAttestations {
-		out.Print("  Attestations: embedded from source packs\n")
-	}
-	out.Print("  Use 'epack inspect %s' to view contents\n", outputPath)
-	out.Print("  Use 'epack sign %s' to sign the merged pack\n", outputPath)
-
 	return nil
 }
 
@@ -311,5 +274,91 @@ func runMergeDryRun(sources []merge.SourcePack, outputPath string, out *output.W
 		out.Print("  Attestations: %d (will be embedded)\n", totalAttestations)
 	}
 
+	return nil
+}
+
+func resolveMergeStream(out *output.Writer) (string, error) {
+	if mergeStream != "" {
+		return mergeStream, nil
+	}
+	if out.IsTTY() && !out.IsJSON() {
+		s, err := out.PromptRequired("Stream identifier (e.g., myorg/merged): ")
+		if err != nil {
+			return "", exitError("--stream is required")
+		}
+		return s, nil
+	}
+	return "", exitError("--stream is required")
+}
+
+func ensureMergeOutputWritable(outputPath string) error {
+	if mergeForce || mergeDryRun {
+		return nil
+	}
+	if _, err := os.Stat(outputPath); err == nil {
+		return exitError("output file %q already exists (use --force to overwrite)", outputPath)
+	}
+	return nil
+}
+
+func buildMergeSourceList(sourcePaths []string) ([]merge.SourcePack, error) {
+	sources := make([]merge.SourcePack, 0, len(sourcePaths))
+	for _, path := range sourcePaths {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return nil, exitError("source pack not found: %s", path)
+		}
+		sources = append(sources, merge.SourcePack{Path: path})
+	}
+	return sources, nil
+}
+
+func configureMergeVerifier(opts *merge.Options) error {
+	if !opts.VerifyAttestations {
+		return nil
+	}
+	hasIdentityPolicy := mergeIssuer != "" || mergeSubject != "" || mergeSubjectRegex != ""
+	if !hasIdentityPolicy && !mergeInsecureSkipIdentityCheck {
+		return exitError("--include-attestations requires identity policy (--issuer, --subject, --subject-regex) " +
+			"or explicit --insecure-skip-identity-check to accept attestations from any signer")
+	}
+
+	cfg := sigstore.VerifierConfig{
+		TrustRootPath: mergeTrustRoot,
+		Identity: sigstore.IdentityPolicy{
+			Issuer:        mergeIssuer,
+			Subject:       mergeSubject,
+			SubjectRegexp: mergeSubjectRegex,
+		},
+		InsecureSkipIdentityCheck: mergeInsecureSkipIdentityCheck,
+	}
+	verifier, err := sigstore.NewVerifier(cfg)
+	if err != nil {
+		return exitError("failed to create verifier: %v", err)
+	}
+	opts.Verifier = verifier
+	return nil
+}
+
+func printMergeResult(out *output.Writer, outputPath, stream string, sources []merge.SourcePack) error {
+	if out.IsJSON() {
+		sourceList := make([]string, len(sources))
+		for i, src := range sources {
+			sourceList[i] = src.Path
+		}
+		return out.JSON(map[string]interface{}{
+			"path":         outputPath,
+			"stream":       stream,
+			"source_packs": sourceList,
+			"merged_by":    mergeMergedBy,
+		})
+	}
+
+	out.Success("Merged %d packs into %s", len(sources), outputPath)
+	out.Print("  Stream: %s\n", stream)
+	if mergeIncludeAttestations {
+		out.Print("  Attestations: embedded from source packs\n")
+	}
+	out.Print("  Use 'epack inspect %s' to view contents\n", outputPath)
+	out.Print("  Use 'epack sign %s' to sign the merged pack\n", outputPath)
 	return nil
 }

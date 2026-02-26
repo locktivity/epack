@@ -165,7 +165,9 @@ func TestResolveAdapterPath_BinaryRemoteSkipsLockfile(t *testing.T) {
 	// Note: We use AllowUnverifiedSource to skip digest verification since no lockfile
 	opts := remote.AdapterExecutorOptions{
 		Verification: remote.VerificationOptions{
-			AllowUnverifiedSource: true,
+			Unsafe: remote.VerificationUnsafeOverrides{
+				AllowUnverifiedSource: true,
+			},
 		},
 	}
 

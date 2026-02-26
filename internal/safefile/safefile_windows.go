@@ -12,6 +12,7 @@ import (
 
 	"github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/safefile/tx"
 )
 
 // WriteFile writes data atomically with symlink protection.
@@ -288,7 +289,8 @@ var ErrFileExists = errors.E(errors.InvalidInput, "file already exists", nil)
 // --- Internal implementation ---
 
 func writeFileInternal(baseDir, path string, data []byte, dirPerm, filePerm os.FileMode, exclusive bool) error {
-	parentDir := filepath.Dir(path)
+	fullPath := filepath.Join(baseDir, path)
+	parentDir := filepath.Dir(fullPath)
 
 	if _, err := validateContained(baseDir, parentDir); err != nil {
 		return err
@@ -299,7 +301,7 @@ func writeFileInternal(baseDir, path string, data []byte, dirPerm, filePerm os.F
 	}
 
 	if exclusive {
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
+		f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
 		if err != nil {
 			if os.IsExist(err) {
 				return ErrFileExists
@@ -314,36 +316,7 @@ func writeFileInternal(baseDir, path string, data []byte, dirPerm, filePerm os.F
 		return f.Sync()
 	}
 
-	// Atomic write via temp file + rename
-	tmpPath := path + ".tmp"
-	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
-	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
-	}
-
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("writing temp file: %w", err)
-	}
-
-	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("syncing temp file: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("closing temp file: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("renaming to final: %w", err)
-	}
-
-	return nil
+	return tx.WriteAtomicPath(fullPath, data, filePerm)
 }
 
 func mkdirAllInternal(baseDir, targetDir string, perm os.FileMode) error {

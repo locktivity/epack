@@ -177,7 +177,7 @@ func TestBuilder_AddFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadArtifact failed: %v", err)
 	}
-	if !bytes.Equal(data, content) {
+	if !bytes.Equal(data.Bytes(), content) {
 		t.Errorf("Artifact content = %q, want %q", data, content)
 	}
 }
@@ -559,7 +559,7 @@ func TestBuilder_NestedArtifactPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadArtifact failed: %v", err)
 	}
-	if string(data) != `{"nested":true}` {
+	if string(data.Bytes()) != `{"nested":true}` {
 		t.Errorf("Artifact content = %q, want %q", data, `{"nested":true}`)
 	}
 }
@@ -652,7 +652,7 @@ func TestBuilder_DefensiveCopy_Data(t *testing.T) {
 	}
 
 	// The artifact should have the original content, not the mutated version
-	if string(readData) != `{"original": true}` {
+	if string(readData.Bytes()) != `{"original": true}` {
 		t.Errorf("Artifact content = %q, want original unchanged content", readData)
 	}
 }

@@ -188,97 +188,23 @@ func snapshotZipContentsWithLimit(zr *zip.Reader, maxTotalBytes int64) (map[stri
 
 // verifySnapshotIntegrity verifies pack integrity against snapshot bytes.
 func verifySnapshotIntegrity(snapshot map[string]*snapshotEntry) (*pack.Manifest, error) {
-	manifestEntry, ok := snapshot[packpath.Manifest]
-	if !ok {
-		return nil, errors.E(errors.MissingEntry, packpath.Manifest+" not found in snapshot", nil)
-	}
-	manifest, err := pack.ParseManifest(manifestEntry.content)
+	manifest, err := parseSnapshotManifest(snapshot)
 	if err != nil {
-		return nil, fmt.Errorf("parsing manifest: %w", err)
+		return nil, err
 	}
-
-	declaredArtifacts := make(map[string]struct{})
-	for _, artifact := range manifest.Artifacts {
-		if artifact.Type != "embedded" {
-			continue
-		}
-		if !strings.HasPrefix(artifact.Path, packpath.ArtifactsDir) {
-			return nil, errors.E(errors.InvalidPath,
-				fmt.Sprintf("artifact path %q not under %s", artifact.Path, packpath.ArtifactsDir), nil)
-		}
-		declaredArtifacts[artifact.Path] = struct{}{}
-
-		entry, ok := snapshot[artifact.Path]
-		if !ok {
-			return nil, errors.E(errors.MissingEntry,
-				fmt.Sprintf("artifact %q in manifest not found in snapshot", artifact.Path), nil)
-		}
-
-		if artifact.Size != nil {
-			expectedSize, err := artifact.Size.Int64()
-			if err != nil {
-				return nil, errors.E(errors.InvalidManifest,
-					fmt.Sprintf("artifact %q has invalid size", artifact.Path), err)
-			}
-			if int64(len(entry.content)) != expectedSize {
-				return nil, errors.E(errors.SizeMismatch,
-					fmt.Sprintf("artifact %q size mismatch: manifest %d, actual %d", artifact.Path, expectedSize, len(entry.content)), nil)
-			}
-		}
-
-		computedDigest := digest.FromBytes(entry.content)
-		expectedDigest, err := digest.Parse(artifact.Digest)
-		if err != nil {
-			return nil, errors.E(errors.InvalidManifest,
-				fmt.Sprintf("artifact %q has invalid digest format in manifest", artifact.Path), err)
-		}
-		// SECURITY: Uses constant-time comparison via digest.Equal to prevent timing attacks.
-		// SECURITY: Error message omits computed digest to prevent leaking file contents.
-		if !computedDigest.Equal(expectedDigest) {
-			return nil, errors.E(errors.DigestMismatch,
-				fmt.Sprintf("artifact %q digest mismatch: expected %s", artifact.Path, artifact.Digest), nil)
-		}
+	declaredArtifacts, err := verifyManifestDeclaredArtifacts(snapshot, manifest)
+	if err != nil {
+		return nil, err
 	}
-
-	// Reject undeclared artifacts to prevent signing tampered packs
-	for path := range snapshot {
-		if !strings.HasPrefix(path, packpath.ArtifactsDir) {
-			continue
-		}
-		if _, declared := declaredArtifacts[path]; !declared {
-			return nil, errors.E(errors.InvalidManifest,
-				fmt.Sprintf("artifact %q in snapshot not declared in manifest", path), nil)
-		}
+	if err := rejectUndeclaredSnapshotArtifacts(snapshot, declaredArtifacts); err != nil {
+		return nil, err
 	}
-
-	// Reject unexpected files
-	for path := range snapshot {
-		switch {
-		case path == packpath.Manifest:
-		case strings.HasPrefix(path, packpath.ArtifactsDir):
-		case strings.HasPrefix(path, packpath.Attestations):
-			if !strings.HasSuffix(path, packpath.SigstoreExt) {
-				return nil, errors.E(errors.InvalidPath,
-					fmt.Sprintf("invalid attestation file %q: must end with %s", path, packpath.SigstoreExt), nil)
-			}
-			remainder := strings.TrimPrefix(path, packpath.Attestations)
-			if strings.Contains(remainder, "/") {
-				return nil, errors.E(errors.InvalidPath,
-					fmt.Sprintf("invalid attestation path %q: must be direct child of %s", path, packpath.Attestations), nil)
-			}
-		default:
-			return nil, errors.E(errors.InvalidPath, fmt.Sprintf("unexpected file %q in pack", path), nil)
-		}
+	if err := validateSnapshotFileSet(snapshot); err != nil {
+		return nil, err
 	}
-
-	canonical := pack.BuildCanonicalArtifactList(manifest)
-	computedPackDigest := pack.HashCanonicalList(canonical)
-	// SECURITY: Error message omits computed digest to prevent leaking manifest contents.
-	if computedPackDigest != manifest.PackDigest {
-		return nil, errors.E(errors.DigestMismatch,
-			fmt.Sprintf("pack_digest mismatch: expected %s", manifest.PackDigest), nil)
+	if err := verifySnapshotPackDigest(manifest); err != nil {
+		return nil, err
 	}
-
 	return manifest, nil
 }
 
@@ -286,32 +212,14 @@ func verifySnapshotIntegrity(snapshot map[string]*snapshotEntry) (*pack.Manifest
 // Uses TOCTOU-safe operations to prevent symlink race attacks where an attacker
 // swaps parent directory components during the write flow.
 func writeZipFromSnapshot(zipPath string, snapshot map[string]*snapshotEntry, attestationName string, attestationContent []byte) error {
-	// Resolve to absolute path first
-	absZipPath, err := filepath.Abs(zipPath)
+	baseDir, targetPath, dir, err := resolveSnapshotWritePaths(zipPath)
 	if err != nil {
-		return fmt.Errorf("resolving zip path: %w", err)
+		return err
 	}
-
-	dir := filepath.Dir(absZipPath)
-	fileName := filepath.Base(absZipPath)
-
-	// Get the parent of the output directory as trusted base
-	baseDir := filepath.Dir(dir)
-	if baseDir == "" {
-		baseDir = "/"
-	}
-
-	// SECURITY: We do NOT perform Lstat checks here. Such checks are vulnerable
-	// to TOCTOU races where an attacker swaps a directory for a symlink between
-	// the check and the subsequent file operation. Instead, we rely on
-	// safefile's atomic operations which use fd-pinned openat/renameat
-	// syscalls that atomically reject symlinks during the actual operation.
-
-	tempFile, err := os.CreateTemp(dir, "pack-*.zip")
+	tempFile, tempPath, err := createTempSnapshotFile(dir)
 	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
+		return err
 	}
-	tempPath := tempFile.Name()
 
 	success := false
 	defer func() {
@@ -328,6 +236,146 @@ func writeZipFromSnapshot(zipPath string, snapshot map[string]*snapshotEntry, at
 		}
 	}()
 
+	if err := writeSnapshotZip(zipWriter, snapshot, attestationName, attestationContent); err != nil {
+		return err
+	}
+	if err := closeSnapshotWriters(zipWriter, tempFile); err != nil {
+		return err
+	}
+	if err := safefile.Rename(baseDir, tempPath, targetPath); err != nil {
+		return fmt.Errorf("replacing original zip: %w", err)
+	}
+	success = true
+	return nil
+}
+
+func parseSnapshotManifest(snapshot map[string]*snapshotEntry) (*pack.Manifest, error) {
+	manifestEntry, ok := snapshot[packpath.Manifest]
+	if !ok {
+		return nil, errors.E(errors.MissingEntry, packpath.Manifest+" not found in snapshot", nil)
+	}
+	manifest, err := pack.ParseManifest(manifestEntry.content)
+	if err != nil {
+		return nil, fmt.Errorf("parsing manifest: %w", err)
+	}
+	return manifest, nil
+}
+
+func verifyManifestDeclaredArtifacts(snapshot map[string]*snapshotEntry, manifest *pack.Manifest) (map[string]struct{}, error) {
+	declaredArtifacts := make(map[string]struct{})
+	for _, artifact := range manifest.Artifacts {
+		if artifact.Type != "embedded" {
+			continue
+		}
+		if !strings.HasPrefix(artifact.Path, packpath.ArtifactsDir) {
+			return nil, errors.E(errors.InvalidPath,
+				fmt.Sprintf("artifact path %q not under %s", artifact.Path, packpath.ArtifactsDir), nil)
+		}
+		entry, ok := snapshot[artifact.Path]
+		if !ok {
+			return nil, errors.E(errors.MissingEntry,
+				fmt.Sprintf("artifact %q in manifest not found in snapshot", artifact.Path), nil)
+		}
+		if err := verifySnapshotArtifactEntry(artifact, entry); err != nil {
+			return nil, err
+		}
+		declaredArtifacts[artifact.Path] = struct{}{}
+	}
+	return declaredArtifacts, nil
+}
+
+func verifySnapshotArtifactEntry(artifact pack.Artifact, entry *snapshotEntry) error {
+	if artifact.Size != nil {
+		expectedSize, err := artifact.Size.Int64()
+		if err != nil {
+			return errors.E(errors.InvalidManifest,
+				fmt.Sprintf("artifact %q has invalid size", artifact.Path), err)
+		}
+		if int64(len(entry.content)) != expectedSize {
+			return errors.E(errors.SizeMismatch,
+				fmt.Sprintf("artifact %q size mismatch: manifest %d, actual %d", artifact.Path, expectedSize, len(entry.content)), nil)
+		}
+	}
+	computedDigest := digest.FromBytes(entry.content)
+	expectedDigest, err := digest.Parse(artifact.Digest)
+	if err != nil {
+		return errors.E(errors.InvalidManifest,
+			fmt.Sprintf("artifact %q has invalid digest format in manifest", artifact.Path), err)
+	}
+	if !computedDigest.Equal(expectedDigest) {
+		return errors.E(errors.DigestMismatch,
+			fmt.Sprintf("artifact %q digest mismatch: expected %s", artifact.Path, artifact.Digest), nil)
+	}
+	return nil
+}
+
+func rejectUndeclaredSnapshotArtifacts(snapshot map[string]*snapshotEntry, declaredArtifacts map[string]struct{}) error {
+	for path := range snapshot {
+		if !strings.HasPrefix(path, packpath.ArtifactsDir) {
+			continue
+		}
+		if _, declared := declaredArtifacts[path]; !declared {
+			return errors.E(errors.InvalidManifest,
+				fmt.Sprintf("artifact %q in snapshot not declared in manifest", path), nil)
+		}
+	}
+	return nil
+}
+
+func validateSnapshotFileSet(snapshot map[string]*snapshotEntry) error {
+	for path := range snapshot {
+		switch {
+		case path == packpath.Manifest:
+		case strings.HasPrefix(path, packpath.ArtifactsDir):
+		case strings.HasPrefix(path, packpath.Attestations):
+			if !strings.HasSuffix(path, packpath.SigstoreExt) {
+				return errors.E(errors.InvalidPath,
+					fmt.Sprintf("invalid attestation file %q: must end with %s", path, packpath.SigstoreExt), nil)
+			}
+			remainder := strings.TrimPrefix(path, packpath.Attestations)
+			if strings.Contains(remainder, "/") {
+				return errors.E(errors.InvalidPath,
+					fmt.Sprintf("invalid attestation path %q: must be direct child of %s", path, packpath.Attestations), nil)
+			}
+		default:
+			return errors.E(errors.InvalidPath, fmt.Sprintf("unexpected file %q in pack", path), nil)
+		}
+	}
+	return nil
+}
+
+func verifySnapshotPackDigest(manifest *pack.Manifest) error {
+	canonical := pack.BuildCanonicalArtifactList(manifest)
+	computedPackDigest := pack.HashCanonicalList(canonical)
+	if computedPackDigest != manifest.PackDigest {
+		return errors.E(errors.DigestMismatch,
+			fmt.Sprintf("pack_digest mismatch: expected %s", manifest.PackDigest), nil)
+	}
+	return nil
+}
+
+func resolveSnapshotWritePaths(zipPath string) (baseDir, targetPath, dir string, err error) {
+	absZipPath, err := filepath.Abs(zipPath)
+	if err != nil {
+		return "", "", "", fmt.Errorf("resolving zip path: %w", err)
+	}
+	dir = filepath.Dir(absZipPath)
+	baseDir = filepath.Dir(dir)
+	if baseDir == "" {
+		baseDir = "/"
+	}
+	return baseDir, filepath.Join(dir, filepath.Base(absZipPath)), dir, nil
+}
+
+func createTempSnapshotFile(dir string) (*os.File, string, error) {
+	tempFile, err := os.CreateTemp(dir, "pack-*.zip")
+	if err != nil {
+		return nil, "", fmt.Errorf("creating temp file: %w", err)
+	}
+	return tempFile, tempFile.Name(), nil
+}
+
+func writeSnapshotZip(zipWriter *zip.Writer, snapshot map[string]*snapshotEntry, attestationName string, attestationContent []byte) error {
 	for _, dirPath := range []string{packpath.ArtifactsDir, packpath.Attestations} {
 		if _, err := zipWriter.Create(dirPath); err != nil {
 			return fmt.Errorf("creating directory %s: %w", dirPath, err)
@@ -348,7 +396,6 @@ func writeZipFromSnapshot(zipPath string, snapshot map[string]*snapshotEntry, at
 			return fmt.Errorf("writing %s: %w", name, err)
 		}
 	}
-
 	w, err := zipWriter.Create(attestationName)
 	if err != nil {
 		return fmt.Errorf("creating attestation in zip: %w", err)
@@ -356,21 +403,16 @@ func writeZipFromSnapshot(zipPath string, snapshot map[string]*snapshotEntry, at
 	if _, err := w.Write(attestationContent); err != nil {
 		return fmt.Errorf("writing attestation: %w", err)
 	}
+	return nil
+}
 
+func closeSnapshotWriters(zipWriter *zip.Writer, tempFile *os.File) error {
 	if err := zipWriter.Close(); err != nil {
 		return fmt.Errorf("closing zip writer: %w", err)
 	}
 	if err := tempFile.Close(); err != nil {
 		return fmt.Errorf("closing temp file: %w", err)
 	}
-
-	// TOCTOU-safe rename: Rename keeps directory fd pinned from
-	// verification through the rename, preventing symlink swap attacks.
-	if err := safefile.Rename(baseDir, tempPath, filepath.Join(dir, fileName)); err != nil {
-		return fmt.Errorf("replacing original zip: %w", err)
-	}
-
-	success = true
 	return nil
 }
 

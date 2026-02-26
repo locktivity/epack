@@ -103,6 +103,25 @@ func TestRunnerResolveBinaryPath(t *testing.T) {
 	}
 }
 
+func TestRunnerRun_RejectsIncompatibleSecurityFlags(t *testing.T) {
+	runner := &Runner{}
+
+	_, err := runner.Run(context.Background(), nil, RunOptions{
+		Secure: SecureRunOptions{
+			Frozen: true,
+		},
+		Unsafe: UnsafeOverrides{
+			AllowUnpinned: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() expected error for --frozen with --insecure-allow-unpinned")
+	}
+	if !strings.Contains(err.Error(), "--insecure-allow-unpinned cannot be used with --frozen") {
+		t.Fatalf("Run() wrong error: %v", err)
+	}
+}
+
 func TestVerifiedBinaryFD(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -163,21 +182,22 @@ func TestCheckInsecureMarker(t *testing.T) {
 	}
 
 	// Should fail in frozen mode with insecure marker
-	err := runner.checkInsecureMarker("test", binaryPath, RunOptions{Frozen: true})
+	err := runner.checkInsecureMarker("test", binaryPath, RunOptions{Secure: SecureRunOptions{Frozen: true}})
 	if err == nil {
 		t.Error("checkInsecureMarker() expected error for insecure install in frozen mode")
 	}
 
 	// Should also fail in non-frozen mode by default (security improvement)
-	err = runner.checkInsecureMarker("test", binaryPath, RunOptions{Frozen: false})
+	err = runner.checkInsecureMarker("test", binaryPath, RunOptions{})
 	if err == nil {
 		t.Error("checkInsecureMarker() expected error for insecure install in non-frozen mode by default")
 	}
 
 	// Should succeed only when explicitly allowed
 	err = runner.checkInsecureMarker("test", binaryPath, RunOptions{
-		Frozen:                  false,
-		InsecureAllowUnverified: true,
+		Unsafe: UnsafeOverrides{
+			AllowUnverifiedInstall: true,
+		},
 	})
 	if err != nil {
 		t.Errorf("checkInsecureMarker() unexpected error when explicitly allowed: %v", err)
@@ -197,7 +217,7 @@ func TestRunnerLoadLockfile(t *testing.T) {
 		},
 	}
 
-	lf, err := runner.loadLockfile(cfg, RunOptions{Frozen: false})
+	lf, err := runner.loadLockfile(cfg, RunOptions{})
 	if err != nil {
 		t.Errorf("loadLockfile() error for binary-only: %v", err)
 	}
@@ -369,7 +389,7 @@ func TestRunnerSelectCollectors(t *testing.T) {
 	}
 
 	// Filter to specific collectors
-	selected = runner.selectCollectors(cfg, RunOptions{Only: []string{"github", "aws"}})
+	selected = runner.selectCollectors(cfg, RunOptions{Secure: SecureRunOptions{Only: []string{"github", "aws"}}})
 	if len(selected) != 2 {
 		t.Errorf("len(selected) = %d, want 2", len(selected))
 	}
@@ -381,7 +401,7 @@ func TestRunnerSelectCollectors(t *testing.T) {
 	}
 
 	// Filter to non-existent collector
-	selected = runner.selectCollectors(cfg, RunOptions{Only: []string{"nonexistent"}})
+	selected = runner.selectCollectors(cfg, RunOptions{Secure: SecureRunOptions{Only: []string{"nonexistent"}}})
 	if len(selected) != 0 {
 		t.Errorf("len(selected) = %d, want 0", len(selected))
 	}
@@ -487,7 +507,9 @@ echo '{"pwned": true}'
 
 	// Run WITHOUT the insecure flag - this MUST fail
 	result := runner.runOne(context.Background(), "malicious", cfg, lf, platform, RunOptions{
-		AllowUnverifiedSourceCollectors: false, // Default - secure mode
+		Unsafe: UnsafeOverrides{
+			AllowUnverifiedSourceCollectors: false, // Default - secure mode
+		},
 	})
 
 	// MUST fail - if it succeeds, we have an RCE vulnerability
@@ -551,7 +573,9 @@ echo '{"status": "ok"}'
 
 	// With explicit insecure flag, this should work (but is dangerous)
 	result := runner.runOne(context.Background(), "test", cfg, lf, platform, RunOptions{
-		AllowUnverifiedSourceCollectors: true, // INSECURE - explicit opt-in
+		Unsafe: UnsafeOverrides{
+			AllowUnverifiedSourceCollectors: true, // INSECURE - explicit opt-in
+		},
 	})
 
 	// Should succeed when explicitly opted in
@@ -800,7 +824,9 @@ printf '"}\n'
 	// Run with a very small aggregate budget (1KB)
 	// This should cause some collectors to be skipped
 	result, err := runner.Run(context.Background(), cfg, RunOptions{
-		MaxAggregateBudget: 1024, // 1 KB - very small
+		Secure: SecureRunOptions{
+			MaxAggregateBudget: 1024, // 1 KB - very small
+		},
 	})
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)

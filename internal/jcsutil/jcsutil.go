@@ -128,47 +128,17 @@ func CanonicalizeAndHashWithOptions(data []byte, opts Options) (canonical []byte
 func writeCanonical(w io.Writer, v any, opts Options) error {
 	switch x := v.(type) {
 	case nil:
-		_, err := io.WriteString(w, "null")
-		return err
+		return writeLiteral(w, "null")
 	case bool:
-		if x {
-			_, err := io.WriteString(w, "true")
-			return err
-		}
-		_, err := io.WriteString(w, "false")
-		return err
+		return writeCanonicalBool(w, x)
 	case string:
 		return writeJCSString(w, x)
 	case json.Number:
-		s, err := formatNumber(x, opts.NumberPolicy)
-		if err != nil {
-			return err
-		}
-		_, err2 := io.WriteString(w, s)
-		return err2
+		return writeCanonicalNumber(w, x, opts.NumberPolicy)
 	case float64:
-		s, err := formatFloatNumber(x, opts.NumberPolicy)
-		if err != nil {
-			return err
-		}
-		_, err2 := io.WriteString(w, s)
-		return err2
+		return writeCanonicalFloat(w, x, opts.NumberPolicy)
 	case []any:
-		if _, err := io.WriteString(w, "["); err != nil {
-			return err
-		}
-		for i := range x {
-			if i > 0 {
-				if _, err := io.WriteString(w, ","); err != nil {
-					return err
-				}
-			}
-			if err := writeCanonical(w, x[i], opts); err != nil {
-				return err
-			}
-		}
-		_, err := io.WriteString(w, "]")
-		return err
+		return writeCanonicalArray(w, x, opts)
 	case map[string]any:
 		return writeCanonicalObject(w, x, opts)
 	default:
@@ -218,51 +188,8 @@ func writeJCSString(w io.Writer, s string) error {
 
 	var tmp [utf8.UTFMax]byte
 	for _, r := range s {
-		switch r {
-		case '\\':
-			if _, err := io.WriteString(w, `\\`); err != nil {
-				return err
-			}
-		case '"':
-			if _, err := io.WriteString(w, `\"`); err != nil {
-				return err
-			}
-		case '\b':
-			if _, err := io.WriteString(w, `\b`); err != nil {
-				return err
-			}
-		case '\f':
-			if _, err := io.WriteString(w, `\f`); err != nil {
-				return err
-			}
-		case '\n':
-			if _, err := io.WriteString(w, `\n`); err != nil {
-				return err
-			}
-		case '\r':
-			if _, err := io.WriteString(w, `\r`); err != nil {
-				return err
-			}
-		case '\t':
-			if _, err := io.WriteString(w, `\t`); err != nil {
-				return err
-			}
-		default:
-			if r >= 0 && r <= 0x1F {
-				if _, err := io.WriteString(w, `\u00`); err != nil {
-					return err
-				}
-				hex := "0123456789abcdef"
-				b := byte(r)
-				if _, err := w.Write([]byte{hex[b>>4], hex[b&0x0F]}); err != nil {
-					return err
-				}
-				continue
-			}
-			n := utf8.EncodeRune(tmp[:], r)
-			if _, err := w.Write(tmp[:n]); err != nil {
-				return err
-			}
+		if err := writeEscapedRune(w, r, tmp[:]); err != nil {
+			return err
 		}
 	}
 
@@ -461,62 +388,7 @@ func decodeNoDuplicateKeys(dec *json.Decoder, out *any) error {
 
 	switch t := tok.(type) {
 	case json.Delim:
-		switch t {
-		case '{':
-			obj := make(map[string]any)
-			seen := make(map[string]struct{})
-			for dec.More() {
-				keyTok, err := dec.Token()
-				if err != nil {
-					return fmt.Errorf("jcsutil: invalid JSON: %w", err)
-				}
-				key, ok := keyTok.(string)
-				if !ok {
-					return errors.New("jcsutil: object key is not a string")
-				}
-				if _, exists := seen[key]; exists {
-					return fmt.Errorf("jcsutil: duplicate object key %q", key)
-				}
-				seen[key] = struct{}{}
-
-				var val any
-				if err := decodeNoDuplicateKeys(dec, &val); err != nil {
-					return err
-				}
-				obj[key] = val
-			}
-			endTok, err := dec.Token()
-			if err != nil {
-				return fmt.Errorf("jcsutil: invalid JSON: %w", err)
-			}
-			if d, ok := endTok.(json.Delim); !ok || d != '}' {
-				return errors.New("jcsutil: expected '}'")
-			}
-			*out = obj
-			return nil
-
-		case '[':
-			var arr []any
-			for dec.More() {
-				var val any
-				if err := decodeNoDuplicateKeys(dec, &val); err != nil {
-					return err
-				}
-				arr = append(arr, val)
-			}
-			endTok, err := dec.Token()
-			if err != nil {
-				return fmt.Errorf("jcsutil: invalid JSON: %w", err)
-			}
-			if d, ok := endTok.(json.Delim); !ok || d != ']' {
-				return errors.New("jcsutil: expected ']'")
-			}
-			*out = arr
-			return nil
-
-		default:
-			return fmt.Errorf("jcsutil: unexpected delimiter %q", t)
-		}
+		return decodeDelimitedNoDuplicates(dec, t, out)
 
 	case string, bool, nil, json.Number, float64:
 		*out = t
@@ -524,4 +396,157 @@ func decodeNoDuplicateKeys(dec *json.Decoder, out *any) error {
 	default:
 		return fmt.Errorf("jcsutil: unexpected token type %T", tok)
 	}
+}
+
+func writeLiteral(w io.Writer, s string) error {
+	_, err := io.WriteString(w, s)
+	return err
+}
+
+func writeCanonicalBool(w io.Writer, v bool) error {
+	if v {
+		return writeLiteral(w, "true")
+	}
+	return writeLiteral(w, "false")
+}
+
+func writeCanonicalNumber(w io.Writer, n json.Number, policy NumberPolicy) error {
+	s, err := formatNumber(n, policy)
+	if err != nil {
+		return err
+	}
+	return writeLiteral(w, s)
+}
+
+func writeCanonicalFloat(w io.Writer, f float64, policy NumberPolicy) error {
+	s, err := formatFloatNumber(f, policy)
+	if err != nil {
+		return err
+	}
+	return writeLiteral(w, s)
+}
+
+func writeCanonicalArray(w io.Writer, arr []any, opts Options) error {
+	if err := writeLiteral(w, "["); err != nil {
+		return err
+	}
+	for i := range arr {
+		if i > 0 {
+			if err := writeLiteral(w, ","); err != nil {
+				return err
+			}
+		}
+		if err := writeCanonical(w, arr[i], opts); err != nil {
+			return err
+		}
+	}
+	return writeLiteral(w, "]")
+}
+
+func writeEscapedRune(w io.Writer, r rune, scratch []byte) error {
+	switch r {
+	case '\\':
+		return writeLiteral(w, `\\`)
+	case '"':
+		return writeLiteral(w, `\"`)
+	case '\b':
+		return writeLiteral(w, `\b`)
+	case '\f':
+		return writeLiteral(w, `\f`)
+	case '\n':
+		return writeLiteral(w, `\n`)
+	case '\r':
+		return writeLiteral(w, `\r`)
+	case '\t':
+		return writeLiteral(w, `\t`)
+	default:
+		if r >= 0 && r <= 0x1F {
+			if err := writeLiteral(w, `\u00`); err != nil {
+				return err
+			}
+			hex := "0123456789abcdef"
+			b := byte(r)
+			_, err := w.Write([]byte{hex[b>>4], hex[b&0x0F]})
+			return err
+		}
+		n := utf8.EncodeRune(scratch, r)
+		_, err := w.Write(scratch[:n])
+		return err
+	}
+}
+
+func decodeDelimitedNoDuplicates(dec *json.Decoder, d json.Delim, out *any) error {
+	switch d {
+	case '{':
+		return decodeJSONObjectNoDuplicates(dec, out)
+	case '[':
+		return decodeJSONArrayNoDuplicates(dec, out)
+	default:
+		return fmt.Errorf("jcsutil: unexpected delimiter %q", d)
+	}
+}
+
+func decodeJSONObjectNoDuplicates(dec *json.Decoder, out *any) error {
+	obj := make(map[string]any)
+	seen := make(map[string]struct{})
+	for dec.More() {
+		key, err := decodeObjectKey(dec)
+		if err != nil {
+			return err
+		}
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("jcsutil: duplicate object key %q", key)
+		}
+		seen[key] = struct{}{}
+
+		var val any
+		if err := decodeNoDuplicateKeys(dec, &val); err != nil {
+			return err
+		}
+		obj[key] = val
+	}
+	if err := expectDelimiter(dec, '}'); err != nil {
+		return err
+	}
+	*out = obj
+	return nil
+}
+
+func decodeJSONArrayNoDuplicates(dec *json.Decoder, out *any) error {
+	var arr []any
+	for dec.More() {
+		var val any
+		if err := decodeNoDuplicateKeys(dec, &val); err != nil {
+			return err
+		}
+		arr = append(arr, val)
+	}
+	if err := expectDelimiter(dec, ']'); err != nil {
+		return err
+	}
+	*out = arr
+	return nil
+}
+
+func decodeObjectKey(dec *json.Decoder) (string, error) {
+	keyTok, err := dec.Token()
+	if err != nil {
+		return "", fmt.Errorf("jcsutil: invalid JSON: %w", err)
+	}
+	key, ok := keyTok.(string)
+	if !ok {
+		return "", errors.New("jcsutil: object key is not a string")
+	}
+	return key, nil
+}
+
+func expectDelimiter(dec *json.Decoder, expected json.Delim) error {
+	endTok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("jcsutil: invalid JSON: %w", err)
+	}
+	if d, ok := endTok.(json.Delim); !ok || d != expected {
+		return fmt.Errorf("jcsutil: expected %q", expected)
+	}
+	return nil
 }

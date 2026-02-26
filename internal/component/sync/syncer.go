@@ -16,6 +16,8 @@ import (
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/safefile/tx"
+	"github.com/locktivity/epack/internal/securityaudit"
 )
 
 // Syncer downloads components from lockfile.
@@ -114,9 +116,17 @@ func NewSyncerWithRegistry(registry RegistryClient, workDir string) *Syncer {
 
 // SyncOpts controls sync behavior.
 type SyncOpts struct {
-	Frozen               bool // Verify only, don't download.
-	InsecureSkipVerify   bool // Skip Sigstore verification (NOT RECOMMENDED).
-	InsecureTrustOnFirst bool // Trust digest from lockfile without Sigstore (NOT RECOMMENDED).
+	Secure SyncSecureOptions
+	Unsafe SyncUnsafeOverrides
+}
+
+type SyncSecureOptions struct {
+	Frozen bool // Verify only, don't download.
+}
+
+type SyncUnsafeOverrides struct {
+	SkipVerify   bool // Skip Sigstore verification (NOT RECOMMENDED).
+	TrustOnFirst bool // Trust digest from lockfile without Sigstore (NOT RECOMMENDED).
 }
 
 // SyncResult contains the result of syncing a component.
@@ -141,12 +151,12 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 
 	// Ensure base directory exists for component installation.
 	// This is done early so safefile.MkdirAll can use it as the security boundary.
-	if err := os.MkdirAll(s.BaseDir, 0755); err != nil {
+	if err := safefile.MkdirAll(s.BaseDir, s.BaseDir); err != nil {
 		return nil, fmt.Errorf("creating base directory: %w", err)
 	}
 
 	// Validate option combinations
-	if opts.Frozen && opts.InsecureSkipVerify {
+	if opts.Secure.Frozen && opts.Unsafe.SkipVerify {
 		return nil, fmt.Errorf("cannot combine --frozen with --insecure-skip-verify")
 	}
 
@@ -223,76 +233,20 @@ func syncByKind[T any](
 // preventing "lockfile retargeting" attacks where an attacker modifies the config
 // to point to a different repository while reusing a valid lockfile entry.
 func (s *Syncer) ValidateAlignment(cfg *config.JobConfig, lf *lockfile.LockFile) error {
-	// Check all config collectors are in lockfile with matching kind AND source.
-	// Iterate in sorted order for deterministic error messages.
-	configCollectorNames := make([]string, 0, len(cfg.Collectors))
-	for name := range cfg.Collectors {
-		configCollectorNames = append(configCollectorNames, name)
+	if err := s.validateCollectorAlignment(cfg, lf); err != nil {
+		return err
 	}
-	sort.Strings(configCollectorNames)
+	return s.validateRemoteAlignment(cfg, lf)
+}
 
-	for _, name := range configCollectorNames {
-		collector := cfg.Collectors[name]
-		locked, ok := lf.GetCollector(name)
-		if collector.Source != "" {
-			// Source-based collector
-			if !ok {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares collector %q not found in lockfile", name),
-					"Run 'epack collector lock' to update the lockfile", nil)
-			}
-			// Verify lockfile entry is also source-based (not external)
-			if locked.Kind == "external" {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares %q as source-based but lockfile has it as external", name),
-					"Run 'epack collector lock' to update the lockfile", nil)
-			}
-
-			// SECURITY: Verify config source matches lockfile source.
-			// This prevents lockfile retargeting attacks where the config is modified
-			// to point to a different repository while reusing a valid lockfile.
-			configOwner, configRepo, _, err := github.ParseSource(collector.Source)
-			if err != nil {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("invalid source in config for collector %q: %v", name, err),
-					"Check the source format in epack.yaml", nil)
-			}
-			expectedSource := fmt.Sprintf("github.com/%s/%s", configOwner, configRepo)
-			if locked.Source != expectedSource {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config source mismatch for collector %q: config declares %q but lockfile has %q", name, expectedSource, locked.Source),
-					"Run 'epack collector lock' to update the lockfile with the new source", nil)
-			}
-
-			// SECURITY: Also verify signer identity matches config source.
-			// The lockfile signer must be from the same repository declared in config.
-			if locked.Signer != nil {
-				expectedRepoURI := fmt.Sprintf("https://github.com/%s/%s", configOwner, configRepo)
-				if locked.Signer.SourceRepositoryURI != expectedRepoURI {
-					return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-						fmt.Sprintf("signer source mismatch for collector %q: config declares %q but lockfile signer is from %q", name, expectedRepoURI, locked.Signer.SourceRepositoryURI),
-						"Run 'epack collector lock' to update the lockfile", nil)
-				}
-			}
-		} else if collector.Binary != "" {
-			// External binary collector
-			if ok && locked.Kind != "external" {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares %q as external binary but lockfile has it as source-based", name),
-					"Run 'epack collector lock' to update the lockfile", nil)
-			}
+func (s *Syncer) validateCollectorAlignment(cfg *config.JobConfig, lf *lockfile.LockFile) error {
+	for _, name := range sortedMapNames(cfg.Collectors) {
+		if err := validateCollectorConfigEntry(name, cfg.Collectors[name], lf); err != nil {
+			return err
 		}
 	}
 
-	// Check all lockfile collectors are in config (for source-based).
-	// Iterate in sorted order for deterministic error messages.
-	lockfileCollectorNames := make([]string, 0, len(lf.Collectors))
-	for name := range lf.Collectors {
-		lockfileCollectorNames = append(lockfileCollectorNames, name)
-	}
-	sort.Strings(lockfileCollectorNames)
-
-	for _, name := range lockfileCollectorNames {
+	for _, name := range sortedMapNames(lf.Collectors) {
 		locked := lf.Collectors[name]
 		if locked.Kind == "external" {
 			continue
@@ -303,80 +257,49 @@ func (s *Syncer) ValidateAlignment(cfg *config.JobConfig, lf *lockfile.LockFile)
 				fmt.Sprintf("lockfile has collector %q not found in config", name),
 				"Remove stale entries or add collector to config", nil)
 		}
-		// Verify config entry is also source-based (not external)
 		if cfgCollector.Source == "" {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("lockfile has %q as source-based but config declares it as external", name),
 				"Run 'epack collector lock' to update the lockfile", nil)
 		}
 	}
+	return nil
+}
 
-	// Validate remotes alignment (source-based remotes only)
-	configRemoteNames := make([]string, 0, len(cfg.Remotes))
-	for name := range cfg.Remotes {
-		configRemoteNames = append(configRemoteNames, name)
-	}
-	sort.Strings(configRemoteNames)
+func validateCollectorConfigEntry(name string, collector config.CollectorConfig, lf *lockfile.LockFile) error {
+	locked, ok := lf.GetCollector(name)
 
-	for _, name := range configRemoteNames {
-		remote := cfg.Remotes[name]
-		locked, ok := lf.GetRemote(name)
-		if remote.Source != "" {
-			// Source-based remote
-			if !ok {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares remote %q not found in lockfile", name),
-					"Run 'epack lock' to update the lockfile", nil)
-			}
-			// Verify lockfile entry is also source-based (not external)
-			if locked.Kind == "external" {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares %q as source-based but lockfile has it as external", name),
-					"Run 'epack lock' to update the lockfile", nil)
-			}
-
-			// SECURITY: Verify config source matches lockfile source.
-			configOwner, configRepo, _, err := github.ParseSource(remote.Source)
-			if err != nil {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("invalid source in config for remote %q: %v", name, err),
-					"Check the source format in epack.yaml", nil)
-			}
-			expectedSource := fmt.Sprintf("github.com/%s/%s", configOwner, configRepo)
-			if locked.Source != expectedSource {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config source mismatch for remote %q: config declares %q but lockfile has %q", name, expectedSource, locked.Source),
-					"Run 'epack lock' to update the lockfile with the new source", nil)
-			}
-
-			// SECURITY: Also verify signer identity matches config source.
-			if locked.Signer != nil {
-				expectedRepoURI := fmt.Sprintf("https://github.com/%s/%s", configOwner, configRepo)
-				if locked.Signer.SourceRepositoryURI != expectedRepoURI {
-					return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-						fmt.Sprintf("signer source mismatch for remote %q: config declares %q but lockfile signer is from %q", name, expectedRepoURI, locked.Signer.SourceRepositoryURI),
-						"Run 'epack lock' to update the lockfile", nil)
-				}
-			}
-		} else if remote.Binary != "" {
-			// External binary remote
-			if ok && locked.Kind != "external" {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("config declares %q as external binary but lockfile has it as source-based", name),
-					"Run 'epack lock' to update the lockfile", nil)
-			}
+	if collector.Source != "" {
+		if !ok {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares collector %q not found in lockfile", name),
+				"Run 'epack collector lock' to update the lockfile", nil)
 		}
-		// Adapter-only remotes (no source or binary) don't need lockfile validation
+		if locked.Kind == "external" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares %q as source-based but lockfile has it as external", name),
+				"Run 'epack collector lock' to update the lockfile", nil)
+		}
+		return validateSourceAndSignerMatch("collector", name, collector.Source, locked.Source, locked.Signer, "epack collector lock")
 	}
 
-	// Check all lockfile remotes are in config (for source-based)
-	lockfileRemoteNames := make([]string, 0, len(lf.Remotes))
-	for name := range lf.Remotes {
-		lockfileRemoteNames = append(lockfileRemoteNames, name)
+	if collector.Binary != "" && ok && locked.Kind != "external" {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("config declares %q as external binary but lockfile has it as source-based", name),
+			"Run 'epack collector lock' to update the lockfile", nil)
 	}
-	sort.Strings(lockfileRemoteNames)
 
-	for _, name := range lockfileRemoteNames {
+	return nil
+}
+
+func (s *Syncer) validateRemoteAlignment(cfg *config.JobConfig, lf *lockfile.LockFile) error {
+	for _, name := range sortedMapNames(cfg.Remotes) {
+		if err := validateRemoteConfigEntry(name, cfg.Remotes[name], lf); err != nil {
+			return err
+		}
+	}
+
+	for _, name := range sortedMapNames(lf.Remotes) {
 		locked := lf.Remotes[name]
 		if locked.Kind == "external" {
 			continue
@@ -387,15 +310,76 @@ func (s *Syncer) ValidateAlignment(cfg *config.JobConfig, lf *lockfile.LockFile)
 				fmt.Sprintf("lockfile has remote %q not found in config", name),
 				"Remove stale entries or add remote to config", nil)
 		}
-		// Verify config entry is also source-based (not external)
 		if cfgRemote.Source == "" {
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("lockfile has %q as source-based but config declares it as external", name),
 				"Run 'epack lock' to update the lockfile", nil)
 		}
 	}
+	return nil
+}
+
+func validateRemoteConfigEntry(name string, remote config.RemoteConfig, lf *lockfile.LockFile) error {
+	locked, ok := lf.GetRemote(name)
+
+	if remote.Source != "" {
+		if !ok {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares remote %q not found in lockfile", name),
+				"Run 'epack lock' to update the lockfile", nil)
+		}
+		if locked.Kind == "external" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares %q as source-based but lockfile has it as external", name),
+				"Run 'epack lock' to update the lockfile", nil)
+		}
+		return validateSourceAndSignerMatch("remote", name, remote.Source, locked.Source, locked.Signer, "epack lock")
+	}
+
+	if remote.Binary != "" && ok && locked.Kind != "external" {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("config declares %q as external binary but lockfile has it as source-based", name),
+			"Run 'epack lock' to update the lockfile", nil)
+	}
+
+	// Adapter-only remotes (no source or binary) don't need lockfile validation.
+	return nil
+}
+
+func validateSourceAndSignerMatch(kind, name, configuredSource, lockedSource string, signer *componenttypes.LockedSigner, lockCmd string) error {
+	configOwner, configRepo, _, err := github.ParseSource(configuredSource)
+	if err != nil {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("invalid source in config for %s %q: %v", kind, name, err),
+			"Check the source format in epack.yaml", nil)
+	}
+
+	expectedSource := fmt.Sprintf("github.com/%s/%s", configOwner, configRepo)
+	if lockedSource != expectedSource {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("config source mismatch for %s %q: config declares %q but lockfile has %q", kind, name, expectedSource, lockedSource),
+			fmt.Sprintf("Run '%s' to update the lockfile with the new source", lockCmd), nil)
+	}
+
+	if signer != nil {
+		expectedRepoURI := fmt.Sprintf("https://github.com/%s/%s", configOwner, configRepo)
+		if signer.SourceRepositoryURI != expectedRepoURI {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("signer source mismatch for %s %q: config declares %q but lockfile signer is from %q", kind, name, expectedRepoURI, signer.SourceRepositoryURI),
+				fmt.Sprintf("Run '%s' to update the lockfile", lockCmd), nil)
+		}
+	}
 
 	return nil
+}
+
+func sortedMapNames[T any](m map[string]T) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // syncSourceComponent is the unified implementation for syncing source-based components.
@@ -403,25 +387,15 @@ func (s *Syncer) ValidateAlignment(cfg *config.JobConfig, lf *lockfile.LockFile)
 func (s *Syncer) syncSourceComponent(ctx context.Context, name string, accessor componentAccessor, lf *lockfile.LockFile, platform string, opts SyncOpts) (*SyncResult, error) {
 	kind := accessor.Kind()
 
-	locked, ok := accessor.GetLocked(lf, name)
-	if !ok {
-		return nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-			fmt.Sprintf("%s %q not in lockfile", kind, name), "Run 'epack lock' first", nil)
-	}
-
-	platformEntry, ok := locked.Platforms[platform]
-	if !ok {
-		return nil, errors.WithHint(errors.BinaryNotFound, exitcode.MissingBinary,
-			fmt.Sprintf("%s %q has no entry for platform %s", kind, name, platform),
-			fmt.Sprintf("Run 'epack lock --platform %s'", platform), nil)
-	}
-
-	// Compute install path
-	installPath, err := InstallPath(s.BaseDir, accessor.LockfileKind(), name, locked.Version, name)
+	locked, platformEntry, err := getLockedComponentForPlatform(accessor, lf, kind, name, platform)
 	if err != nil {
-		return nil, fmt.Errorf("computing install path: %w", err)
+		return nil, err
 	}
-	installDir := filepath.Dir(installPath)
+
+	installPath, installDir, err := computeInstallPaths(s.BaseDir, accessor, name, locked.Version)
+	if err != nil {
+		return nil, err
+	}
 
 	result := &SyncResult{
 		Name:     name,
@@ -430,156 +404,259 @@ func (s *Syncer) syncSourceComponent(ctx context.Context, name string, accessor 
 		Platform: platform,
 	}
 
-	// Check if already installed and verified
-	if _, err := os.Stat(installPath); err == nil {
-		// Binary exists - verify digest
-		if err := VerifyDigest(installPath, platformEntry.Digest); err == nil {
-			// Remove insecure marker on successful verification
-			ClearInsecureMarker(installDir)
-			result.Verified = true
-			return result, nil
-		}
-		// Digest mismatch - need to re-download
-		if opts.Frozen {
-			return nil, errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
-				fmt.Sprintf("%s %q digest mismatch (expected %s)", kind, name, platformEntry.Digest),
-				"Run 'epack sync' to re-download", nil)
-		}
+	alreadyVerified, err := verifyExistingInstall(kind, name, installPath, installDir, platformEntry.Digest, opts.Secure.Frozen)
+	if err != nil {
+		return nil, err
+	}
+	if alreadyVerified {
+		result.Verified = true
+		return result, nil
 	}
 
-	// In frozen mode, don't download
-	if opts.Frozen {
+	if opts.Secure.Frozen {
 		return nil, errors.WithHint(errors.BinaryNotFound, exitcode.MissingBinary,
 			fmt.Sprintf("%s %q not installed", kind, name), "Run 'epack sync' to install", nil)
 	}
 
-	// Download and install
-	owner, repo, err := ParseSourceURI(locked.Source)
-	if err != nil {
+	if err := s.downloadAndInstallComponent(ctx, name, kind, locked, platformEntry, installPath, installDir, opts); err != nil {
 		return nil, err
-	}
-
-	// Build source string for registry calls
-	source := fmt.Sprintf("%s/%s", owner, repo)
-
-	release, err := s.Registry.FetchRelease(ctx, source, locked.Version)
-	if err != nil {
-		return nil, errors.WithHint(errors.NetworkError, exitcode.Network,
-			fmt.Sprintf("fetching release %s: %v", locked.Version, err),
-			"Check network connection and GITHUB_TOKEN", nil)
-	}
-
-	asset, err := s.Registry.FindBinaryAsset(release, name, runtime.GOOS, runtime.GOARCH)
-	if err != nil {
-		return nil, fmt.Errorf("finding binary asset: %w", err)
-	}
-
-	// Create install directory
-	// SECURITY: Use MkdirAll to refuse symlinks during directory walk.
-	if err := safefile.MkdirAll(s.BaseDir, installDir); err != nil {
-		return nil, fmt.Errorf("creating install directory: %w", err)
-	}
-
-	// Download binary
-	tmpPath := installPath + ".tmp"
-	if err := s.Registry.DownloadAsset(ctx, asset.URL, tmpPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return nil, errors.WithHint(errors.NetworkError, exitcode.Network,
-			fmt.Sprintf("downloading %s: %v", asset.Name, err),
-			"Check network connection", nil)
-	}
-
-	// Verify or mark as insecure
-	if opts.InsecureSkipVerify || opts.InsecureTrustOnFirst {
-		// Skip signature verification - just check digest
-		if err := VerifyDigest(tmpPath, platformEntry.Digest); err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
-				fmt.Sprintf("%s %q digest mismatch (expected %s)", kind, name, platformEntry.Digest),
-				"Downloaded binary doesn't match lockfile", nil)
-		}
-		// Write insecure marker
-		if err := WriteInsecureMarker(installDir); err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, fmt.Errorf("writing insecure marker: %w", err)
-		}
-	} else {
-		// Full sigstore verification
-		bundleAsset, err := s.Registry.FindSigstoreBundle(release, asset.Name)
-		if err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, errors.WithHint(errors.SignatureInvalid, exitcode.SignatureMismatch,
-				fmt.Sprintf("sigstore bundle not found for %s", asset.Name),
-				"Release may not be signed, use --insecure-skip-verify to bypass (NOT RECOMMENDED)", nil)
-		}
-
-		// Sanitize bundle asset name
-		safeBundleName, err := SanitizeAssetName(bundleAsset.Name)
-		if err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, fmt.Errorf("invalid bundle asset name: %w", err)
-		}
-
-		bundlePath := filepath.Join(installDir, safeBundleName)
-		if err := s.Registry.DownloadAsset(ctx, bundleAsset.URL, bundlePath); err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, errors.WithHint(errors.NetworkError, exitcode.Network,
-				fmt.Sprintf("downloading sigstore bundle: %v", err),
-				"Check network connection", nil)
-		}
-
-		// Build expected identity from lockfile
-		expectedRepoURI := BuildGitHubRepoURL(owner, repo)
-		expectedRef := BuildGitHubRefTag(locked.Version)
-		expectedIdentity := &ExpectedIdentity{
-			SourceRepositoryURI: expectedRepoURI,
-			SourceRepositoryRef: expectedRef,
-		}
-
-		// Verify signature
-		sigResult, err := VerifySigstoreBundle(bundlePath, tmpPath, expectedIdentity)
-		_ = os.Remove(bundlePath) // Clean up bundle after verification
-		if err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, errors.WithHint(errors.SignatureInvalid, exitcode.SignatureMismatch,
-				fmt.Sprintf("sigstore verification failed: %v", err),
-				"Binary signature doesn't match expected signer", nil)
-		}
-
-		// Verify signer matches lockfile
-		if locked.Signer != nil {
-			if err := MatchSigner(sigResult, locked.Signer); err != nil {
-				_ = os.Remove(tmpPath)
-				return nil, errors.WithHint(errors.SignatureInvalid, exitcode.SignatureMismatch,
-					fmt.Sprintf("signer mismatch: %v", err),
-					"Release was signed by different identity than lockfile recorded", nil)
-			}
-		}
-
-		// Verify digest
-		if err := VerifyDigest(tmpPath, platformEntry.Digest); err != nil {
-			_ = os.Remove(tmpPath)
-			return nil, errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
-				fmt.Sprintf("%s %q digest mismatch (expected %s)", kind, name, platformEntry.Digest),
-				"Downloaded binary doesn't match lockfile", nil)
-		}
-
-		// Clear any stale insecure marker
-		ClearInsecureMarker(installDir)
-	}
-
-	// Make executable and rename atomically
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("making binary executable: %w", err)
-	}
-	if err := os.Rename(tmpPath, installPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return nil, fmt.Errorf("installing binary: %w", err)
 	}
 
 	result.Installed = true
 	return result, nil
+}
+
+func getLockedComponentForPlatform(accessor componentAccessor, lf *lockfile.LockFile, kind, name, platform string) (*lockedComponent, componenttypes.LockedPlatform, error) {
+	locked, ok := accessor.GetLocked(lf, name)
+	if !ok {
+		return nil, componenttypes.LockedPlatform{}, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("%s %q not in lockfile", kind, name), "Run 'epack lock' first", nil)
+	}
+	platformEntry, ok := locked.Platforms[platform]
+	if !ok {
+		return nil, componenttypes.LockedPlatform{}, errors.WithHint(errors.BinaryNotFound, exitcode.MissingBinary,
+			fmt.Sprintf("%s %q has no entry for platform %s", kind, name, platform),
+			fmt.Sprintf("Run 'epack lock --platform %s'", platform), nil)
+	}
+	return locked, platformEntry, nil
+}
+
+func computeInstallPaths(baseDir string, accessor componentAccessor, name, version string) (installPath, installDir string, err error) {
+	installPath, err = InstallPath(baseDir, accessor.LockfileKind(), name, version, name)
+	if err != nil {
+		return "", "", fmt.Errorf("computing install path: %w", err)
+	}
+	return installPath, filepath.Dir(installPath), nil
+}
+
+func verifyExistingInstall(kind, name, installPath, installDir, digest string, frozen bool) (bool, error) {
+	if _, err := os.Stat(installPath); err != nil {
+		return false, nil
+	}
+	if err := VerifyDigest(installPath, digest); err == nil {
+		ClearInsecureMarker(installDir)
+		return true, nil
+	}
+	if frozen {
+		return false, errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
+			fmt.Sprintf("%s %q digest mismatch (expected %s)", kind, name, digest),
+			"Run 'epack sync' to re-download", nil)
+	}
+	return false, nil
+}
+
+func (s *Syncer) downloadAndInstallComponent(
+	ctx context.Context,
+	name, kind string,
+	locked *lockedComponent,
+	platformEntry componenttypes.LockedPlatform,
+	installPath, installDir string,
+	opts SyncOpts,
+) error {
+	owner, repo, release, asset, err := s.resolveReleaseAsset(ctx, name, locked)
+	if err != nil {
+		return err
+	}
+
+	if err := safefile.MkdirAll(s.BaseDir, installDir); err != nil {
+		return fmt.Errorf("creating install directory: %w", err)
+	}
+
+	tmpPath := installPath + ".tmp"
+	if err := s.Registry.DownloadAsset(ctx, asset.URL, tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return errors.WithHint(errors.NetworkError, exitcode.Network,
+			fmt.Sprintf("downloading %s: %v", asset.Name, err),
+			"Check network connection", nil)
+	}
+
+	if err := s.verifyDownloadedBinary(ctx, kind, name, owner, repo, locked, platformEntry, tmpPath, installDir, release, asset, opts); err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("reading downloaded binary: %w", err)
+	}
+	if err := tx.WriteAtomicPath(installPath, data, 0755); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("installing binary: %w", err)
+	}
+	if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cleaning temporary binary: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Syncer) resolveReleaseAsset(ctx context.Context, name string, locked *lockedComponent) (owner, repo string, release *ReleaseInfo, asset *AssetInfo, err error) {
+	owner, repo, err = ParseSourceURI(locked.Source)
+	if err != nil {
+		return "", "", nil, nil, err
+	}
+	source := fmt.Sprintf("%s/%s", owner, repo)
+
+	release, err = s.Registry.FetchRelease(ctx, source, locked.Version)
+	if err != nil {
+		return "", "", nil, nil, errors.WithHint(errors.NetworkError, exitcode.Network,
+			fmt.Sprintf("fetching release %s: %v", locked.Version, err),
+			"Check network connection and GITHUB_TOKEN", nil)
+	}
+
+	asset, err = s.Registry.FindBinaryAsset(release, name, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", "", nil, nil, fmt.Errorf("finding binary asset: %w", err)
+	}
+	return owner, repo, release, asset, nil
+}
+
+func (s *Syncer) verifyDownloadedBinary(
+	ctx context.Context,
+	kind, name, owner, repo string,
+	locked *lockedComponent,
+	platformEntry componenttypes.LockedPlatform,
+	tmpPath, installDir string,
+	release *ReleaseInfo,
+	asset *AssetInfo,
+	opts SyncOpts,
+) error {
+	if opts.Unsafe.SkipVerify || opts.Unsafe.TrustOnFirst {
+		return verifyDownloadedBinaryInsecure(kind, name, platformEntry.Digest, tmpPath, installDir)
+	}
+	return s.verifyDownloadedBinarySigstore(ctx, kind, name, owner, repo, locked, platformEntry.Digest, tmpPath, installDir, release, asset)
+}
+
+func verifyDownloadedBinaryInsecure(kind, name, expectedDigest, tmpPath, installDir string) error {
+	if err := VerifyDigest(tmpPath, expectedDigest); err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   kind,
+			Name:        name,
+			Description: "component digest verification failed in insecure install path",
+		})
+		_ = os.Remove(tmpPath)
+		return errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
+			fmt.Sprintf("%s %q digest mismatch (expected %s)", kind, name, expectedDigest),
+			"Downloaded binary doesn't match lockfile", nil)
+	}
+	securityaudit.Emit(securityaudit.Event{
+		Type:        securityaudit.EventInsecureBypass,
+		Component:   kind,
+		Name:        name,
+		Description: "component install running with insecure verification override",
+	})
+	if err := WriteInsecureMarker(installDir); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("writing insecure marker: %w", err)
+	}
+	return nil
+}
+
+func (s *Syncer) verifyDownloadedBinarySigstore(
+	ctx context.Context,
+	kind, name, owner, repo string,
+	locked *lockedComponent,
+	expectedDigest, tmpPath, installDir string,
+	release *ReleaseInfo,
+	asset *AssetInfo,
+) error {
+	bundleAsset, err := s.Registry.FindSigstoreBundle(release, asset.Name)
+	if err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   kind,
+			Name:        name,
+			Description: "sigstore bundle not found for component install",
+		})
+		_ = os.Remove(tmpPath)
+		return errors.WithHint(errors.SignatureInvalid, exitcode.SignatureMismatch,
+			fmt.Sprintf("sigstore bundle not found for %s", asset.Name),
+			"Release may not be signed, use --insecure-skip-verify to bypass (NOT RECOMMENDED)", nil)
+	}
+
+	safeBundleName, err := SanitizeAssetName(bundleAsset.Name)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("invalid bundle asset name: %w", err)
+	}
+	bundlePath := filepath.Join(installDir, safeBundleName)
+	if err := s.Registry.DownloadAsset(ctx, bundleAsset.URL, bundlePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return errors.WithHint(errors.NetworkError, exitcode.Network,
+			fmt.Sprintf("downloading sigstore bundle: %v", err),
+			"Check network connection", nil)
+	}
+
+	expectedIdentity := &ExpectedIdentity{
+		SourceRepositoryURI: BuildGitHubRepoURL(owner, repo),
+		SourceRepositoryRef: BuildGitHubRefTag(locked.Version),
+	}
+	sigResult, err := VerifySigstoreBundle(bundlePath, tmpPath, expectedIdentity)
+	_ = os.Remove(bundlePath)
+	if err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   kind,
+			Name:        name,
+			Description: "sigstore verification failed for component install",
+		})
+		_ = os.Remove(tmpPath)
+		return errors.WithHint(errors.SignatureInvalid, exitcode.SignatureMismatch,
+			fmt.Sprintf("sigstore verification failed: %v", err),
+			"Binary signature doesn't match expected signer", nil)
+	}
+
+	if locked.Signer != nil {
+		if err := MatchSigner(sigResult, locked.Signer); err != nil {
+			securityaudit.Emit(securityaudit.Event{
+				Type:        securityaudit.EventVerificationFail,
+				Component:   kind,
+				Name:        name,
+				Description: "signer identity verification failed for component install",
+			})
+			_ = os.Remove(tmpPath)
+			return errors.WithHint(errors.SignatureInvalid, exitcode.SignatureMismatch,
+				fmt.Sprintf("signer mismatch: %v", err),
+				"Release was signed by different identity than lockfile recorded", nil)
+		}
+	}
+
+	if err := VerifyDigest(tmpPath, expectedDigest); err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   kind,
+			Name:        name,
+			Description: "component digest verification failed after sigstore verification",
+		})
+		_ = os.Remove(tmpPath)
+		return errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
+			fmt.Sprintf("%s %q digest mismatch (expected %s)", kind, name, expectedDigest),
+			"Downloaded binary doesn't match lockfile", nil)
+	}
+
+	ClearInsecureMarker(installDir)
+	return nil
 }
 
 // syncCollector syncs a single collector.
@@ -600,11 +677,17 @@ func (s *Syncer) VerifyExternalCollector(name string, cfg config.CollectorConfig
 	locked, ok := lf.GetCollector(name)
 	if !ok {
 		// External not in lockfile - that's OK unless frozen
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external collector %q not found in lockfile", name),
 				"Run 'epack collector lock' to add external collectors", nil)
 		}
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventUnpinnedExecution,
+			Component:   string(componenttypes.KindCollector),
+			Name:        name,
+			Description: "external collector not pinned in lockfile",
+		})
 		return &SyncResult{
 			Name:     name,
 			Kind:     "collector",
@@ -616,12 +699,18 @@ func (s *Syncer) VerifyExternalCollector(name string, cfg config.CollectorConfig
 	platformEntry, ok := locked.Platforms[platform]
 	if !ok || platformEntry.Digest == "" {
 		// Platform not locked - in frozen mode this is an error
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return nil, errors.WithHint(errors.BinaryNotFound, exitcode.MissingBinary,
 				fmt.Sprintf("external collector %q missing platform %s in lockfile", name, platform),
 				fmt.Sprintf("Run 'epack collector lock --platform %s' to add this platform", platform), nil)
 		}
 		// Non-frozen: allow unverified external
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventUnpinnedExecution,
+			Component:   string(componenttypes.KindCollector),
+			Name:        name,
+			Description: "external collector missing platform digest in lockfile",
+		})
 		return &SyncResult{
 			Name:     name,
 			Kind:     "collector",
@@ -630,21 +719,35 @@ func (s *Syncer) VerifyExternalCollector(name string, cfg config.CollectorConfig
 		}, nil
 	}
 
-	if !opts.InsecureSkipVerify {
+	if !opts.Unsafe.SkipVerify {
 		if err := VerifyDigest(cfg.Binary, platformEntry.Digest); err != nil {
+			securityaudit.Emit(securityaudit.Event{
+				Type:        securityaudit.EventVerificationFail,
+				Component:   string(componenttypes.KindCollector),
+				Name:        name,
+				Description: "external collector digest verification failed",
+			})
 			return nil, errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
 				fmt.Sprintf("digest mismatch for external collector %q (expected %s)", name, platformEntry.Digest),
 				"External binary has changed. Run 'epack collector lock' to update", nil)
 		}
 	}
+	if opts.Unsafe.SkipVerify {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   string(componenttypes.KindCollector),
+			Name:        name,
+			Description: "external collector execution allowed with insecure skip-verify override",
+		})
+	}
 
 	// SECURITY: Only set Verified=true when we actually verified.
-	// If InsecureSkipVerify was set, we didn't verify so Verified must be false.
+	// If SkipVerify was set, we didn't verify so Verified must be false.
 	return &SyncResult{
 		Name:     name,
 		Kind:     "collector",
 		Platform: platform,
-		Verified: !opts.InsecureSkipVerify,
+		Verified: !opts.Unsafe.SkipVerify,
 		Skipped:  true,
 	}, nil
 }
@@ -667,11 +770,17 @@ func (s *Syncer) verifyExternalTool(name string, cfg config.ToolConfig, lf *lock
 	locked, ok := lf.GetTool(name)
 	if !ok {
 		// Not in lockfile - skip unless frozen
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external tool %q not in lockfile", name),
 				"Run 'epack lock' to pin external tools", nil)
 		}
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventUnpinnedExecution,
+			Component:   string(componenttypes.KindTool),
+			Name:        name,
+			Description: "external tool not pinned in lockfile",
+		})
 		return &SyncResult{
 			Name:    name,
 			Kind:    "tool",
@@ -681,11 +790,17 @@ func (s *Syncer) verifyExternalTool(name string, cfg config.ToolConfig, lf *lock
 
 	platformEntry, ok := locked.Platforms[platform]
 	if !ok {
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external tool %q has no entry for platform %s", name, platform),
 				fmt.Sprintf("Run 'epack lock --platform %s'", platform), nil)
 		}
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventUnpinnedExecution,
+			Component:   string(componenttypes.KindTool),
+			Name:        name,
+			Description: "external tool missing platform digest in lockfile",
+		})
 		return &SyncResult{
 			Name:    name,
 			Kind:    "tool",
@@ -695,6 +810,12 @@ func (s *Syncer) verifyExternalTool(name string, cfg config.ToolConfig, lf *lock
 
 	// Verify digest
 	if err := VerifyDigest(cfg.Binary, platformEntry.Digest); err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   string(componenttypes.KindTool),
+			Name:        name,
+			Description: "external tool digest verification failed",
+		})
 		return nil, errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
 			fmt.Sprintf("external tool %q digest mismatch (expected %s)", name, platformEntry.Digest),
 			"External binary was modified. Run 'epack lock' to update", nil)
@@ -733,11 +854,17 @@ func (s *Syncer) verifyExternalRemote(name string, cfg config.RemoteConfig, lf *
 	locked, ok := lf.GetRemote(name)
 	if !ok {
 		// Not in lockfile - skip unless frozen
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external remote %q not in lockfile", name),
 				"Run 'epack lock' to pin external remotes", nil)
 		}
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventUnpinnedExecution,
+			Component:   string(componenttypes.KindRemote),
+			Name:        name,
+			Description: "external remote not pinned in lockfile",
+		})
 		return &SyncResult{
 			Name:    name,
 			Kind:    "remote",
@@ -747,11 +874,17 @@ func (s *Syncer) verifyExternalRemote(name string, cfg config.RemoteConfig, lf *
 
 	platformEntry, ok := locked.Platforms[platform]
 	if !ok {
-		if opts.Frozen {
+		if opts.Secure.Frozen {
 			return nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("external remote %q has no entry for platform %s", name, platform),
 				fmt.Sprintf("Run 'epack lock --platform %s'", platform), nil)
 		}
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventUnpinnedExecution,
+			Component:   string(componenttypes.KindRemote),
+			Name:        name,
+			Description: "external remote missing platform digest in lockfile",
+		})
 		return &SyncResult{
 			Name:    name,
 			Kind:    "remote",
@@ -761,6 +894,12 @@ func (s *Syncer) verifyExternalRemote(name string, cfg config.RemoteConfig, lf *
 
 	// Verify digest
 	if err := VerifyDigest(cfg.Binary, platformEntry.Digest); err != nil {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventVerificationFail,
+			Component:   string(componenttypes.KindRemote),
+			Name:        name,
+			Description: "external remote digest verification failed",
+		})
 		return nil, errors.WithHint(errors.DigestMismatch, exitcode.DigestMismatch,
 			fmt.Sprintf("external remote %q digest mismatch (expected %s)", name, platformEntry.Digest),
 			"External binary was modified. Run 'epack lock' to update", nil)

@@ -19,11 +19,9 @@ import (
 //
 // Allowed packages (all use execsafe.BuildRestrictedEnvSafe correctly):
 //   - internal/execsafe - The implementation itself
-//   - internal/collector/exec - Collector execution with TOCTOU verification
-//   - internal/dispatch - Tool dispatch with TOCTOU verification
+//   - internal/procexec - Shared process wrapper implementation
 //   - internal/tool - Tool probing (capabilities check)
 //   - internal/toolcap - Tool capabilities probing
-//   - internal/remote - Remote adapter execution
 //   - cmd/epack/utilitycmd - Utility dispatch with TOCTOU verification
 //   - cmd/epack/componentcmd - Component scaffolding (lower risk, dev tool)
 //   - internal/componentconf - Conformance test runner (build tag: conformance)
@@ -38,18 +36,12 @@ func TestExecImportGuard_RepoWide(t *testing.T) {
 				// The execsafe implementation itself
 				"internal/execsafe",
 
-				// Collector execution - uses VerifiedBinaryFD + BuildRestrictedEnvSafe
-				"internal/collector/exec",
-
-				// Tool dispatch - uses VerifiedBinaryFD + BuildRestrictedEnvSafe
-				"internal/dispatch",
+				// Shared process wrapper implementation.
+				"internal/procexec",
 
 				// Tool probing - uses BuildRestrictedEnvSafe for capabilities
 				"internal/tool",
 				"internal/toolcap",
-
-				// Remote adapter execution - uses VerifiedBinaryFD + BuildRestrictedEnvSafe
-				"internal/remote",
 
 				// Utility dispatch - uses VerifiedBinaryFD + BuildRestrictedEnvSafe
 				"cmd/epack/utilitycmd",

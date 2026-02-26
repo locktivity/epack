@@ -151,10 +151,10 @@ func TestDiffArtifactContent_JSON(t *testing.T) {
 
 	// Parse JSON
 	var json1, json2 map[string]interface{}
-	if err := json.Unmarshal(data1, &json1); err != nil {
+	if err := json.Unmarshal(data1.Bytes(), &json1); err != nil {
 		t.Fatalf("Unmarshal data1 failed: %v", err)
 	}
-	if err := json.Unmarshal(data2, &json2); err != nil {
+	if err := json.Unmarshal(data2.Bytes(), &json2); err != nil {
 		t.Fatalf("Unmarshal data2 failed: %v", err)
 	}
 
@@ -261,7 +261,7 @@ func TestDiffArtifactContent_Identical(t *testing.T) {
 	data1, _ := p1.ReadArtifact("artifacts/data.json")
 	data2, _ := p2.ReadArtifact("artifacts/data.json")
 
-	if !bytes.Equal(data1, data2) {
+	if !bytes.Equal(data1.Bytes(), data2.Bytes()) {
 		t.Error("contents should be equal")
 	}
 }

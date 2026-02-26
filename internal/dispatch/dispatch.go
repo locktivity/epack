@@ -17,6 +17,8 @@ import (
 	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/platformpath"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/internal/toolprotocol"
 	"github.com/locktivity/epack/pack"
 )
@@ -62,6 +64,16 @@ func Tool(ctx context.Context, out Output, toolName string, args []string) error
 // - TOCTOU-safe execution (copy-while-hash)
 // - Restricted environment
 func ToolWithFlags(ctx context.Context, out Output, toolName string, toolArgs []string, flags WrapperFlags) error {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        false,
+		AllowUnpinned: flags.InsecureAllowUnpinned,
+	}).Enforce(); err != nil {
+		return err
+	}
+	if err := securitypolicy.EnforceStrictProduction("dispatch", flags.InsecureAllowUnpinned); err != nil {
+		return err
+	}
+
 	// Validate tool name using config package validation
 	if err := config.ValidateToolName(toolName); err != nil {
 		return fmt.Errorf("invalid tool name: %w", err)
@@ -93,141 +105,35 @@ func ToolWithFlags(ctx context.Context, out Output, toolName string, toolArgs []
 // dispatchVerifiedTool executes a tool with TOCTOU-safe digest verification
 // and full Tool Protocol v1 support.
 func dispatchVerifiedTool(ctx context.Context, out Output, toolName string, toolArgs []string, workDir string, toolCfg config.ToolConfig, lf *lockfile.LockFile, flags WrapperFlags) error {
-	platform := platform.Key(runtime.GOOS, runtime.GOARCH)
+	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
 
-	// Determine base directory for run output FIRST so we can create run records for failures
-	// We need to know the pack path before we can determine the base dir
 	packPath := flags.PackPath
-	var absPackPath string
-	var err error
-	if packPath != "" {
-		absPackPath, err = filepath.Abs(packPath)
-		if err != nil {
-			// Can't even resolve pack path - use packless dir for error record
-			return failWrapper(out, toolName, flags, "", "",
-				componenttypes.ExitPackVerifyFailed, componenttypes.ErrCodePackVerifyFailed,
-				fmt.Sprintf("invalid pack path: %v", err))
-		}
-	}
-
-	baseDir, withPack, err := determineBaseDir(flags, absPackPath)
+	absPackPath, runID, runDir, err := prepareDispatchRunContext(out, toolName, flags, packPath)
 	if err != nil {
-		return failWrapper(out, toolName, flags, "", "",
-			componenttypes.ExitRunDirFailed, componenttypes.ErrCodeRunDirFailed,
-			fmt.Sprintf("determining packless run directory: %v", err))
+		return err
 	}
 
-	// Create run directory FIRST so all failures produce run records
-	runID, runDir, err := toolprotocol.CreateRunDir(baseDir, toolName, withPack)
+	locked, platformEntry, err := resolveToolLockfileEntry(out, lf, toolName, platformKey, runID, runDir, absPackPath, flags)
 	if err != nil {
-		// Can't use failWrapper here since we need to create the run dir first
-		// This is a true fatal error - output to stderr and return exit code
-		_, _ = fmt.Fprintf(out.Stderr(), "Error: creating run directory: %v\n", err)
-		return &errors.Error{Code: errors.InvalidInput, Exit: componenttypes.ExitRunDirFailed, Message: err.Error()}
+		return err
 	}
 
-	// Get locked tool info from lockfile
-	locked, ok := lf.GetTool(toolName)
-	if !ok {
-		return writePreExecFailure(out, toolName, runID, runDir, absPackPath, "",
-			componenttypes.ExitLockfileMissing, componenttypes.ErrCodeNotInLockfile,
-			fmt.Sprintf("tool %q not found in lockfile", toolName))
-	}
-
-	platformEntry, ok := locked.Platforms[platform]
-	if !ok {
-		return writePreExecFailure(out, toolName, runID, runDir, absPackPath, locked.Version,
-			componenttypes.ExitLockfileMissing, componenttypes.ErrCodePlatformNotInLockfile,
-			fmt.Sprintf("tool %q missing platform %s in lockfile", toolName, platform))
-	}
-
-	// Check for missing digest - require unless --insecure-allow-unpinned
-	if platformEntry.Digest == "" && !flags.InsecureAllowUnpinned {
-		return writePreExecFailure(out, toolName, runID, runDir, absPackPath, locked.Version,
-			componenttypes.ExitLockfileMissing, componenttypes.ErrCodeDigestMissing,
-			fmt.Sprintf("tool %q missing digest in lockfile\n\nRun 'epack lock' to compute digest, or use --insecure-allow-unpinned", toolName))
-	}
-
-	// Resolve binary path
-	binaryPath, err := sync.ResolveToolBinaryPath(filepath.Join(workDir, ".epack"), toolName, toolCfg, lf)
+	execPath, cleanup, err := resolveToolExecPath(out, workDir, lf, toolName, toolCfg, locked.Version, platformEntry, runID, runDir, absPackPath, flags)
 	if err != nil {
-		return writePreExecFailure(out, toolName, runID, runDir, absPackPath, locked.Version,
-			componenttypes.ExitComponentNotFound, componenttypes.ErrCodeComponentNotFound,
-			fmt.Sprintf("resolving tool binary: %v", err))
+		return err
+	}
+	if cleanup != nil {
+		defer cleanup()
 	}
 
-	// Determine execution path based on verification mode
-	var execPath string
-	var cleanup func()
-
-	if platformEntry.Digest != "" && !flags.InsecureAllowUnpinned {
-		// TOCTOU-safe execution: verify digest and get safe exec path
-		execPath, cleanup, err = execsafe.VerifiedBinaryFD(binaryPath, platformEntry.Digest)
-		if err != nil {
-			return writePreExecFailure(out, toolName, runID, runDir, absPackPath, locked.Version,
-				componenttypes.ExitVerifyFailed, componenttypes.ErrCodeVerifyFailed,
-				fmt.Sprintf("verification failed: %v (binary may have been modified, run 'epack sync' to reinstall)", err))
-		}
-		if cleanup != nil {
-			defer cleanup()
-		}
-	} else {
-		// Unverified execution (--insecure-allow-unpinned mode)
-		execPath = binaryPath
-		if !flags.QuietMode {
-			componenttypes.WarnUnpinnedExecution(out.Stderr(), componenttypes.KindTool, toolName, binaryPath, false)
-		}
+	caps, requiresPack, toolVersion := resolveToolCapabilities(execPath, locked.Version)
+	if err := validateToolInputs(out, toolName, runID, runDir, packPath, absPackPath, toolVersion, requiresPack, caps); err != nil {
+		return err
 	}
 
-	// Query capabilities to check requires_pack
-	// Fail-safe: if capabilities query fails, default to requires_pack=true
-	caps, capsErr := queryCapabilitiesWithTimeout(execPath)
-	requiresPack := true // Default to true for safety
-	if capsErr == nil {
-		requiresPack = caps.RequiresPack
-	}
-
-	// Get version from capabilities if available (for result.json), fallback to lockfile
-	toolVersion := locked.Version
-	if caps != nil && caps.Version != "" {
-		toolVersion = caps.Version
-	}
-
-	// Check runtime dependencies before execution
-	// Only check if we have a pack (packless runs skip dependency checking)
-	if absPackPath != "" && caps != nil {
-		packSidecar := packpath.SidecarDir(absPackPath)
-		if errs := toolprotocol.CheckDependencies(caps, packSidecar); len(errs) > 0 {
-			return writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
-				componenttypes.ExitDependencyMissing, componenttypes.ErrCodeDependencyMissing,
-				toolprotocol.FormatDependencyErrors(errs))
-		}
-	}
-
-	// Verify pack exists if provided
-	if packPath != "" {
-		if _, err := os.Stat(absPackPath); os.IsNotExist(err) {
-			return writePreExecFailure(out, toolName, runID, runDir, "", toolVersion,
-				componenttypes.ExitPackVerifyFailed, componenttypes.ErrCodePackVerifyFailed,
-				fmt.Sprintf("pack not found: %s", packPath))
-		}
-	}
-
-	// Verify pack integrity and get digest if we have a pack
-	var packDigest string
-	if packPath != "" {
-		packDigest, err = verifyAndGetPackDigest(absPackPath)
-		if err != nil {
-			return writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
-				componenttypes.ExitPackVerifyFailed, componenttypes.ErrCodePackVerifyFailed,
-				fmt.Sprintf("pack verification failed: %v", err))
-		}
-	}
-
-	// Enforce requires_pack - write result.json with failure before returning
-	if requiresPack && packPath == "" {
-		return writePreExecFailure(out, toolName, runID, runDir, "", toolVersion,
-			componenttypes.ExitPackRequired, componenttypes.ErrCodePackRequired, "pack required but not provided")
+	packDigest, err := verifyPackAndGetDigest(out, toolName, runID, runDir, packPath, absPackPath, toolVersion)
+	if err != nil {
+		return err
 	}
 
 	// Record start time BEFORE execution
@@ -271,6 +177,188 @@ func dispatchVerifiedTool(ctx context.Context, out Output, toolName string, tool
 		return &errors.Error{Code: errors.InvalidInput, Exit: wrapperExitCode, Message: fmt.Sprintf("tool exited with code %d", wrapperExitCode)}
 	}
 	return nil
+}
+
+func prepareDispatchRunContext(out Output, toolName string, flags WrapperFlags, packPath string) (absPackPath, runID, runDir string, err error) {
+	if packPath != "" {
+		absPackPath, err = filepath.Abs(packPath)
+		if err != nil {
+			return "", "", "", failWrapper(out, toolName, flags, "", "",
+				componenttypes.ExitPackVerifyFailed, componenttypes.ErrCodePackVerifyFailed,
+				fmt.Sprintf("invalid pack path: %v", err))
+		}
+	}
+
+	baseDir, withPack, err := determineBaseDir(flags, absPackPath)
+	if err != nil {
+		return "", "", "", failWrapper(out, toolName, flags, "", "",
+			componenttypes.ExitRunDirFailed, componenttypes.ErrCodeRunDirFailed,
+			fmt.Sprintf("determining packless run directory: %v", err))
+	}
+
+	runID, runDir, err = toolprotocol.CreateRunDir(baseDir, toolName, withPack)
+	if err != nil {
+		_, _ = fmt.Fprintf(out.Stderr(), "Error: creating run directory: %v\n", err)
+		return "", "", "", &errors.Error{Code: errors.InvalidInput, Exit: componenttypes.ExitRunDirFailed, Message: err.Error()}
+	}
+
+	return absPackPath, runID, runDir, nil
+}
+
+func resolveToolLockfileEntry(
+	out Output,
+	lf *lockfile.LockFile,
+	toolName, platformKey, runID, runDir, absPackPath string,
+	flags WrapperFlags,
+) (lockfile.LockedTool, componenttypes.LockedPlatform, error) {
+	locked, ok := lf.GetTool(toolName)
+	if !ok {
+		return lockfile.LockedTool{}, componenttypes.LockedPlatform{}, writePreExecFailure(out, toolName, runID, runDir, absPackPath, "",
+			componenttypes.ExitLockfileMissing, componenttypes.ErrCodeNotInLockfile,
+			fmt.Sprintf("tool %q not found in lockfile", toolName))
+	}
+
+	platformEntry, ok := locked.Platforms[platformKey]
+	if !ok {
+		return lockfile.LockedTool{}, componenttypes.LockedPlatform{}, writePreExecFailure(out, toolName, runID, runDir, absPackPath, locked.Version,
+			componenttypes.ExitLockfileMissing, componenttypes.ErrCodePlatformNotInLockfile,
+			fmt.Sprintf("tool %q missing platform %s in lockfile", toolName, platformKey))
+	}
+
+	if platformEntry.Digest == "" && !flags.InsecureAllowUnpinned {
+		return lockfile.LockedTool{}, componenttypes.LockedPlatform{}, writePreExecFailure(out, toolName, runID, runDir, absPackPath, locked.Version,
+			componenttypes.ExitLockfileMissing, componenttypes.ErrCodeDigestMissing,
+			fmt.Sprintf("tool %q missing digest in lockfile\n\nRun 'epack lock' to compute digest, or use --insecure-allow-unpinned", toolName))
+	}
+	if platformEntry.Digest == "" && flags.InsecureAllowUnpinned {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   string(componenttypes.KindTool),
+			Name:        toolName,
+			Description: "allowing tool execution without lockfile digest",
+			Attrs: map[string]string{
+				"reason": "insecure_allow_unpinned",
+			},
+		})
+	}
+
+	return locked, platformEntry, nil
+}
+
+func resolveToolExecPath(
+	out Output,
+	workDir string,
+	lf *lockfile.LockFile,
+	toolName string,
+	toolCfg config.ToolConfig,
+	toolVersion string,
+	platformEntry componenttypes.LockedPlatform,
+	runID, runDir, absPackPath string,
+	flags WrapperFlags,
+) (string, func(), error) {
+	binaryPath, err := sync.ResolveToolBinaryPath(filepath.Join(workDir, ".epack"), toolName, toolCfg, lf)
+	if err != nil {
+		return "", nil, writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
+			componenttypes.ExitComponentNotFound, componenttypes.ErrCodeComponentNotFound,
+			fmt.Sprintf("resolving tool binary: %v", err))
+	}
+
+	if platformEntry.Digest != "" && !flags.InsecureAllowUnpinned {
+		execPath, cleanup, err := execsafe.VerifiedBinaryFD(binaryPath, platformEntry.Digest)
+		if err != nil {
+			securityaudit.Emit(securityaudit.Event{
+				Type:        securityaudit.EventVerificationFail,
+				Component:   string(componenttypes.KindTool),
+				Name:        toolName,
+				Description: "tool digest verification failed",
+				Attrs: map[string]string{
+					"path": binaryPath,
+				},
+			})
+			return "", nil, writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
+				componenttypes.ExitVerifyFailed, componenttypes.ErrCodeVerifyFailed,
+				fmt.Sprintf("verification failed: %v (binary may have been modified, run 'epack sync' to reinstall)", err))
+		}
+		return execPath, cleanup, nil
+	}
+
+	securityaudit.Emit(securityaudit.Event{
+		Type:        securityaudit.EventUnpinnedExecution,
+		Component:   string(componenttypes.KindTool),
+		Name:        toolName,
+		Description: "executing tool without digest verification",
+		Attrs: map[string]string{
+			"path": binaryPath,
+		},
+	})
+
+	if !flags.QuietMode {
+		componenttypes.WarnUnpinnedExecution(out.Stderr(), componenttypes.KindTool, toolName, binaryPath, false)
+	}
+	return binaryPath, nil, nil
+}
+
+func resolveToolCapabilities(execPath, fallbackVersion string) (caps *toolprotocol.Capabilities, requiresPack bool, toolVersion string) {
+	caps, capsErr := queryCapabilitiesWithTimeout(execPath)
+	requiresPack = true // Fail-safe default.
+	if capsErr == nil {
+		requiresPack = caps.RequiresPack
+	}
+
+	toolVersion = fallbackVersion
+	if caps != nil && caps.Version != "" {
+		toolVersion = caps.Version
+	}
+	return caps, requiresPack, toolVersion
+}
+
+func validateToolInputs(
+	out Output,
+	toolName, runID, runDir, packPath, absPackPath, toolVersion string,
+	requiresPack bool,
+	caps *toolprotocol.Capabilities,
+) error {
+	if absPackPath != "" && caps != nil {
+		packSidecar := packpath.SidecarDir(absPackPath)
+		if errs := toolprotocol.CheckDependencies(caps, packSidecar); len(errs) > 0 {
+			return writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
+				componenttypes.ExitDependencyMissing, componenttypes.ErrCodeDependencyMissing,
+				toolprotocol.FormatDependencyErrors(errs))
+		}
+	}
+
+	if packPath != "" {
+		if _, err := os.Stat(absPackPath); os.IsNotExist(err) {
+			return writePreExecFailure(out, toolName, runID, runDir, "", toolVersion,
+				componenttypes.ExitPackVerifyFailed, componenttypes.ErrCodePackVerifyFailed,
+				fmt.Sprintf("pack not found: %s", packPath))
+		}
+	}
+
+	if requiresPack && packPath == "" {
+		return writePreExecFailure(out, toolName, runID, runDir, "", toolVersion,
+			componenttypes.ExitPackRequired, componenttypes.ErrCodePackRequired, "pack required but not provided")
+	}
+
+	return nil
+}
+
+func verifyPackAndGetDigest(
+	out Output,
+	toolName, runID, runDir, packPath, absPackPath, toolVersion string,
+) (string, error) {
+	if packPath == "" {
+		return "", nil
+	}
+
+	packDigest, err := verifyAndGetPackDigest(absPackPath)
+	if err != nil {
+		return "", writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
+			componenttypes.ExitPackVerifyFailed, componenttypes.ErrCodePackVerifyFailed,
+			fmt.Sprintf("pack verification failed: %v", err))
+	}
+
+	return packDigest, nil
 }
 
 // verifyAndGetPackDigest opens a pack, verifies its integrity, and returns the digest.

@@ -124,112 +124,89 @@ func exceedsCompressionRatioLimit(uncompressedBytes, compressedBytes, maxRatio u
 // - Non-NFC Unicode (path must equal its NFC normalization)
 // - Paths exceeding length limits
 func ValidatePath(name string) error {
+	if err := validatePathGlobalRules(name); err != nil {
+		return err
+	}
+	return validatePathSegments(name)
+}
+
+func validatePathGlobalRules(name string) error {
 	if name == "" {
 		return errors.E(errors.InvalidPath, "empty path", nil)
 	}
-
-	// Reject control characters (C0: 0x00-0x1F, DEL: 0x7F, C1: 0x80-0x9F)
-	// Use unicode.IsControl to catch all Unicode control characters
 	for i, r := range name {
 		if unicode.IsControl(r) {
 			return errors.E(errors.InvalidPath,
 				fmt.Sprintf("path contains control character at position %d: %q", i, name), nil)
 		}
 	}
-
-	// Reject backslashes - spec requires forward slashes only
 	if strings.Contains(name, "\\") {
-		return errors.E(errors.InvalidPath,
-			fmt.Sprintf("path contains backslash (must use forward slashes): %q", name), nil)
+		return errors.E(errors.InvalidPath, fmt.Sprintf("path contains backslash (must use forward slashes): %q", name), nil)
 	}
-
-	// Reject trailing slashes (files must not end with /)
 	if strings.HasSuffix(name, "/") {
-		return errors.E(errors.InvalidPath,
-			fmt.Sprintf("path must not end with slash: %q", name), nil)
+		return errors.E(errors.InvalidPath, fmt.Sprintf("path must not end with slash: %q", name), nil)
 	}
-
-	// Reject absolute paths (leading /)
 	if strings.HasPrefix(name, "/") {
-		return errors.E(errors.InvalidPath,
-			fmt.Sprintf("absolute path not allowed: %q", name), nil)
+		return errors.E(errors.InvalidPath, fmt.Sprintf("absolute path not allowed: %q", name), nil)
 	}
-
-	// Reject UNC paths (//server/share)
 	if strings.HasPrefix(name, "//") {
-		return errors.E(errors.InvalidPath,
-			fmt.Sprintf("UNC path not allowed: %q", name), nil)
+		return errors.E(errors.InvalidPath, fmt.Sprintf("UNC path not allowed: %q", name), nil)
 	}
-
-	// Reject Windows absolute paths (drive letter followed by colon)
-	// e.g., "C:/Windows/System32" or "C:file.txt"
-	if len(name) >= 2 && name[1] == ':' {
-		c := name[0]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-			return errors.E(errors.InvalidPath,
-				fmt.Sprintf("Windows absolute path not allowed: %q", name), nil)
-		}
+	if isWindowsAbsolutePath(name) {
+		return errors.E(errors.InvalidPath, fmt.Sprintf("Windows absolute path not allowed: %q", name), nil)
 	}
-
-	// Reject colons anywhere in path (reserved on Windows)
 	if strings.Contains(name, ":") {
-		return errors.E(errors.InvalidPath,
-			fmt.Sprintf("path contains colon (reserved on Windows): %q", name), nil)
+		return errors.E(errors.InvalidPath, fmt.Sprintf("path contains colon (reserved on Windows): %q", name), nil)
 	}
-
-	// Check total path length
 	if len(name) > MaxPathLength {
 		return errors.E(errors.InvalidPath,
 			fmt.Sprintf("path exceeds maximum length (%d > %d): %q", len(name), MaxPathLength, name), nil)
 	}
-
-	// Check NFC normalization - path must be in NFC form
 	if !norm.NFC.IsNormalString(name) {
-		return errors.E(errors.InvalidPath,
-			fmt.Sprintf("path is not in NFC normalized form: %q", name), nil)
+		return errors.E(errors.InvalidPath, fmt.Sprintf("path is not in NFC normalized form: %q", name), nil)
 	}
+	return nil
+}
 
-	// Check each segment
+func isWindowsAbsolutePath(name string) bool {
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	c := name[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func validatePathSegments(name string) error {
 	segments := strings.Split(name, "/")
 	for _, seg := range segments {
-		// Reject empty segments (consecutive slashes)
-		if seg == "" {
-			return errors.E(errors.InvalidPath,
-				fmt.Sprintf("path contains empty segment (consecutive slashes): %q", name), nil)
-		}
-
-		// SECURITY: Reject segments that are "." or ".." or start with "..".
-		// Exact "." and ".." are standard traversal attacks.
-		// Segments starting with ".." (like "..hidden" or "..0000") could be
-		// confused with traversal on some systems or through path manipulation.
-		if seg == "." || seg == ".." || strings.HasPrefix(seg, "..") {
-			return errors.E(errors.InvalidPath,
-				fmt.Sprintf("path contains traversal segment: %q", name), nil)
-		}
-
-		if len(seg) > MaxSegmentLength {
-			return errors.E(errors.InvalidPath,
-				fmt.Sprintf("path segment exceeds maximum length (%d > %d): %q", len(seg), MaxSegmentLength, seg), nil)
-		}
-
-		// SECURITY: Check Windows reserved names (case-insensitive)
-		// On Windows, reserved names are reserved WITH OR WITHOUT extensions.
-		// "con.txt", "aux.log", "prn.whatever" all resolve to device files.
-		if validate.IsWindowsReserved(seg) {
-			return errors.E(errors.InvalidPath,
-				fmt.Sprintf("path contains Windows reserved name: %q", seg), nil)
-		}
-
-		// SECURITY: Reject trailing dots and spaces in segments.
-		// Windows strips these, causing path collisions:
-		// "report." -> "report", "file " -> "file"
-		// This creates integrity ambiguity where distinct zip paths map to same filesystem path.
-		if strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " ") {
-			return errors.E(errors.InvalidPath,
-				fmt.Sprintf("path segment has trailing dot or space (causes Windows collision): %q", seg), nil)
+		if err := validatePathSegment(name, seg); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
+func validatePathSegment(fullPath, seg string) error {
+	if seg == "" {
+		return errors.E(errors.InvalidPath,
+			fmt.Sprintf("path contains empty segment (consecutive slashes): %q", fullPath), nil)
+	}
+	if seg == "." || seg == ".." || strings.HasPrefix(seg, "..") {
+		return errors.E(errors.InvalidPath,
+			fmt.Sprintf("path contains traversal segment: %q", fullPath), nil)
+	}
+	if len(seg) > MaxSegmentLength {
+		return errors.E(errors.InvalidPath,
+			fmt.Sprintf("path segment exceeds maximum length (%d > %d): %q", len(seg), MaxSegmentLength, seg), nil)
+	}
+	if validate.IsWindowsReserved(seg) {
+		return errors.E(errors.InvalidPath,
+			fmt.Sprintf("path contains Windows reserved name: %q", seg), nil)
+	}
+	if strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " ") {
+		return errors.E(errors.InvalidPath,
+			fmt.Sprintf("path segment has trailing dot or space (causes Windows collision): %q", seg), nil)
+	}
 	return nil
 }
 

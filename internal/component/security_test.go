@@ -839,7 +839,7 @@ func TestInsecureSkipVerifyMustReturnUnverified(t *testing.T) {
 	cfg := config.CollectorConfig{Binary: binaryPath}
 
 	// Test: verifyExternal with InsecureSkipVerify=true
-	result, err := syncer.VerifyExternalCollector("test", cfg, lf, platform, sync.SyncOpts{InsecureSkipVerify: true})
+	result, err := syncer.VerifyExternalCollector("test", cfg, lf, platform, sync.SyncOpts{Unsafe: sync.SyncUnsafeOverrides{SkipVerify: true}})
 	if err != nil {
 		t.Fatalf("verifyExternal error: %v", err)
 	}
@@ -851,7 +851,7 @@ func TestInsecureSkipVerifyMustReturnUnverified(t *testing.T) {
 	}
 
 	// Sanity check: without InsecureSkipVerify, it should be verified
-	result, err = syncer.VerifyExternalCollector("test", cfg, lf, platform, sync.SyncOpts{InsecureSkipVerify: false})
+	result, err = syncer.VerifyExternalCollector("test", cfg, lf, platform, sync.SyncOpts{Unsafe: sync.SyncUnsafeOverrides{SkipVerify: false}})
 	if err != nil {
 		t.Fatalf("verifyExternal error: %v", err)
 	}

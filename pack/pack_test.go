@@ -703,8 +703,8 @@ func TestPack_ReadFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	if string(content) != string(artifactContent) {
-		t.Errorf("ReadFile() = %q, want %q", string(content), string(artifactContent))
+	if string(content.UnsafeBytes()) != string(artifactContent) {
+		t.Errorf("ReadFile() = %q, want %q", string(content.UnsafeBytes()), string(artifactContent))
 	}
 
 	// Read non-existent artifact

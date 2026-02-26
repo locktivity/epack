@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/locktivity/epack/internal/cli/output"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/sign"
 	"github.com/spf13/cobra"
 )
@@ -78,6 +81,10 @@ Examples:
 }
 
 func runSign(cmd *cobra.Command, args []string) error {
+	if err := validateSignFlags(); err != nil {
+		return err
+	}
+
 	packPath := args[0]
 	out := outputWriter()
 	ctx := cmdContext(cmd)
@@ -87,8 +94,38 @@ func runSign(cmd *cobra.Command, args []string) error {
 		return exitError("pack not found: %s", packPath)
 	}
 
-	// Build options from flags
-	opts := sign.SignPackOptions{
+	opts := signOptionsFromFlags()
+
+	if err := opts.Validate(); err != nil {
+		return exitError("%v", err)
+	}
+
+	logSignMode(out, opts)
+
+	if signDryRun {
+		return printSignDryRun(out, packPath, opts)
+	}
+
+	confirmSignIfNeeded(out, packPath, opts)
+
+	signer, err := createSignerWithSpinner(ctx, out, opts)
+	if err != nil {
+		return err
+	}
+
+	// Sign the pack
+	signSpinner := out.StartSpinner("Signing pack...")
+	if err := sign.SignPackFile(ctx, packPath, signer); err != nil {
+		signSpinner.Fail("Signing failed")
+		return exitError("failed to sign pack: %v", err)
+	}
+	signSpinner.Success("Pack signed")
+
+	return printSignResult(out, packPath)
+}
+
+func signOptionsFromFlags() sign.SignPackOptions {
+	return sign.SignPackOptions{
 		KeyPath:                      signKey,
 		OIDCToken:                    signOIDCToken,
 		Interactive:                  signOIDCToken == "" && os.Getenv("EPACK_OIDC_TOKEN") == "",
@@ -96,13 +133,9 @@ func runSign(cmd *cobra.Command, args []string) error {
 		TSAURLs:                      signTSAURLs,
 		InsecureAllowCustomEndpoints: signInsecureAllowCustomEndpoints,
 	}
+}
 
-	// Validate options
-	if err := opts.Validate(); err != nil {
-		return exitError("%v", err)
-	}
-
-	// Verbose logging
+func logSignMode(out *output.Writer, opts sign.SignPackOptions) {
 	if opts.KeyPath != "" {
 		out.Verbose("Using key-based signing from %s\n", opts.KeyPath)
 	} else if opts.OIDCToken != "" || os.Getenv("EPACK_OIDC_TOKEN") != "" {
@@ -110,36 +143,37 @@ func runSign(cmd *cobra.Command, args []string) error {
 	} else {
 		out.Verbose("Using browser-based OIDC authentication\n")
 	}
-
 	if opts.SkipTlog {
 		out.Verbose("Skipping transparency log (signature will not be publicly recorded)\n")
 		if len(opts.TSAURLs) > 0 {
 			out.Verbose("Using timestamp authority: %v\n", opts.TSAURLs)
 		}
 	}
+}
 
-	// Dry run - just show what would happen
-	if signDryRun {
-		out.Print("Would sign: %s\n", packPath)
-		if opts.KeyPath != "" {
-			out.Print("  Method: key-based (%s)\n", opts.KeyPath)
-		} else {
-			out.Print("  Method: keyless (OIDC)\n")
-		}
+func printSignDryRun(out *output.Writer, packPath string, opts sign.SignPackOptions) error {
+	out.Print("Would sign: %s\n", packPath)
+	if opts.KeyPath != "" {
+		out.Print("  Method: key-based (%s)\n", opts.KeyPath)
 		return nil
 	}
+	out.Print("  Method: keyless (OIDC)\n")
+	return nil
+}
 
-	// Confirm unless --yes
-	if !signYes && !out.IsQuiet() {
-		out.Print("Sign %s?\n", packPath)
-		if opts.KeyPath == "" && opts.OIDCToken == "" && os.Getenv("EPACK_OIDC_TOKEN") == "" {
-			out.Print("  This will open your browser for authentication.\n")
-		}
-		out.Print("\nPress Enter to continue or Ctrl+C to cancel...")
-		_, _ = fmt.Scanln()
+func confirmSignIfNeeded(out *output.Writer, packPath string, opts sign.SignPackOptions) {
+	if signYes || out.IsQuiet() {
+		return
 	}
+	out.Print("Sign %s?\n", packPath)
+	if opts.KeyPath == "" && opts.OIDCToken == "" && os.Getenv("EPACK_OIDC_TOKEN") == "" {
+		out.Print("  This will open your browser for authentication.\n")
+	}
+	out.Print("\nPress Enter to continue or Ctrl+C to cancel...")
+	_, _ = fmt.Scanln()
+}
 
-	// Create signer
+func createSignerWithSpinner(ctx context.Context, out *output.Writer, opts sign.SignPackOptions) (sign.Signer, error) {
 	var signerSpinner *output.Spinner
 	if opts.KeyPath != "" {
 		signerSpinner = out.StartSpinner("Preparing signer...")
@@ -152,28 +186,38 @@ func runSign(cmd *cobra.Command, args []string) error {
 	signer, err := sign.NewSignerFromOptions(ctx, opts)
 	if err != nil {
 		signerSpinner.Fail("Authentication failed")
-		return exitError("failed to create signer: %v", err)
+		return nil, exitError("failed to create signer: %v", err)
 	}
 	signerSpinner.Success("Authenticated")
+	return signer, nil
+}
 
-	// Sign the pack
-	signSpinner := out.StartSpinner("Signing pack...")
-	if err := sign.SignPackFile(ctx, packPath, signer); err != nil {
-		signSpinner.Fail("Signing failed")
-		return exitError("failed to sign pack: %v", err)
-	}
-	signSpinner.Success("Pack signed")
-
-	// Output result
+func printSignResult(out *output.Writer, packPath string) error {
 	if out.IsJSON() {
 		return out.JSON(map[string]interface{}{
 			"signed": true,
 			"path":   packPath,
 		})
 	}
-
 	out.Success("Signed %s", packPath)
 	out.Print("  Use 'epack verify %s' to verify the signature\n", packPath)
+	return nil
+}
 
+func validateSignFlags() error {
+	if err := securitypolicy.EnforceStrictProduction("sign_cli", signInsecureAllowCustomEndpoints); err != nil {
+		return err
+	}
+	if signInsecureAllowCustomEndpoints {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "sign",
+			Name:        "sign",
+			Description: "sign command running with insecure custom endpoint override",
+			Attrs: map[string]string{
+				"insecure_allow_custom_endpoints": "true",
+			},
+		})
+	}
 	return nil
 }

@@ -41,13 +41,17 @@ Adapters are discovered from multiple locations (in priority order):
 
 ### Platform-Specific Locations
 
-Managed adapters are installed to platform-specific directories:
+Source-based remotes are installed per project:
 
-- **macOS**: `~/Library/Application Support/epack/bin/`
-- **Linux**: `~/.local/share/epack/bin/` (XDG default)
-- **Windows**: `%LOCALAPPDATA%\epack\bin\`
+```
+.epack/remotes/{remote-name}/{version}/{os}-{arch}/epack-remote-{adapter}
+```
 
-If `XDG_DATA_HOME` is set on Unix-like systems, it takes precedence.
+Examples:
+- `.epack/remotes/locktivity/v1.2.3/linux-amd64/epack-remote-locktivity`
+- `.epack/remotes/s3/v0.9.0/darwin-arm64/epack-remote-s3`
+
+This differs from utilities, which are user-global under `~/.epack/bin/`.
 
 ## Configuration
 
@@ -500,11 +504,11 @@ Run sync statuses: `accepted`, `rejected`, `duplicate`
   "request_id": "req_abc123",
   "error": {
     "code": "auth_required",
-    "message": "Authentication required. Run: epack remote login locktivity",
+    "message": "Authentication required. Authenticate using the remote's supported flow (for example, epack push locktivity <pack.epack>).",
     "retryable": false,
     "action": {
       "type": "run_command",
-      "command": "epack remote login locktivity"
+      "command": "epack remote whoami locktivity"
     }
   }
 }
@@ -662,7 +666,8 @@ func main() {
 
 The following features are reserved but not yet implemented:
 
-- **Remote management CLI**: `epack remote login`, `epack remote whoami`, `epack remote list`, `epack remote info` (protocol types exist in `internal/remote/protocol.go`)
+- **Remote management CLI**: `epack remote login`, `epack remote info`
+  - Currently implemented: `epack remote list`, `epack remote whoami`
 - **List operations**: List releases on a remote
 - **Delete operations**: Remove releases from a remote
 - **Resume uploads/downloads**: Resume interrupted transfers

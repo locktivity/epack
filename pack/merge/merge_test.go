@@ -1116,8 +1116,8 @@ func TestMerge_ArtifactContentVerification(t *testing.T) {
 		t.Fatalf("ReadArtifact failed: %v", err)
 	}
 
-	if string(content) != string(originalContent) {
-		t.Errorf("Content = %q, want %q", string(content), string(originalContent))
+	if string(content.Bytes()) != string(originalContent) {
+		t.Errorf("Content = %q, want %q", string(content.Bytes()), string(originalContent))
 	}
 }
 

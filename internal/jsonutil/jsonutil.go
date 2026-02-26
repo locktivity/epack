@@ -19,27 +19,10 @@ const MaxSafeInt int64 = (1 << 53) - 1
 // Uses streaming because json.Unmarshal silently keeps only the last duplicate.
 func ValidateNoDuplicateKeys(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-
-	var keyStack []map[string]struct{} // seen keys per nested object
-	var expectKey []bool               // true = expecting key, false = expecting value
-	var pathStack []string             // current JSON path segments
-
-	buildPath := func() string {
-		if len(pathStack) == 0 {
-			return "$"
-		}
-		return "$." + strings.Join(pathStack, ".")
-	}
-
-	valueDone := func() {
-		if len(expectKey) > 0 {
-			expectKey[len(expectKey)-1] = true
-		}
-	}
+	state := duplicateKeyState{}
 
 	for {
 		token, err := decoder.Token()
-
 		if err == io.EOF {
 			return nil
 		}
@@ -48,49 +31,83 @@ func ValidateNoDuplicateKeys(data []byte) error {
 		}
 
 		if delimiter, ok := token.(json.Delim); ok {
-			switch delimiter {
-			case '{':
-				keyStack = append(keyStack, make(map[string]struct{}))
-				expectKey = append(expectKey, true)
-			case '}':
-				if len(keyStack) == 0 {
-					return errors.E(errors.InvalidJSON, "unexpected closing brace", nil)
-				}
-				keyStack = keyStack[:len(keyStack)-1]
-				expectKey = expectKey[:len(expectKey)-1]
-				if len(pathStack) > 0 {
-					pathStack = pathStack[:len(pathStack)-1]
-				}
-				valueDone()
-			case '[':
-				// Arrays don't have keys, so we don't push anything onto the keyStack.
-			case ']':
-				if len(pathStack) > 0 {
-					pathStack = pathStack[:len(pathStack)-1]
-				}
-				valueDone()
+			if err := state.handleDelimiter(delimiter); err != nil {
+				return err
 			}
 			continue
 		}
 
-		if len(expectKey) > 0 && expectKey[len(expectKey)-1] {
-			key, ok := token.(string)
-			if !ok {
-				return errors.E(errors.InvalidJSON, fmt.Sprintf("expected string key at %s, got %T", buildPath(), token), nil)
+		if state.expectsKey() {
+			if err := state.handleKeyToken(token); err != nil {
+				return err
 			}
-
-			seen := keyStack[len(keyStack)-1]
-			if _, exists := seen[key]; exists {
-				return errors.E(errors.DuplicateKeys, fmt.Sprintf("duplicate key %q at %s", key, buildPath()), nil)
-			}
-			seen[key] = struct{}{}
-			pathStack = append(pathStack, key)
-			expectKey[len(expectKey)-1] = false
-			continue
+		} else {
+			state.valueDone()
 		}
-
-		valueDone()
 	}
+}
+
+type duplicateKeyState struct {
+	keyStack  []map[string]struct{}
+	expectKey []bool
+	pathStack []string
+}
+
+func (s *duplicateKeyState) buildPath() string {
+	if len(s.pathStack) == 0 {
+		return "$"
+	}
+	return "$." + strings.Join(s.pathStack, ".")
+}
+
+func (s *duplicateKeyState) valueDone() {
+	if len(s.expectKey) > 0 {
+		s.expectKey[len(s.expectKey)-1] = true
+	}
+}
+
+func (s *duplicateKeyState) expectsKey() bool {
+	return len(s.expectKey) > 0 && s.expectKey[len(s.expectKey)-1]
+}
+
+func (s *duplicateKeyState) handleDelimiter(delimiter json.Delim) error {
+	switch delimiter {
+	case '{':
+		s.keyStack = append(s.keyStack, make(map[string]struct{}))
+		s.expectKey = append(s.expectKey, true)
+	case '}':
+		if len(s.keyStack) == 0 {
+			return errors.E(errors.InvalidJSON, "unexpected closing brace", nil)
+		}
+		s.keyStack = s.keyStack[:len(s.keyStack)-1]
+		s.expectKey = s.expectKey[:len(s.expectKey)-1]
+		if len(s.pathStack) > 0 {
+			s.pathStack = s.pathStack[:len(s.pathStack)-1]
+		}
+		s.valueDone()
+	case ']':
+		if len(s.pathStack) > 0 {
+			s.pathStack = s.pathStack[:len(s.pathStack)-1]
+		}
+		s.valueDone()
+	}
+	return nil
+}
+
+func (s *duplicateKeyState) handleKeyToken(token json.Token) error {
+	key, ok := token.(string)
+	if !ok {
+		return errors.E(errors.InvalidJSON, fmt.Sprintf("expected string key at %s, got %T", s.buildPath(), token), nil)
+	}
+
+	seen := s.keyStack[len(s.keyStack)-1]
+	if _, exists := seen[key]; exists {
+		return errors.E(errors.DuplicateKeys, fmt.Sprintf("duplicate key %q at %s", key, s.buildPath()), nil)
+	}
+	seen[key] = struct{}{}
+	s.pathStack = append(s.pathStack, key)
+	s.expectKey[len(s.expectKey)-1] = false
+	return nil
 }
 
 // DecodeNoDup decodes JSON into a Go struct while enforcing no duplicate keys.
