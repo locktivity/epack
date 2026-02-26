@@ -30,6 +30,9 @@ type CollectOpts struct {
 	// OutputPath is the output pack file path.
 	// If empty, defaults to "evidence-<timestamp>.pack".
 	OutputPath string
+
+	// OnCollectorEvent receives collector lifecycle events while running.
+	OnCollectorEvent func(CollectorEvent)
 }
 
 // CollectWorkflowResult contains the outcomes of evidence collection.
@@ -240,6 +243,9 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 			AllowUnverifiedInstall: opts.Unsafe.AllowUnverifiedInstall,
 			AllowUnpinned:          opts.Unsafe.AllowUnpinned,
 		},
+		Progress: ProgressHooks{
+			OnCollectorEvent: opts.OnCollectorEvent,
+		},
 	}
 
 	runResult, err := runner.Run(ctx, cfg, runOpts)
@@ -363,6 +369,9 @@ type RunAndBuildOpts struct {
 	// OutputPath is the output pack file path.
 	// If empty, defaults to "evidence-<timestamp>.pack".
 	OutputPath string
+
+	// OnCollectorEvent receives collector lifecycle events while running.
+	OnCollectorEvent func(CollectorEvent)
 }
 
 // RunAndBuildResult contains the outcomes of running collectors and building a pack.
@@ -410,6 +419,9 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 		Unsafe: UnsafeOverrides{
 			AllowUnverifiedInstall: opts.Unsafe.AllowUnverifiedInstall,
 			AllowUnpinned:          opts.Unsafe.AllowUnpinned,
+		},
+		Progress: ProgressHooks{
+			OnCollectorEvent: opts.OnCollectorEvent,
 		},
 	}
 

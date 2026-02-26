@@ -20,6 +20,7 @@ var (
 	runFrozen                  bool
 	runOnly                    string
 	runOutput                  string
+	runProgress                string
 	runInsecureAllowUnverified bool
 	runInsecureAllowUnpinned   bool
 	runTimeout                 time.Duration
@@ -73,6 +74,8 @@ Examples:
 		"allow running external collectors not pinned in lockfile (NOT RECOMMENDED)")
 	cmd.Flags().DurationVar(&runTimeout, "timeout", time.Duration(limits.DefaultCollectorTimeout),
 		"timeout per collector execution (e.g., 30s, 2m)")
+	cmd.Flags().StringVar(&runProgress, "progress", defaultProgressMode(),
+		"progress display mode: auto, tty, plain, json, quiet (env: EPACK_PROGRESS)")
 
 	return cmd
 }
@@ -80,6 +83,9 @@ Examples:
 func runRun(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	out := getOutput(cmd)
+	if err := validateProgressMode(runProgress); err != nil {
+		return err
+	}
 
 	if err := validateRunFlags(); err != nil {
 		return handleCollectorError(err)
@@ -116,15 +122,13 @@ func runRun(cmd *cobra.Command, args []string) error {
 		OutputPath: runOutput,
 	}
 
-	// Print mode header
-	if runFrozen {
-		out.Print("Collecting evidence (frozen mode)...\n")
-	} else {
-		out.Print("Collecting evidence...\n")
-	}
+	// Show in-progress collection status (spinner in TTY, heartbeat in CI/non-TTY).
+	progress := startCollectionProgress(ctx, out, runFrozen, runProgress)
+	opts.OnCollectorEvent = progress.OnCollectorEvent
 
 	// Run collectors
 	result, err := collector.RunAndBuild(ctx, cfg, opts)
+	progress.Done(err == nil)
 
 	// Print collector results regardless of error
 	if result != nil {

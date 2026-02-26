@@ -114,6 +114,32 @@ type RunOptions struct {
 	Secure SecureRunOptions
 	// Explicit insecure overrides.
 	Unsafe UnsafeOverrides
+	// Optional progress hooks.
+	Progress ProgressHooks
+}
+
+// CollectorEventType identifies collector lifecycle events.
+type CollectorEventType string
+
+const (
+	CollectorEventStart  CollectorEventType = "start"
+	CollectorEventFinish CollectorEventType = "finish"
+)
+
+// CollectorEvent describes collector runtime progress.
+type CollectorEvent struct {
+	Type      CollectorEventType
+	Collector string
+	Index     int
+	Total     int
+	Success   bool
+	Duration  time.Duration
+	Error     error
+}
+
+// ProgressHooks are optional callbacks for collection progress.
+type ProgressHooks struct {
+	OnCollectorEvent func(CollectorEvent)
 }
 
 // RunResult contains the result of running a collector.
@@ -193,19 +219,36 @@ func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions
 	}
 
 	for _, name := range collectorNames {
+		idx := len(result.Results) + 1
 		collectorCfg := collectors[name]
 		// Check aggregate budget before running next collector
 		if aggregateUsed >= aggregateBudget {
-			result.Results = append(result.Results, RunResult{
+			runResult := RunResult{
 				Collector: name,
 				Success:   false,
 				Error: fmt.Errorf("aggregate output budget exceeded (%d bytes); skipping remaining collectors",
 					aggregateBudget),
+			}
+			result.Results = append(result.Results, runResult)
+			emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
+				Type:      CollectorEventFinish,
+				Collector: name,
+				Index:     idx,
+				Total:     len(collectorNames),
+				Success:   false,
+				Error:     runResult.Error,
 			})
 			result.Failures++
 			continue
 		}
 
+		emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
+			Type:      CollectorEventStart,
+			Collector: name,
+			Index:     idx,
+			Total:     len(collectorNames),
+		})
+		started := time.Now()
 		runResult := r.runOne(ctx, name, collectorCfg, lf, platform, opts)
 
 		// SECURITY: Enforce aggregate budget as a hard cap.
@@ -224,12 +267,27 @@ func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions
 		}
 
 		result.Results = append(result.Results, runResult)
+		emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
+			Type:      CollectorEventFinish,
+			Collector: name,
+			Index:     idx,
+			Total:     len(collectorNames),
+			Success:   runResult.Success,
+			Duration:  time.Since(started),
+			Error:     runResult.Error,
+		})
 		if !runResult.Success {
 			result.Failures++
 		}
 	}
 
 	return result, nil
+}
+
+func emitCollectorEvent(fn func(CollectorEvent), evt CollectorEvent) {
+	if fn != nil {
+		fn(evt)
+	}
 }
 
 // runOne executes a single collector.

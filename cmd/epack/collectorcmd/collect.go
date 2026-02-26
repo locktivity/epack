@@ -22,6 +22,7 @@ var (
 	collectFrozen     bool
 	collectOutput     string
 	collectTimeout    time.Duration
+	collectProgress   string
 )
 
 func newCollectCommand() *cobra.Command {
@@ -65,6 +66,8 @@ Examples:
 		"output pack file (default: evidence-<timestamp>.epack)")
 	cmd.Flags().DurationVar(&collectTimeout, "timeout", time.Duration(limits.DefaultCollectorTimeout),
 		"timeout per collector execution (e.g., 30s, 2m)")
+	cmd.Flags().StringVar(&collectProgress, "progress", defaultProgressMode(),
+		"progress display mode: auto, tty, plain, json, quiet (env: EPACK_PROGRESS)")
 
 	return cmd
 }
@@ -72,6 +75,9 @@ Examples:
 func runCollect(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	out := getOutput(cmd)
+	if err := validateProgressMode(collectProgress); err != nil {
+		return err
+	}
 
 	cfg, err := loadConfig(collectConfigPath)
 	if err != nil {
@@ -93,18 +99,16 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		OutputPath: collectOutput,
 	}
 
-	// Print mode header
-	if collectFrozen {
-		out.Print("Collecting evidence (frozen mode)...\n")
-	} else {
-		out.Print("Collecting evidence...\n")
-	}
+	// Show in-progress collection status (spinner in TTY, heartbeat in CI/non-TTY).
+	progress := startCollectionProgress(ctx, out, collectFrozen, collectProgress)
+	opts.OnCollectorEvent = progress.OnCollectorEvent
 
 	// Track duration
 	startTime := time.Now()
 
 	// Run collection
 	result, err := collector.Collect(ctx, cfg, opts)
+	progress.Done(err == nil)
 
 	duration := time.Since(startTime)
 
