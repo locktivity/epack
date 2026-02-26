@@ -250,12 +250,14 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 	}
 	step("Preparing upload", false)
 
-	// Step 6: Perform HTTP upload
-	step("Uploading pack", true)
-	if err := uploadPackWithProgress(ctx, absPackPath, prepResp.Upload, remoteCfg.Transport, opts.OnUploadProgress); err != nil {
-		return nil, fmt.Errorf("upload failed: %w", err)
+	// Step 6: Perform HTTP upload (skip if method is "skip" - pack already exists)
+	if prepResp.Upload.Method != "skip" {
+		step("Uploading pack", true)
+		if err := uploadPackWithProgress(ctx, absPackPath, prepResp.Upload, remoteCfg.Transport, opts.OnUploadProgress); err != nil {
+			return nil, fmt.Errorf("upload failed: %w", err)
+		}
+		step("Uploading pack", false)
 	}
-	step("Uploading pack", false)
 
 	// Step 7: Call push.finalize
 	step("Finalizing release", true)

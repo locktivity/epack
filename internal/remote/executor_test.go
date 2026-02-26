@@ -305,6 +305,138 @@ func TestProtocolConstants(t *testing.T) {
 	}
 }
 
+// TestExecutor_SecretsPassthrough verifies that configured secrets are passed
+// through to the adapter subprocess while other env vars are filtered.
+func TestExecutor_SecretsPassthrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows - no shell scripts")
+	}
+
+	// Create a script that outputs env vars as JSON
+	dir := t.TempDir()
+	script := filepath.Join(dir, "env-check-adapter")
+	content := `#!/bin/sh
+case "$1" in
+  --capabilities)
+    echo '{"name":"env-check","kind":"remote_adapter","deploy_protocol_version":1,"features":{"prepare_finalize":true,"whoami":true}}'
+    ;;
+  auth.whoami)
+    # Output env vars that start with TEST_ or LOCKTIVITY_
+    cat << EOF
+{
+  "ok": true,
+  "type": "auth.whoami.result",
+  "identity": {
+    "authenticated": true,
+    "subject": "TEST_SECRET=${TEST_SECRET:-unset},LOCKTIVITY_TOKEN=${LOCKTIVITY_TOKEN:-unset},AWS_SECRET=${AWS_SECRET:-unset}"
+  }
+}
+EOF
+    ;;
+esac
+`
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatalf("creating test script: %v", err)
+	}
+
+	// Set environment variables - some should pass through, some should not
+	t.Setenv("TEST_SECRET", "test-secret-value")
+	t.Setenv("LOCKTIVITY_TOKEN", "locktivity-token-value")
+	t.Setenv("AWS_SECRET", "should-be-filtered")
+
+	// Create executor with secrets configured
+	exec := remote.NewExecutor(script, "env-check")
+	exec.Secrets = []string{"TEST_SECRET", "LOCKTIVITY_TOKEN"}
+
+	ctx := context.Background()
+	resp, err := exec.AuthWhoami(ctx)
+	if err != nil {
+		t.Fatalf("AuthWhoami failed: %v", err)
+	}
+
+	// The subject field contains our env var check
+	subject := resp.Identity.Subject
+
+	// TEST_SECRET should be passed through
+	if !contains(subject, "TEST_SECRET=test-secret-value") {
+		t.Errorf("TEST_SECRET should be passed through, got subject: %s", subject)
+	}
+
+	// LOCKTIVITY_TOKEN should be passed through
+	if !contains(subject, "LOCKTIVITY_TOKEN=locktivity-token-value") {
+		t.Errorf("LOCKTIVITY_TOKEN should be passed through, got subject: %s", subject)
+	}
+
+	// AWS_SECRET should NOT be passed through (not in Secrets list)
+	if contains(subject, "AWS_SECRET=should-be-filtered") {
+		t.Errorf("AWS_SECRET should NOT be passed through, got subject: %s", subject)
+	}
+	// It should show as unset
+	if !contains(subject, "AWS_SECRET=unset") {
+		t.Errorf("AWS_SECRET should be unset in adapter, got subject: %s", subject)
+	}
+}
+
+// TestExecutor_SecretsPassthrough_EmptyValue verifies that secrets with empty
+// values are not passed through (no NAME= entries).
+func TestExecutor_SecretsPassthrough_EmptyValue(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows - no shell scripts")
+	}
+
+	// Create a simple script that evaluates the env var
+	dir := t.TempDir()
+	script := filepath.Join(dir, "adapter")
+	// Use double quotes in printf to allow variable expansion
+	content := `#!/bin/sh
+case "$1" in
+  --capabilities)
+    echo '{"name":"test","kind":"remote_adapter","deploy_protocol_version":1,"features":{"prepare_finalize":true,"whoami":true}}'
+    ;;
+  auth.whoami)
+    VAL="${EMPTY_VAR:-default}"
+    printf '{"ok":true,"type":"auth.whoami.result","identity":{"authenticated":true,"subject":"EMPTY_VAR=%s"}}\n' "$VAL"
+    ;;
+esac
+`
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatalf("creating test script: %v", err)
+	}
+
+	// Set env var to empty (or unset it)
+	if err := os.Unsetenv("EMPTY_VAR"); err != nil {
+		t.Fatalf("unsetting EMPTY_VAR: %v", err)
+	}
+
+	// Create executor with EMPTY_VAR in secrets
+	exec := remote.NewExecutor(script, "test")
+	exec.Secrets = []string{"EMPTY_VAR"}
+
+	ctx := context.Background()
+	resp, err := exec.AuthWhoami(ctx)
+	if err != nil {
+		t.Fatalf("AuthWhoami failed: %v", err)
+	}
+
+	// EMPTY_VAR should use the default (wasn't passed because it was empty/unset)
+	if !contains(resp.Identity.Subject, "EMPTY_VAR=default") {
+		t.Errorf("unset env var should not be passed, got: %s", resp.Identity.Subject)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 // TestDefaultTimeout verifies the default timeout is reasonable.
 func TestDefaultTimeout(t *testing.T) {
 	if remote.DefaultTimeout < time.Minute {

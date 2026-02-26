@@ -34,9 +34,9 @@ var listCmd = &cobra.Command{
 	Long: `List artifacts, attestations, or sources in an evidence pack.
 
 Examples:
-  epack list artifacts evidence.pack
-  epack list attestations evidence.pack
-  epack list sources evidence.pack`,
+  epack list artifacts evidence.epack
+  epack list attestations evidence.epack
+  epack list sources evidence.epack`,
 }
 
 var listArtifactsCmd = &cobra.Command{
@@ -46,13 +46,13 @@ var listArtifactsCmd = &cobra.Command{
 
 Examples:
   # List artifact paths
-  epack list artifacts evidence.pack
+  epack list artifacts evidence.epack
 
   # Detailed listing with size and content type
-  epack list artifacts -l evidence.pack
+  epack list artifacts -l evidence.epack
 
   # Filter by path pattern
-  epack list artifacts --filter "*.json" evidence.pack`,
+  epack list artifacts --filter "*.json" evidence.epack`,
 	Args: cobra.ExactArgs(1),
 	RunE: runListArtifacts,
 }
@@ -63,8 +63,8 @@ var listAttestationsCmd = &cobra.Command{
 	Long: `List all attestation files in the pack.
 
 Examples:
-  epack list attestations evidence.pack
-  epack list attestations -l evidence.pack`,
+  epack list attestations evidence.epack
+  epack list attestations -l evidence.epack`,
 	Args: cobra.ExactArgs(1),
 	RunE: runListAttestations,
 }
@@ -75,7 +75,7 @@ var listSourcesCmd = &cobra.Command{
 	Long: `List all source collectors declared in the manifest.
 
 Examples:
-  epack list sources evidence.pack`,
+  epack list sources evidence.epack`,
 	Args: cobra.ExactArgs(1),
 	RunE: runListSources,
 }

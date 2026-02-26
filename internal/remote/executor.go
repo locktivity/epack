@@ -53,6 +53,10 @@ type Executor struct {
 	// If nil, stderr is discarded.
 	Stderr io.Writer
 
+	// Secrets is a list of env var names to pass through to the adapter.
+	// These are passed as-is (not renamed) to allow adapter-specific auth.
+	Secrets []string
+
 	// cleanup is called when the executor is closed to remove verified binary copies.
 	cleanup func()
 }
@@ -343,6 +347,10 @@ func (e *Executor) execute(ctx context.Context, command string, req any, resp an
 	// inheritPath=true because adapters may need to invoke system tools (git, etc.)
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), true)
 	env = append(env, "EPACK_REMOTE_PROTOCOL_VERSION=1")
+
+	// Pass through configured secrets (e.g., LOCKTIVITY_OIDC_TOKEN).
+	// This enforces reserved-name filtering (EPACK_*, LD_*, etc.).
+	env = execsafe.AppendAllowedSecrets(env, e.Secrets, os.Getenv)
 
 	// Execute command
 	cmd := exec.CommandContext(ctx, e.BinaryPath, command)

@@ -139,3 +139,124 @@ func writeLockfile(t *testing.T, projectRoot, remoteName, digest string) {
 		t.Fatalf("writing lockfile: %v", err)
 	}
 }
+
+// TestResolveAdapterPath_BinaryRemoteSkipsLockfile verifies that binary-based remotes
+// don't require a lockfile to exist. This enables local development with binary: paths.
+func TestResolveAdapterPath_BinaryRemoteSkipsLockfile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	projectRoot := t.TempDir()
+	adapter := writeAdapterScript(t, projectRoot, `{"name":"test","kind":"remote_adapter","deploy_protocol_version":1,"features":{"prepare_finalize":true}}`)
+
+	// Compute digest for verification
+	digest := sha256Digest(t, adapter)
+
+	// Create config WITHOUT a lockfile - this should work for binary remotes
+	cfg := &config.RemoteConfig{
+		Adapter: "test",
+		Binary:  adapter,
+	}
+
+	// NO lockfile written - this would fail for source-based remotes
+
+	// ResolveAdapterPath should succeed without lockfile for binary remotes
+	// Note: We use AllowUnverifiedSource to skip digest verification since no lockfile
+	opts := remote.AdapterExecutorOptions{
+		Verification: remote.VerificationOptions{
+			AllowUnverifiedSource: true,
+		},
+	}
+
+	jobCfg := &config.JobConfig{}
+	exec, caps, err := remote.PrepareAdapterExecutor(context.Background(), projectRoot, "origin", jobCfg, cfg, opts)
+	if err != nil {
+		t.Fatalf("PrepareAdapterExecutor() should succeed without lockfile for binary remote: %v", err)
+	}
+	defer exec.Close()
+
+	if exec == nil {
+		t.Fatal("PrepareAdapterExecutor() returned nil executor")
+	}
+	if caps == nil {
+		t.Fatal("PrepareAdapterExecutor() returned nil capabilities")
+	}
+
+	// Verify it still works with lockfile present
+	writeLockfile(t, projectRoot, "origin", digest)
+
+	exec2, caps2, err := remote.PrepareAdapterExecutor(context.Background(), projectRoot, "origin", jobCfg, cfg, remote.AdapterExecutorOptions{})
+	if err != nil {
+		t.Fatalf("PrepareAdapterExecutor() with lockfile: %v", err)
+	}
+	defer exec2.Close()
+
+	if caps2.Name != "test" {
+		t.Errorf("caps.Name = %q, want %q", caps2.Name, "test")
+	}
+}
+
+// TestResolveAdapterPath_SourceRemoteRequiresLockfile verifies that source-based remotes
+// still require a lockfile for digest verification.
+func TestResolveAdapterPath_SourceRemoteRequiresLockfile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	projectRoot := t.TempDir()
+
+	// Create config for source-based remote (no binary)
+	cfg := &config.RemoteConfig{
+		Adapter: "test",
+		Source:  "owner/repo@v1.0.0",
+		// No Binary set - this is a source-based remote
+	}
+
+	// NO lockfile written
+
+	jobCfg := &config.JobConfig{}
+	_, _, err := remote.PrepareAdapterExecutor(context.Background(), projectRoot, "origin", jobCfg, cfg, remote.AdapterExecutorOptions{})
+	if err == nil {
+		t.Fatal("PrepareAdapterExecutor() should fail without lockfile for source-based remote")
+	}
+
+	// Error should mention lockfile
+	if !strings.Contains(err.Error(), "lockfile") {
+		t.Errorf("error should mention lockfile, got: %v", err)
+	}
+}
+
+// TestPrepareAdapterExecutor_SecretsPassedThrough verifies that the Secrets field
+// from RemoteConfig is passed through to the Executor.
+func TestPrepareAdapterExecutor_SecretsPassedThrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	projectRoot := t.TempDir()
+	adapter := writeAdapterScript(t, projectRoot, `{"name":"test","kind":"remote_adapter","deploy_protocol_version":1,"features":{"prepare_finalize":true}}`)
+	digest := sha256Digest(t, adapter)
+	writeLockfile(t, projectRoot, "origin", digest)
+
+	cfg := &config.JobConfig{}
+	remoteCfg := &config.RemoteConfig{
+		Adapter: "test",
+		Binary:  adapter,
+		Secrets: []string{"MY_SECRET", "OTHER_TOKEN"},
+	}
+
+	exec, _, err := remote.PrepareAdapterExecutor(context.Background(), projectRoot, "origin", cfg, remoteCfg, remote.AdapterExecutorOptions{})
+	if err != nil {
+		t.Fatalf("PrepareAdapterExecutor() error = %v", err)
+	}
+	defer exec.Close()
+
+	// Verify secrets were passed through
+	if len(exec.Secrets) != 2 {
+		t.Errorf("Secrets length = %d, want 2", len(exec.Secrets))
+	}
+	if exec.Secrets[0] != "MY_SECRET" || exec.Secrets[1] != "OTHER_TOKEN" {
+		t.Errorf("Secrets = %v, want [MY_SECRET OTHER_TOKEN]", exec.Secrets)
+	}
+}

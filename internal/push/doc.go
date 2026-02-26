@@ -20,7 +20,7 @@
 //
 //	result, err := push.Push(ctx, push.Options{
 //	    Remote:   "locktivity",
-//	    PackPath: "packs/acme-prod.pack",
+//	    PackPath: "packs/acme-prod.epack",
 //	    Labels:   []string{"monthly", "soc2"},
 //	})
 //

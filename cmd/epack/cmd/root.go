@@ -46,16 +46,16 @@ compliance, audit, and supply chain security use cases.
 
 Examples:
   # Build a pack from JSON artifacts
-  epack build evidence.pack ./reports/*.json --stream myorg/prod
+  epack build evidence.epack ./reports/*.json --stream myorg/prod
 
   # Sign with keyless (opens browser for authentication)
-  epack sign evidence.pack
+  epack sign evidence.epack
 
   # Verify pack integrity and attestations
-  epack verify evidence.pack
+  epack verify evidence.epack
 
   # Inspect pack contents
-  epack inspect evidence.pack`,
+  epack inspect evidence.epack`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -103,13 +103,13 @@ func printQuickstart(cmd *cobra.Command) {
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  epack collect")
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), p.Dim("  # Sign the pack (opens browser for authentication)"))
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  epack sign evidence.pack")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  epack sign evidence.epack")
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), p.Dim("  # Verify pack integrity and attestations"))
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  epack verify evidence.pack")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  epack verify evidence.epack")
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), p.Dim("  # Push pack to a remote registry"))
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  epack push locktivity evidence.pack")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  epack push locktivity evidence.epack")
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), p.Dim("  # Pull pack from a remote registry"))
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  epack pull locktivity")

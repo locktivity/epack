@@ -12,13 +12,13 @@ Quick Start:
   epack collect
 
   # Sign the pack (opens browser for authentication)
-  epack sign evidence.pack
+  epack sign evidence.epack
 
   # Verify pack integrity and attestations
-  epack verify evidence.pack
+  epack verify evidence.epack
 
   # Push pack to a remote registry
-  epack push locktivity evidence.pack
+  epack push locktivity evidence.epack
 
   # Pull pack from a remote registry
   epack pull locktivity

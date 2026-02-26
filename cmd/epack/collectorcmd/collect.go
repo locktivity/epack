@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/collector"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/pack"
 	"github.com/spf13/cobra"
 )
 
@@ -60,7 +62,7 @@ Examples:
 	cmd.Flags().BoolVar(&collectFrozen, "frozen", false,
 		"fail on any mismatch (CI mode)")
 	cmd.Flags().StringVarP(&collectOutput, "output", "o", "",
-		"output pack file (default: evidence-<timestamp>.pack)")
+		"output pack file (default: evidence-<timestamp>.epack)")
 	cmd.Flags().DurationVar(&collectTimeout, "timeout", time.Duration(limits.DefaultCollectorTimeout),
 		"timeout per collector execution (e.g., 30s, 2m)")
 
@@ -196,7 +198,18 @@ func printCollectResults(out *output.Writer, result *collector.CollectWorkflowRe
 	out.Print("\n")
 	out.Print("  • Pack size:  %s\n", formatBytes(packSize))
 	out.Print("  • Stream:     %s\n", result.Stream)
+
+	// Print evidence summary (what was actually collected)
+	printEvidenceSummary(out, result.PackPath)
+
 	out.Print("\nOutput: %s\n", result.PackPath)
+
+	// Post-command hints
+	p := out.Palette()
+	out.Print("\n%s\n", p.Dim("Next steps:"))
+	out.Print("%s  epack sign %s     %s\n", p.Dim("  •"), result.PackPath, p.Dim("# Sign the pack"))
+	out.Print("%s  epack inspect %s  %s\n", p.Dim("  •"), result.PackPath, p.Dim("# View contents"))
+	out.Print("%s  epack push <remote> %s  %s\n", p.Dim("  •"), result.PackPath, p.Dim("# Push to registry"))
 
 	return nil
 }
@@ -231,4 +244,121 @@ func formatBytes(bytes int64) string {
 	default:
 		return fmt.Sprintf("%d bytes", bytes)
 	}
+}
+
+// printEvidenceSummary shows what evidence was collected from each source.
+func printEvidenceSummary(out *output.Writer, packPath string) {
+	// Open the pack to read the manifest
+	p, err := pack.Open(packPath)
+	if err != nil {
+		// Don't fail collection - just skip the summary
+		out.Verbose("Could not open pack for summary: %v\n", err)
+		return
+	}
+	defer func() { _ = p.Close() }()
+
+	manifest := p.Manifest()
+	if len(manifest.Sources) == 0 && len(manifest.Artifacts) == 0 {
+		return
+	}
+
+	palette := out.Palette()
+	out.Print("\n%s\n", palette.Bold("Evidence Collected:"))
+
+	// Group artifacts by source
+	artifactsBySource := make(map[string][]pack.Artifact)
+	for _, artifact := range manifest.Artifacts {
+		source := findSourceForArtifact(manifest, artifact.Path)
+		artifactsBySource[source] = append(artifactsBySource[source], artifact)
+	}
+
+	// Print each source and its artifacts
+	for _, source := range manifest.Sources {
+		artifacts := artifactsBySource[source.Name]
+		if len(artifacts) == 0 {
+			continue
+		}
+
+		out.Print("\n  %s\n", palette.Cyan(source.Name))
+
+		for _, artifact := range artifacts {
+			// Build artifact description
+			desc := formatArtifactSummary(artifact)
+			out.Print("    • %s\n", desc)
+		}
+	}
+
+	// Print any artifacts without a source (shouldn't happen, but be safe)
+	if orphans := artifactsBySource[""]; len(orphans) > 0 {
+		out.Print("\n  %s\n", palette.Cyan("(other)"))
+		for _, artifact := range orphans {
+			desc := formatArtifactSummary(artifact)
+			out.Print("    • %s\n", desc)
+		}
+	}
+
+	// Show compliance controls if any artifacts have them
+	controls := collectControls(manifest.Artifacts)
+	if len(controls) > 0 {
+		out.Print("\n  %s %s\n", palette.Dim("Controls:"), strings.Join(controls, ", "))
+	}
+}
+
+// findSourceForArtifact finds which source contributed an artifact.
+func findSourceForArtifact(manifest pack.Manifest, artifactPath string) string {
+	for _, source := range manifest.Sources {
+		for _, path := range source.Artifacts {
+			if path == artifactPath {
+				return source.Name
+			}
+		}
+	}
+	return ""
+}
+
+// formatArtifactSummary creates a human-readable summary of an artifact.
+func formatArtifactSummary(artifact pack.Artifact) string {
+	// Prefer display name, fall back to path
+	name := artifact.DisplayName
+	if name == "" {
+		// Extract meaningful name from path like "artifacts/github-posture/posture.json"
+		name = filepath.Base(artifact.Path)
+		if name == "" {
+			name = artifact.Path
+		}
+	}
+
+	// Add description if available
+	if artifact.Description != "" {
+		// Keep description short for summary
+		desc := artifact.Description
+		if len(desc) > 60 {
+			desc = desc[:57] + "..."
+		}
+		return fmt.Sprintf("%s: %s", name, desc)
+	}
+
+	// Add content type hint if no description
+	if artifact.ContentType != "" && artifact.ContentType != "application/json" {
+		return fmt.Sprintf("%s (%s)", name, artifact.ContentType)
+	}
+
+	return name
+}
+
+// collectControls gathers unique compliance controls from all artifacts.
+func collectControls(artifacts []pack.Artifact) []string {
+	seen := make(map[string]struct{})
+	var controls []string
+
+	for _, artifact := range artifacts {
+		for _, ctrl := range artifact.Controls {
+			if _, ok := seen[ctrl]; !ok {
+				seen[ctrl] = struct{}{}
+				controls = append(controls, ctrl)
+			}
+		}
+	}
+
+	return controls
 }

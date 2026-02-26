@@ -67,7 +67,7 @@ func (o *SignPackOptions) Validate() error {
 //	if err != nil {
 //	    return err
 //	}
-//	if err := sign.SignPackFile(ctx, "evidence.pack", signer); err != nil {
+//	if err := sign.SignPackFile(ctx, "evidence.epack", signer); err != nil {
 //	    return err
 //	}
 func NewKeylessSigner(ctx context.Context) (Signer, error) {
@@ -88,7 +88,7 @@ func NewKeylessSigner(ctx context.Context) (Signer, error) {
 //	if err != nil {
 //	    return err
 //	}
-//	if err := sign.SignPackFile(ctx, "evidence.pack", signer); err != nil {
+//	if err := sign.SignPackFile(ctx, "evidence.epack", signer); err != nil {
 //	    return err
 //	}
 func NewKeySignerFromPath(ctx context.Context, keyPath string) (Signer, error) {

@@ -143,6 +143,10 @@ type RemoteConfig struct {
 	// Transport configures transport-level security for adapter URLs.
 	// SECURITY: Controls file:// URL confinement and loopback HTTP permissions.
 	Transport RemoteTransport `yaml:"transport,omitempty"`
+
+	// Secrets is a list of env var names to pass through to the remote adapter.
+	// These are passed as-is (not renamed) to allow adapter-specific auth.
+	Secrets []string `yaml:"secrets,omitempty"`
 }
 
 // RemoteTarget specifies the target workspace/environment.
@@ -441,6 +445,12 @@ func (c *JobConfig) Validate() error {
 			if err := ValidateRemoteName(remote.Adapter); err != nil {
 				return fmt.Errorf("remote %q: invalid adapter name: %w", name, err)
 			}
+		}
+
+		// SECURITY: Validate secret names to prevent passing dangerous env vars
+		// like PATH, LD_PRELOAD, or EPACK_* protocol variables.
+		if err := execsafe.ValidateSecretNames(remote.Secrets); err != nil {
+			return fmt.Errorf("remote %q: %w", name, err)
 		}
 	}
 

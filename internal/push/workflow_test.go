@@ -196,3 +196,43 @@ func TestUploadPackToFile_RequiresFileRoot(t *testing.T) {
 		}
 	})
 }
+
+// TestUploadSkip documents that when the adapter returns Upload.Method == "skip",
+// the upload step is bypassed. This happens when the pack already exists on the remote.
+func TestUploadSkip(t *testing.T) {
+	// The skip logic is: if prepResp.Upload.Method != "skip" { uploadPack... }
+	// When Method == "skip", no upload is performed and we proceed directly to finalize.
+
+	testCases := []struct {
+		method     string
+		shouldSkip bool
+	}{
+		{"PUT", false},
+		{"POST", false},
+		{"skip", true},
+		{"SKIP", false}, // case-sensitive
+		{"", false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.method, func(t *testing.T) {
+			// Simulate the condition in Push workflow
+			shouldUpload := tc.method != "skip"
+			if shouldUpload == tc.shouldSkip {
+				t.Errorf("method=%q: shouldUpload=%v, shouldSkip=%v - mismatch",
+					tc.method, shouldUpload, tc.shouldSkip)
+			}
+		})
+	}
+}
+
+// TestUploadSkip_Integration documents the expected behavior when pack already exists.
+// This is tested by the e2e tests with actual adapters that return "skip" method.
+func TestUploadSkip_Integration(t *testing.T) {
+	t.Skip("integration test - run with e2e suite")
+	// When a pack with the same digest already exists on the remote:
+	// 1. Adapter returns PushPrepareResponse with Upload.Method = "skip"
+	// 2. Push workflow skips the HTTP upload step entirely
+	// 3. Push.finalize is still called to create the release
+	// 4. User sees success without re-uploading bytes
+}

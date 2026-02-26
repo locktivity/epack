@@ -34,16 +34,16 @@ pack digest, timestamps, artifact counts, and attestation status.
 
 Examples:
   # Display pack information
-  epack inspect evidence.pack
+  epack inspect evidence.epack
 
   # Get just the pack digest (for scripting)
-  DIGEST=$(epack inspect --digest evidence.pack)
+  DIGEST=$(epack inspect --digest evidence.epack)
 
   # Output as JSON
-  epack inspect --json evidence.pack
+  epack inspect --json evidence.epack
 
   # Show raw manifest.json
-  epack inspect --raw evidence.pack`,
+  epack inspect --raw evidence.epack`,
 	Args: cobra.ExactArgs(1),
 	RunE: runInspect,
 }

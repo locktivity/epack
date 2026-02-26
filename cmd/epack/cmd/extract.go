@@ -38,22 +38,22 @@ destination.
 
 Examples:
   # Extract specific artifacts
-  epack extract evidence.pack artifacts/config.json
+  epack extract evidence.epack artifacts/config.json
 
   # Extract all artifacts
-  epack extract --all evidence.pack
+  epack extract --all evidence.epack
 
   # Extract to specific directory
-  epack extract --all -o ./extracted evidence.pack
+  epack extract --all -o ./extracted evidence.epack
 
   # Extract matching a pattern
-  epack extract --filter "*.json" evidence.pack
+  epack extract --filter "*.json" evidence.epack
 
   # Force overwrite existing files
-  epack extract --all --force evidence.pack
+  epack extract --all --force evidence.epack
 
   # Preview what would be extracted (dry-run)
-  epack extract --all --dry-run evidence.pack`,
+  epack extract --all --dry-run evidence.epack`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runExtract,
 }

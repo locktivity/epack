@@ -51,28 +51,28 @@ Exit codes:
 
 Examples:
   # Keyless signing (opens browser)
-  epack sign evidence.pack
+  epack sign evidence.epack
 
   # Skip confirmation prompt
-  epack sign evidence.pack --yes
+  epack sign evidence.epack --yes
 
   # CI/CD with environment token
-  EPACK_OIDC_TOKEN=$TOKEN epack sign evidence.pack
+  EPACK_OIDC_TOKEN=$TOKEN epack sign evidence.epack
 
   # GitHub Actions (ambient credentials)
-  epack sign evidence.pack
+  epack sign evidence.epack
 
   # Key-based signing
-  epack sign evidence.pack --key ./private-key.pem
+  epack sign evidence.epack --key ./private-key.pem
 
   # Skip public transparency log (private signing)
-  epack sign evidence.pack --key ./key.pem --no-tlog
+  epack sign evidence.epack --key ./key.pem --no-tlog
 
   # Skip tlog but use a timestamp authority (requires explicit opt-in)
-  epack sign evidence.pack --key ./key.pem --no-tlog --tsa https://tsa.example.com --insecure-allow-custom-endpoints
+  epack sign evidence.epack --key ./key.pem --no-tlog --tsa https://tsa.example.com --insecure-allow-custom-endpoints
 
   # Dry run (show what would be signed)
-  epack sign --dry-run evidence.pack`,
+  epack sign --dry-run evidence.epack`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSign,
 }

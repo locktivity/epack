@@ -6,7 +6,7 @@
 //	b := builder.New("myorg/stream")
 //	b.AddFile("./config.json")
 //	b.AddFile("./data.json")
-//	if err := b.Write("evidence.pack"); err != nil {
+//	if err := b.Write("evidence.epack"); err != nil {
 //	    log.Fatal(err)
 //	}
 //

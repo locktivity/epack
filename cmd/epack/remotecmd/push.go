@@ -49,25 +49,25 @@ Exit codes:
 
 Examples:
   # Push to Locktivity
-  epack push locktivity packs/acme-prod.pack
+  epack push locktivity packs/acme-prod.epack
 
   # Push with labels
-  epack push locktivity packs/acme-prod.pack --label monthly --label soc2
+  epack push locktivity packs/acme-prod.epack --label monthly --label soc2
 
   # Push to staging environment
-  epack push locktivity packs/acme-prod.pack --env staging
+  epack push locktivity packs/acme-prod.epack --env staging
 
   # Push with release notes
-  epack push locktivity packs/acme-prod.pack --notes "February release"
+  epack push locktivity packs/acme-prod.epack --notes "February release"
 
   # Push without syncing runs
-  epack push locktivity packs/acme-prod.pack --no-runs
+  epack push locktivity packs/acme-prod.epack --no-runs
 
   # Preview what would be pushed (dry-run)
-  epack push locktivity packs/acme-prod.pack --dry-run
+  epack push locktivity packs/acme-prod.epack --dry-run
 
   # Push in background (returns immediately)
-  epack push locktivity packs/acme-prod.pack --detach`,
+  epack push locktivity packs/acme-prod.epack --detach`,
 		Args: cobra.ExactArgs(2),
 		RunE: runPush,
 	}
@@ -240,6 +240,12 @@ func runPush(cmd *cobra.Command, args []string) error {
 	if shareURL, ok := result.Links["share"]; ok {
 		out.Print("Share: %s\n", shareURL)
 	}
+
+	// Post-command hints
+	p := out.Palette()
+	out.Print("\n%s\n", p.Dim("Next steps:"))
+	out.Print("%s  epack pull %s           %s\n", p.Dim("  •"), remoteName, p.Dim("# Pull on another machine"))
+	out.Print("%s  epack remote whoami %s  %s\n", p.Dim("  •"), remoteName, p.Dim("# Check auth status"))
 
 	return nil
 }

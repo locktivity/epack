@@ -246,3 +246,144 @@ func TestJobConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfig_RemoteWithSecrets(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+remotes:
+  locktivity:
+    source: locktivity/epack-remote-locktivity@v1
+    target:
+      workspace: acme
+      environment: prod
+    secrets:
+      - LOCKTIVITY_OIDC_TOKEN
+      - LOCKTIVITY_CLIENT_ID
+      - LOCKTIVITY_CLIENT_SECRET
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+
+	remote, ok := cfg.Remotes["locktivity"]
+	if !ok {
+		t.Fatal("missing locktivity remote")
+	}
+
+	if len(remote.Secrets) != 3 {
+		t.Errorf("Secrets length = %d, want 3", len(remote.Secrets))
+	}
+
+	expectedSecrets := []string{"LOCKTIVITY_OIDC_TOKEN", "LOCKTIVITY_CLIENT_ID", "LOCKTIVITY_CLIENT_SECRET"}
+	for i, want := range expectedSecrets {
+		if i >= len(remote.Secrets) {
+			t.Errorf("missing secret at index %d: want %q", i, want)
+			continue
+		}
+		if remote.Secrets[i] != want {
+			t.Errorf("Secrets[%d] = %q, want %q", i, remote.Secrets[i], want)
+		}
+	}
+}
+
+func TestLoadConfig_RemoteWithoutSecrets(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+remotes:
+  locktivity:
+    source: locktivity/epack-remote-locktivity@v1
+    target:
+      workspace: acme
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+
+	remote, ok := cfg.Remotes["locktivity"]
+	if !ok {
+		t.Fatal("missing locktivity remote")
+	}
+
+	// Secrets should be nil/empty when not specified
+	if len(remote.Secrets) != 0 {
+		t.Errorf("Secrets should be empty when not specified, got %v", remote.Secrets)
+	}
+}
+
+func TestLoadConfig_RemoteEmptySecrets(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+remotes:
+  locktivity:
+    source: locktivity/epack-remote-locktivity@v1
+    secrets: []
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+
+	remote, ok := cfg.Remotes["locktivity"]
+	if !ok {
+		t.Fatal("missing locktivity remote")
+	}
+
+	// Empty array should result in empty slice
+	if len(remote.Secrets) != 0 {
+		t.Errorf("Secrets should be empty, got %v", remote.Secrets)
+	}
+}
+
+func TestLoadConfig_RemoteSecretsRejectReservedNames(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+remotes:
+  locktivity:
+    source: locktivity/epack-remote-locktivity@v1
+    secrets:
+      - LD_PRELOAD
+      - EPACK_TOKEN
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	_, err := config.Load(configPath)
+	if err == nil {
+		t.Fatal("config.Load() expected error for reserved remote secret names, got nil")
+	}
+}

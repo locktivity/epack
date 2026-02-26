@@ -33,5 +33,5 @@
 //	    VerifyAttestations:  true,
 //	    Verifier:            verifier,
 //	}
-//	err := merge.Merge(ctx, sources, "merged.pack", opts)
+//	err := merge.Merge(ctx, sources, "merged.epack", opts)
 package merge

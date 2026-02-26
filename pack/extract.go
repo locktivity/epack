@@ -19,7 +19,7 @@ import (
 //
 // Example:
 //
-//	p, _ := pack.Open("evidence.pack")
+//	p, _ := pack.Open("evidence.epack")
 //	result, err := p.Extract(pack.SafeExtractAll("/tmp/output"))
 func SafeExtractAll(outputDir string) ExtractOptions {
 	return ExtractOptions{

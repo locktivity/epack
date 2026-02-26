@@ -27,8 +27,8 @@ RUNNING UTILITIES
 
 Run an installed utility by name:
 
-  epack utility viewer pack.pack
-  epack utility exporter evidence.pack --format xlsx
+  epack utility viewer pack.epack
+  epack utility exporter evidence.epack --format xlsx
 
 The utility binary is verified against its lockfile digest before execution
 to ensure it hasn't been tampered with (TOCTOU-safe).
@@ -53,7 +53,7 @@ EXAMPLES
   epack utility list
 
   # Run an installed utility
-  epack utility viewer pack.pack
+  epack utility viewer pack.epack
 
   # Remove a utility
   epack utility remove viewer`,

@@ -162,6 +162,7 @@ func PrepareAdapterExecutor(
 		exec = NewExecutor(adapterPath, remoteCfg.EffectiveAdapter())
 	}
 	exec.Stderr = opts.Stderr
+	exec.Secrets = remoteCfg.Secrets
 
 	caps, err := QueryCapabilities(ctx, exec.BinaryPath)
 	if err != nil {
@@ -196,9 +197,16 @@ func ResolveAdapterPath(projectRoot, remoteName string, cfg *config.RemoteConfig
 	baseDir := filepath.Join(projectRoot, ".epack")
 	lockfilePath := filepath.Join(projectRoot, lockfile.FileName)
 
-	lf, err := lockfile.Load(lockfilePath)
-	if err != nil {
-		return "", fmt.Errorf("loading lockfile: %w", err)
+	// For binary-based remotes, lockfile is not required
+	var lf *lockfile.LockFile
+	if cfg.Binary != "" {
+		lf = lockfile.New()
+	} else {
+		var err error
+		lf, err = lockfile.Load(lockfilePath)
+		if err != nil {
+			return "", fmt.Errorf("loading lockfile: %w", err)
+		}
 	}
 
 	path, err := sync.ResolveRemoteBinaryPath(baseDir, remoteName, *cfg, lf)

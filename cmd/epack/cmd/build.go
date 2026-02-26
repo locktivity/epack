@@ -50,19 +50,19 @@ Exit codes:
 
 Examples:
   # Build from files
-  epack build evidence.pack ./reports/*.json --stream myorg/prod
+  epack build evidence.epack ./reports/*.json --stream myorg/prod
 
   # Specify destination paths
-  epack build evidence.pack --stream myorg/prod \
+  epack build evidence.epack --stream myorg/prod \
     --file ./local/config.json:artifacts/config.json \
     --file ./local/audit.json:artifacts/audit.json
 
   # Add source metadata
-  epack build evidence.pack ./data.json --stream myorg/prod \
+  epack build evidence.epack ./data.json --stream myorg/prod \
     --source "collector:1.0" --source "scanner:2.3"
 
   # Read from stdin
-  echo '{"key":"value"}' | epack build evidence.pack --stream myorg/prod \
+  echo '{"key":"value"}' | epack build evidence.epack --stream myorg/prod \
     --stdin artifacts/data.json --content-type application/json`,
 	Args: cobra.MinimumNArgs(0),
 	RunE: runBuild,

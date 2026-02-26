@@ -198,9 +198,9 @@ func Pull(ctx context.Context, opts Options) (*Result, error) {
 	// Determine output path
 	outputPath := opts.OutputPath
 	if outputPath == "" {
-		// Default to <stream>.pack in current directory
+		// Default to <stream>.epack in current directory
 		streamName := sanitizeStreamName(prepResp.Pack.Stream)
-		outputPath = streamName + ".pack"
+		outputPath = streamName + packpath.PackExtension
 	}
 
 	absOutputPath, err := filepath.Abs(outputPath)

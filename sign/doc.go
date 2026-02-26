@@ -20,7 +20,7 @@
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-//	if err := sign.SignPackFile(ctx, "evidence.pack", signer); err != nil {
+//	if err := sign.SignPackFile(ctx, "evidence.epack", signer); err != nil {
 //	    log.Fatal(err)
 //	}
 //
@@ -32,7 +32,7 @@
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-//	if err := sign.SignPackFile(ctx, "evidence.pack", signer); err != nil {
+//	if err := sign.SignPackFile(ctx, "evidence.epack", signer); err != nil {
 //	    log.Fatal(err)
 //	}
 //

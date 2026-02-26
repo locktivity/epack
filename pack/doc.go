@@ -6,7 +6,7 @@
 //
 // Opening a pack:
 //
-//	p, err := pack.Open("evidence.pack")
+//	p, err := pack.Open("evidence.epack")
 //	if err != nil {
 //	    log.Fatal(err)
 //	}

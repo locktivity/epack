@@ -43,4 +43,7 @@ func registerCollectorCommands(root *cobra.Command) {
 	// Add 'epack pull' and 'epack push' for remote registry operations
 	root.AddCommand(remotecmd.NewPullCommand())
 	root.AddCommand(remotecmd.NewPushCommand())
+
+	// Add 'epack remote' for remote management (list, whoami)
+	root.AddCommand(remotecmd.NewRemoteCommand())
 }

@@ -68,22 +68,22 @@ Exit codes:
 
 Examples:
   # Verify with identity requirements (RECOMMENDED)
-  epack verify evidence.pack --issuer "https://accounts.google.com" --subject "user@example.com"
+  epack verify evidence.epack --issuer "https://accounts.google.com" --subject "user@example.com"
 
   # CI: Use pinned trust root for reproducible verification
-  epack verify evidence.pack --trust-root trusted_root.json --issuer "https://token.actions.githubusercontent.com"
+  epack verify evidence.epack --trust-root trusted_root.json --issuer "https://token.actions.githubusercontent.com"
 
   # Verify only digest integrity (skip attestations)
-  epack verify --integrity-only evidence.pack
+  epack verify --integrity-only evidence.epack
 
   # Require at least one attestation
-  epack verify --require-attestation evidence.pack --issuer "https://accounts.google.com"
+  epack verify --require-attestation evidence.epack --issuer "https://accounts.google.com"
 
   # Offline verification (skip transparency log)
-  epack verify --offline evidence.pack --subject "ci@example.com"
+  epack verify --offline evidence.epack --subject "ci@example.com"
 
   # INSECURE: Accept any valid signer (not recommended for production)
-  epack verify evidence.pack --insecure-skip-identity-check`,
+  epack verify evidence.epack --insecure-skip-identity-check`,
 	Args: cobra.ExactArgs(1),
 	RunE: runVerify,
 }

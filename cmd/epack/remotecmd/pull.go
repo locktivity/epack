@@ -51,7 +51,7 @@ Examples:
   epack pull locktivity
 
   # Pull to specific output path
-  epack pull locktivity -o ./packs/evidence.pack
+  epack pull locktivity -o ./packs/evidence.epack
 
   # Pull specific version
   epack pull locktivity --version v1.2.3
@@ -79,7 +79,7 @@ Examples:
 
 	cmd.Flags().StringVar(&pullEnv, "env", "", "environment to use (applies config from environments.<env>)")
 	cmd.Flags().StringVar(&pullWorkspace, "workspace", "", "override target workspace")
-	cmd.Flags().StringVarP(&pullOutput, "output", "o", "", "output path (default: ./<stream>.pack)")
+	cmd.Flags().StringVarP(&pullOutput, "output", "o", "", "output path (default: ./<stream>.epack)")
 	cmd.Flags().StringVar(&pullDigest, "digest", "", "pull specific pack by digest (immutable)")
 	cmd.Flags().StringVar(&pullReleaseID, "release", "", "pull specific release by ID")
 	cmd.Flags().StringVar(&pullVersion, "version", "", "pull specific version")
@@ -252,7 +252,13 @@ func runPull(cmd *cobra.Command, args []string) error {
 		out.Print("  • Verified\n")
 	}
 	out.Print("\nOutput: %s\n", result.OutputPath)
-	out.Print("\nNext: epack inspect %s\n", result.OutputPath)
+
+	// Post-command hints
+	p := out.Palette()
+	out.Print("\n%s\n", p.Dim("Next steps:"))
+	out.Print("%s  epack inspect %s   %s\n", p.Dim("  •"), result.OutputPath, p.Dim("# View pack contents"))
+	out.Print("%s  epack verify %s    %s\n", p.Dim("  •"), result.OutputPath, p.Dim("# Verify signatures"))
+	out.Print("%s  epack list artifacts %s  %s\n", p.Dim("  •"), result.OutputPath, p.Dim("# List artifacts"))
 
 	return nil
 }
@@ -318,7 +324,7 @@ func runPullDryRun(remoteName string, ref remote.PackRef, out *output.Writer) er
 	// Determine output path description
 	outputDesc := pullOutput
 	if outputDesc == "" {
-		outputDesc = "./<stream>.pack (auto-generated)"
+		outputDesc = "./<stream>.epack (auto-generated)"
 	}
 
 	// JSON output

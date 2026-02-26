@@ -11,6 +11,7 @@ import (
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
+	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/pack/builder"
 )
@@ -252,7 +253,7 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 	outputPath := opts.OutputPath
 	if outputPath == "" {
 		timestamp := time.Now().UTC().Format("20060102-150405")
-		outputPath = fmt.Sprintf("evidence-%s.pack", timestamp)
+		outputPath = fmt.Sprintf("evidence-%s%s", timestamp, packpath.PackExtension)
 	}
 
 	b := builder.New(cfg.Stream)
@@ -421,7 +422,7 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 	outputPath := opts.OutputPath
 	if outputPath == "" {
 		timestamp := time.Now().UTC().Format("20060102-150405")
-		outputPath = fmt.Sprintf("evidence-%s.pack", timestamp)
+		outputPath = fmt.Sprintf("evidence-%s%s", timestamp, packpath.PackExtension)
 	}
 
 	b := builder.New(cfg.Stream)
