@@ -23,6 +23,7 @@ var (
 	collectOutput     string
 	collectTimeout    time.Duration
 	collectProgress   string
+	collectParallel   int
 )
 
 func newCollectCommand() *cobra.Command {
@@ -68,6 +69,9 @@ Examples:
 		"timeout per collector execution (e.g., 30s, 2m)")
 	cmd.Flags().StringVar(&collectProgress, "progress", defaultProgressMode(),
 		"progress display mode: auto, tty, plain, json, quiet (env: EPACK_PROGRESS)")
+	collectParallel = parallelFromEnv()
+	cmd.Flags().IntVar(&collectParallel, "parallel", collectParallel,
+		"max parallel collector executions (0=auto, 1=sequential, env: EPACK_PARALLEL)")
 
 	return cmd
 }
@@ -92,8 +96,9 @@ func runCollect(cmd *cobra.Command, args []string) error {
 	// Build options from flags
 	opts := collector.CollectOpts{
 		Secure: collector.SecureRunOptions{
-			Frozen:  collectFrozen,
-			Timeout: collectTimeout,
+			Frozen:   collectFrozen,
+			Timeout:  collectTimeout,
+			Parallel: collectParallel,
 		},
 		WorkDir:    workDir,
 		OutputPath: collectOutput,

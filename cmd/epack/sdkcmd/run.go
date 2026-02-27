@@ -36,13 +36,13 @@ Use --watch to automatically rebuild and rerun when source files change.
 In watch mode, pass a directory (Go project) instead of a binary:
 
   epack sdk run --watch .
-  epack sdk run --watch ./my-component -- pack.pack
+  epack sdk run --watch ./my-component -- pack.epack
 
 The binary name is inferred from the directory name.
 
 Examples:
-  epack sdk run ./epack-utility-viewer pack.pack
-  epack sdk run ./epack-tool-scanner --pack evidence.pack
+  epack sdk run ./epack-utility-viewer pack.epack
+  epack sdk run ./epack-tool-scanner --pack evidence.epack
   epack sdk run --trust ./my-component args...
   epack sdk run --watch . -- --capabilities
 

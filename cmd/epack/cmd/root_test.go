@@ -24,6 +24,12 @@ func TestQuickstart_Golden(t *testing.T) {
 	// Simulate running epack with no subcommand
 	printQuickstart(rootCmd)
 
+	// Use different golden file based on build type
+	goldenFile := "quickstart"
+	if ComponentsEnabled {
+		goldenFile = "quickstart_components"
+	}
+
 	got := buf.String()
-	assertGolden(t, goldenPath("quickstart"), got)
+	assertGolden(t, goldenPath(goldenFile), got)
 }

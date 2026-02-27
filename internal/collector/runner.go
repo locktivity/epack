@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/locktivity/epack/errors"
 	collectorexec "github.com/locktivity/epack/internal/collector/exec"
@@ -37,46 +40,73 @@ type CollectorOutput struct {
 
 // ParseCollectorOutput decodes collector stdout.
 // If stdout is not protocol-envelope JSON, it is preserved as RawData for lossless passthrough.
+// Handles both new format (with "type": "epack_result") and legacy format (without "type").
 func ParseCollectorOutput(output []byte) (*CollectorOutput, error) {
-	// First, check if it's valid JSON at all
 	if !json.Valid(output) {
-		// Not valid JSON - wrap as JSON string to preserve exact content
-		quoted, err := json.Marshal(string(output))
-		if err != nil {
-			return nil, fmt.Errorf("marshaling non-JSON output: %w", err)
-		}
-		return &CollectorOutput{
-			ProtocolVersion: 0,
-			RawData:         quoted,
-		}, nil
+		return wrapNonJSONOutput(output)
 	}
 
-	// Check if it's a JSON object that looks like an envelope (has protocol_version and data)
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(output, &raw); err == nil {
-		if versionBytes, hasVersion := raw["protocol_version"]; hasVersion {
-			if dataBytes, hasData := raw["data"]; hasData {
-				// It's a proper envelope - extract protocol_version and preserve data as raw
-				var version int
-				if err := json.Unmarshal(versionBytes, &version); err != nil {
-					return nil, fmt.Errorf("parsing protocol_version: %w", err)
-				}
-				return &CollectorOutput{
-					ProtocolVersion: version,
-					RawData:         dataBytes,
-				}, nil
-			}
+		if isResultEnvelope(raw) {
+			return extractEnvelope(raw)
 		}
 	}
 
-	// Valid JSON but not an envelope - treat whole thing as data (preserve as raw)
-	// Defensive copy to avoid aliasing caller's buffer
+	return preserveAsRawData(output), nil
+}
+
+// isResultEnvelope checks if raw JSON is a collector result envelope.
+// Accepts both new format (type: "epack_result") and legacy format (no type field).
+func isResultEnvelope(raw map[string]json.RawMessage) bool {
+	_, hasVersion := raw["protocol_version"]
+	_, hasData := raw["data"]
+	if !hasVersion || !hasData {
+		return false
+	}
+
+	// Check if it has type field - if so, must be "epack_result"
+	if typeBytes, hasType := raw["type"]; hasType {
+		var msgType string
+		if err := json.Unmarshal(typeBytes, &msgType); err != nil || msgType != "epack_result" {
+			return false
+		}
+	}
+	return true
+}
+
+// extractEnvelope extracts protocol_version and data from a result envelope.
+func extractEnvelope(raw map[string]json.RawMessage) (*CollectorOutput, error) {
+	var version int
+	if err := json.Unmarshal(raw["protocol_version"], &version); err != nil {
+		return nil, fmt.Errorf("parsing protocol_version: %w", err)
+	}
+	return &CollectorOutput{
+		ProtocolVersion: version,
+		RawData:         raw["data"],
+	}, nil
+}
+
+// wrapNonJSONOutput wraps non-JSON output as a JSON string.
+func wrapNonJSONOutput(output []byte) (*CollectorOutput, error) {
+	quoted, err := json.Marshal(string(output))
+	if err != nil {
+		return nil, fmt.Errorf("marshaling non-JSON output: %w", err)
+	}
+	return &CollectorOutput{
+		ProtocolVersion: 0,
+		RawData:         quoted,
+	}, nil
+}
+
+// preserveAsRawData creates output with the original JSON preserved as raw data.
+func preserveAsRawData(output []byte) *CollectorOutput {
 	rawCopy := make([]byte, len(output))
 	copy(rawCopy, output)
 	return &CollectorOutput{
 		ProtocolVersion: 0,
 		RawData:         rawCopy,
-	}, nil
+	}
 }
 
 // Runner executes collectors and collects evidence.
@@ -99,6 +129,7 @@ type SecureRunOptions struct {
 	Only               []string      // Run only these collectors (empty = all)
 	Timeout            time.Duration // Timeout per collector (0 = use DefaultCollectorTimeout)
 	MaxAggregateBudget int64         // Total bytes retained across all collector outputs
+	Parallel           int           // Max parallel collectors (0=auto, 1=sequential)
 }
 
 // UnsafeOverrides groups insecure execution toggles that require explicit opt-in.
@@ -122,8 +153,10 @@ type RunOptions struct {
 type CollectorEventType string
 
 const (
-	CollectorEventStart  CollectorEventType = "start"
-	CollectorEventFinish CollectorEventType = "finish"
+	CollectorEventStart    CollectorEventType = "start"
+	CollectorEventFinish   CollectorEventType = "finish"
+	CollectorEventStatus   CollectorEventType = "status"   // Indeterminate progress
+	CollectorEventProgress CollectorEventType = "progress" // Progress with current/total
 )
 
 // CollectorEvent describes collector runtime progress.
@@ -135,6 +168,11 @@ type CollectorEvent struct {
 	Success   bool
 	Duration  time.Duration
 	Error     error
+
+	// Progress-specific fields (only set for status/progress events)
+	Message         string // Status message or progress description
+	ProgressCurrent int64  // Current progress value (for progress events)
+	ProgressTotal   int64  // Total progress value (for progress events)
 }
 
 // ProgressHooks are optional callbacks for collection progress.
@@ -155,6 +193,34 @@ type CollectResult struct {
 	Stream   string
 	Results  []RunResult
 	Failures int
+}
+
+// parallelResults collects results from concurrent collector executions.
+// It provides thread-safe result collection with atomic failure counting.
+type parallelResults struct {
+	results  []RunResult
+	failures int64 // atomic counter
+}
+
+// newParallelResults creates a parallelResults with pre-allocated slots.
+func newParallelResults(size int) *parallelResults {
+	return &parallelResults{
+		results: make([]RunResult, size),
+	}
+}
+
+// set stores a result at the given index and increments failure counter if needed.
+// Thread-safe: each goroutine writes to its own slot.
+func (p *parallelResults) set(index int, result RunResult) {
+	p.results[index] = result
+	if !result.Success {
+		atomic.AddInt64(&p.failures, 1)
+	}
+}
+
+// getFailures returns the number of failed collectors.
+func (p *parallelResults) getFailures() int {
+	return int(atomic.LoadInt64(&p.failures))
 }
 
 // Run executes all collectors and returns their outputs.
@@ -224,7 +290,47 @@ func maxAggregateBudget(opts RunOptions) int64 {
 	return limits.MaxAggregateOutputBytes
 }
 
+// effectiveParallelism determines the actual parallelism level to use.
+// Returns 1 for sequential execution, or >1 for parallel execution.
+func effectiveParallelism(configured int, collectorCount int) int {
+	if collectorCount <= 1 {
+		return 1 // No parallelism benefit with 0-1 collectors
+	}
+	if configured == 1 {
+		return 1 // Explicit sequential
+	}
+	if configured > 1 {
+		return min(configured, collectorCount)
+	}
+	// Auto: min(NumCPU, collectors, 8)
+	auto := min(runtime.NumCPU(), collectorCount, 8)
+	if auto < 1 {
+		return 1
+	}
+	return auto
+}
+
+// runCollectors dispatches to sequential or parallel execution based on configuration.
 func (r *Runner) runCollectors(
+	ctx context.Context,
+	collectorNames []string,
+	collectors map[string]config.CollectorConfig,
+	lf *lockfile.LockFile,
+	platformKey string,
+	opts RunOptions,
+	aggregateBudget int64,
+	result *CollectResult,
+) {
+	parallelism := effectiveParallelism(opts.Secure.Parallel, len(collectorNames))
+	if parallelism <= 1 {
+		r.runCollectorsSequential(ctx, collectorNames, collectors, lf, platformKey, opts, aggregateBudget, result)
+		return
+	}
+	r.runCollectorsParallel(ctx, collectorNames, collectors, lf, platformKey, opts, aggregateBudget, parallelism, result)
+}
+
+// runCollectorsSequential executes collectors one at a time.
+func (r *Runner) runCollectorsSequential(
 	ctx context.Context,
 	collectorNames []string,
 	collectors map[string]config.CollectorConfig,
@@ -249,7 +355,7 @@ func (r *Runner) runCollectors(
 			Total:     len(collectorNames),
 		})
 		started := time.Now()
-		runResult := r.runOne(ctx, name, collectorCfg, lf, platformKey, opts)
+		runResult := r.runOne(ctx, name, collectorCfg, lf, platformKey, opts, idx, len(collectorNames))
 		aggregateUsed = enforceCollectorBudget(&runResult, aggregateUsed, aggregateBudget)
 		result.Results = append(result.Results, runResult)
 		emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
@@ -265,6 +371,102 @@ func (r *Runner) runCollectors(
 			result.Failures++
 		}
 	}
+}
+
+// runCollectorsParallel executes collectors concurrently with bounded parallelism.
+func (r *Runner) runCollectorsParallel(
+	ctx context.Context,
+	collectorNames []string,
+	collectors map[string]config.CollectorConfig,
+	lf *lockfile.LockFile,
+	platformKey string,
+	opts RunOptions,
+	aggregateBudget int64,
+	parallelism int,
+	result *CollectResult,
+) {
+	total := len(collectorNames)
+	budget := limits.NewBytesBudget(aggregateBudget)
+	presults := newParallelResults(total)
+
+	// Map names to indices for deterministic result placement
+	nameToIndex := make(map[string]int, total)
+	for i, name := range collectorNames {
+		nameToIndex[name] = i
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(parallelism)
+
+	for _, name := range collectorNames {
+		name := name // capture for goroutine
+		collectorCfg := collectors[name]
+
+		g.Go(func() error {
+			idx := nameToIndex[name]
+
+			// Check budget before running (early exit for clearly exceeded budget)
+			if budget.BytesRemaining() <= 0 {
+				runResult := RunResult{
+					Collector: name,
+					Success:   false,
+					Error: fmt.Errorf("aggregate output budget exceeded (%d bytes); skipping collector",
+						aggregateBudget),
+				}
+				presults.set(idx, runResult)
+				emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
+					Type:      CollectorEventFinish,
+					Collector: name,
+					Index:     idx + 1,
+					Total:     total,
+					Success:   false,
+					Error:     runResult.Error,
+				})
+				return nil // Don't fail the group
+			}
+
+			emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
+				Type:      CollectorEventStart,
+				Collector: name,
+				Index:     idx + 1,
+				Total:     total,
+			})
+
+			started := time.Now()
+			runResult := r.runOne(gctx, name, collectorCfg, lf, platformKey, opts, idx+1, total)
+
+			// Enforce budget atomically after execution
+			if runResult.Success {
+				outputSize := int64(len(runResult.Output))
+				if !budget.ReserveBytes(outputSize) {
+					runResult.Success = false
+					runResult.Output = nil
+					runResult.Error = fmt.Errorf("collector output (%d bytes) would exceed aggregate budget (%d bytes)",
+						outputSize, aggregateBudget)
+				}
+			}
+
+			presults.set(idx, runResult)
+
+			emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
+				Type:      CollectorEventFinish,
+				Collector: name,
+				Index:     idx + 1,
+				Total:     total,
+				Success:   runResult.Success,
+				Duration:  time.Since(started),
+				Error:     runResult.Error,
+			})
+
+			return nil // Never fail the group; track per-collector failures
+		})
+	}
+
+	// Wait for all collectors to complete
+	_ = g.Wait()
+
+	result.Results = presults.results
+	result.Failures = presults.getFailures()
 }
 
 func (r *Runner) skipCollectorForBudget(
@@ -318,7 +520,7 @@ func emitCollectorEvent(fn func(CollectorEvent), evt CollectorEvent) {
 }
 
 // runOne executes a single collector.
-func (r *Runner) runOne(ctx context.Context, name string, cfg config.CollectorConfig, lf *lockfile.LockFile, platform string, opts RunOptions) RunResult {
+func (r *Runner) runOne(ctx context.Context, name string, cfg config.CollectorConfig, lf *lockfile.LockFile, platform string, opts RunOptions, collectorIndex, collectorTotal int) RunResult {
 	result := RunResult{Collector: name}
 
 	// Resolve binary path
@@ -352,7 +554,7 @@ func (r *Runner) runOne(ctx context.Context, name string, cfg config.CollectorCo
 	}
 
 	// Execute the collector
-	output, err := r.executeCollector(ctx, name, execPath, cfg.Config, cfg.Secrets, opts)
+	output, err := r.executeCollector(ctx, name, execPath, cfg.Config, cfg.Secrets, opts, collectorIndex, collectorTotal)
 	if err != nil {
 		result.Error = err
 		return result
@@ -433,7 +635,7 @@ func resolveCollectorExecPath(name, binaryPath string, cfg config.CollectorConfi
 
 // executeCollector runs a collector binary and returns its output.
 // SECURITY: execPath must be a verified path from verifiedBinaryFD or explicit opt-in.
-func (r *Runner) executeCollector(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions) ([]byte, error) {
+func (r *Runner) executeCollector(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions, collectorIndex, collectorTotal int) ([]byte, error) {
 	// Write config to temporary file
 	// NOTE: We intentionally do NOT pass config via stdin JSON. Having a single
 	// config source (file-based) is more secure than dual sources because:
@@ -451,10 +653,35 @@ func (r *Runner) executeCollector(ctx context.Context, name, execPath string, co
 	// Build restricted environment with protocol variables
 	env := collectorexec.BuildEnv(os.Environ(), name, configPath, secrets, os.Getenv, opts.Unsafe.InheritPath)
 
+	// Create progress callback that forwards to the progress hooks
+	var onProgress func(collectorexec.ProgressMessage)
+	if opts.Progress.OnCollectorEvent != nil {
+		onProgress = func(msg collectorexec.ProgressMessage) {
+			evt := CollectorEvent{
+				Collector: name,
+				Index:     collectorIndex,
+				Total:     collectorTotal,
+				Message:   msg.Message,
+			}
+			switch msg.Kind {
+			case "status":
+				evt.Type = CollectorEventStatus
+			case "progress":
+				evt.Type = CollectorEventProgress
+				evt.ProgressCurrent = msg.Current
+				evt.ProgressTotal = msg.Total
+			default:
+				return // Unknown kind, ignore
+			}
+			opts.Progress.OnCollectorEvent(evt)
+		}
+	}
+
 	// Execute collector with timeout and output limits
 	result := collectorexec.Run(ctx, name, execPath, configPath, env, collectorexec.RunOptions{
 		Timeout:             opts.Secure.Timeout,
 		InsecureInheritPath: opts.Unsafe.InheritPath,
+		OnProgress:          onProgress,
 	})
 
 	if result.Err != nil {

@@ -16,7 +16,7 @@ func TestSidecarDir(t *testing.T) {
 		// Without .epack extension - suffix added directly
 		{"simple no extension", "evidence", "evidence.runs"},
 		{"absolute path no extension", "/path/to/vendor", "/path/to/vendor.runs"},
-		{"with other extension", "data.pack", "data.pack.runs"},
+		{"with other extension", "data.zip", "data.zip.runs"},
 
 		// Edge cases
 		{"just extension", ".epack", ".runs"},

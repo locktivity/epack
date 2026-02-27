@@ -80,19 +80,19 @@ func TestValidateFileRoot(t *testing.T) {
 		wantErr  bool
 	}{
 		// Valid: file within root
-		{"file in root", "/storage/packs/test.pack", "/storage/packs", false},
-		{"file in subdir", "/storage/packs/org/test.pack", "/storage/packs", false},
-		{"deeply nested", "/storage/packs/org/team/v1/test.pack", "/storage/packs", false},
+		{"file in root", "/storage/packs/test.epack", "/storage/packs", false},
+		{"file in subdir", "/storage/packs/org/test.epack", "/storage/packs", false},
+		{"deeply nested", "/storage/packs/org/team/v1/test.epack", "/storage/packs", false},
 		{"file equals root", "/storage/packs", "/storage/packs", false},
 
 		// Invalid: file outside root (path traversal)
 		{"parent dir traversal", "/storage/packs/../secrets/key", "/storage/packs", true},
 		{"absolute escape", "/etc/passwd", "/storage/packs", true},
-		{"sibling dir", "/storage/other/test.pack", "/storage/packs", true},
-		{"prefix confusion", "/storage/packs-evil/test.pack", "/storage/packs", true},
+		{"sibling dir", "/storage/other/test.epack", "/storage/packs", true},
+		{"prefix confusion", "/storage/packs-evil/test.epack", "/storage/packs", true},
 
 		// Edge cases
-		{"root with trailing slash", "/storage/packs/test.pack", "/storage/packs/", false},
+		{"root with trailing slash", "/storage/packs/test.epack", "/storage/packs/", false},
 	}
 
 	for _, tt := range tests {
@@ -112,14 +112,14 @@ func TestValidateFileRoot_RelativePaths(t *testing.T) {
 	// Test with relative paths (which get converted to absolute)
 	t.Run("relative file in relative root", func(t *testing.T) {
 		// Both get resolved to absolute paths
-		err := validateFileRoot("testdata/subdir/file.pack", "testdata")
+		err := validateFileRoot("testdata/subdir/file.epack", "testdata")
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
 	t.Run("relative traversal attempt", func(t *testing.T) {
-		err := validateFileRoot("../escape/file.pack", "testdata")
+		err := validateFileRoot("../escape/file.epack", "testdata")
 		if err == nil {
 			t.Error("expected error for path traversal, got nil")
 		}
@@ -225,7 +225,7 @@ func TestDownloadPackFromFile_RequiresFileRoot(t *testing.T) {
 	// adapters from directing reads to arbitrary filesystem locations.
 
 	t.Run("empty file_root rejected", func(t *testing.T) {
-		_, err := downloadPackFromFile(context.TODO(), "/tmp/out.pack", "/some/path/file.pack", 0, "", nil)
+		_, err := downloadPackFromFile(context.TODO(), "/tmp/out.epack", "/some/path/file.epack", 0, "", nil)
 		if err == nil {
 			t.Error("expected error when file_root is empty")
 		}

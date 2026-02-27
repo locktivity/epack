@@ -51,7 +51,7 @@ type Options struct {
 	Ref remote.PackRef
 
 	// OutputPath is the destination path for the downloaded pack.
-	// If empty, defaults to ./<stream>.pack
+	// If empty, defaults to ./<stream>.epack
 	OutputPath string
 
 	// Force allows overwriting an existing file.

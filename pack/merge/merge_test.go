@@ -15,7 +15,7 @@ import (
 // createTestPack creates a test pack with the given stream and artifacts.
 func createTestPack(t *testing.T, stream string, artifacts map[string][]byte) string {
 	t.Helper()
-	outputPath := filepath.Join(t.TempDir(), "test.pack")
+	outputPath := filepath.Join(t.TempDir(), "test.epack")
 
 	b := builder.New(stream)
 	for path, content := range artifacts {
@@ -38,7 +38,7 @@ func TestMerge_Basic(t *testing.T) {
 		"artifacts/data2.json": []byte(`{"from": "pack2"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	sources := []SourcePack{
@@ -82,7 +82,7 @@ func TestMerge_Basic(t *testing.T) {
 }
 
 func TestMerge_EmptySources(t *testing.T) {
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	err := Merge(ctx, []SourcePack{}, outputPath, Options{Stream: "org/merged"})
@@ -96,7 +96,7 @@ func TestMerge_MissingStream(t *testing.T) {
 		"artifacts/data.json": []byte(`{}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{})
@@ -114,7 +114,7 @@ func TestMerge_PathPrefixing(t *testing.T) {
 		"artifacts/config.json": []byte(`{"source": "b"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	sources := []SourcePack{
@@ -150,7 +150,7 @@ func TestMerge_ProvenanceMetadata(t *testing.T) {
 		"artifacts/a.json": []byte(`{}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	opts := Options{
@@ -186,7 +186,7 @@ func TestMerge_SourcePackFields(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{Stream: "test/merged"}); err != nil {
@@ -230,7 +230,7 @@ func TestMerge_IntegrityVerification(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{Stream: "test/merged"}); err != nil {
@@ -366,7 +366,7 @@ func TestMerge_AttestationVerificationEnabled(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// Without attestations, merge should succeed even with VerifyAttestations enabled
@@ -387,7 +387,7 @@ func TestMerge_AttestationVerificationRequiresVerifier(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// VerifyAttestations=true but no Verifier - should work if no attestations present
@@ -409,7 +409,7 @@ func TestMerge_AttestationVerificationSkipped(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// VerifyAttestations=false - should not require a verifier
@@ -437,7 +437,7 @@ func TestMerge_VerificationFailure(t *testing.T) {
 	// Open and manually add an attestation to test the verification path
 	// Since we can't easily add attestations, we'll test the verifier error path
 	// by creating a mock that always fails
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	failingVerifier := &mockVerifier{
@@ -472,7 +472,7 @@ func TestMerge_PreOpenedPack(t *testing.T) {
 	}
 	defer func() { _ = p.Close() }()
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// Use pre-opened pack
@@ -516,7 +516,7 @@ func TestMerge_MixedPreOpenedAndPath(t *testing.T) {
 	}
 	defer func() { _ = p1.Close() }()
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// Mix pre-opened and path-based
@@ -545,11 +545,11 @@ func TestMerge_MixedPreOpenedAndPath(t *testing.T) {
 }
 
 func TestMerge_InvalidSourcePath(t *testing.T) {
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	sources := []SourcePack{
-		{Path: "/nonexistent/path/to/pack.pack"},
+		{Path: "/nonexistent/path/to/pack.epack"},
 	}
 
 	err := Merge(ctx, sources, outputPath, Options{Stream: "org/merged"})
@@ -566,7 +566,7 @@ func TestMerge_MultipleArtifactsPerPack(t *testing.T) {
 		"artifacts/nested/a.json": []byte(`{"nested": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{Stream: "org/merged"}); err != nil {
@@ -603,7 +603,7 @@ func TestMerge_MultipleArtifactsPerPack(t *testing.T) {
 
 func TestMerge_PreservesArtifactMetadata(t *testing.T) {
 	// Create a pack with an artifact that has metadata
-	pack1Path := filepath.Join(t.TempDir(), "source.pack")
+	pack1Path := filepath.Join(t.TempDir(), "source.epack")
 
 	b := builder.New("org/source")
 	addOpts := builder.ArtifactOptions{
@@ -619,7 +619,7 @@ func TestMerge_PreservesArtifactMetadata(t *testing.T) {
 		t.Fatalf("Build failed: %v", err)
 	}
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1Path}}, outputPath, Options{Stream: "org/merged"}); err != nil {
@@ -700,7 +700,7 @@ func TestMerge_ManySourcePacks(t *testing.T) {
 		sources = append(sources, SourcePack{Path: p})
 	}
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, sources, outputPath, Options{Stream: "org/merged"}); err != nil {
@@ -726,7 +726,7 @@ func TestMerge_ContextCancellation(t *testing.T) {
 		"artifacts/data.json": []byte(`{}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
@@ -745,7 +745,7 @@ func TestMerge_SinglePack(t *testing.T) {
 		"artifacts/data.json": []byte(`{"single": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{Stream: "org/merged"}); err != nil {
@@ -772,7 +772,7 @@ func TestMerge_NestedStreamPath(t *testing.T) {
 		"artifacts/data.json": []byte(`{}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{Stream: "org/merged"}); err != nil {
@@ -799,7 +799,7 @@ func TestMerge_EmptyMergedBy(t *testing.T) {
 		"artifacts/data.json": []byte(`{}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	opts := Options{
@@ -828,7 +828,7 @@ func TestMerge_IncludeAttestationsWithoutVerify(t *testing.T) {
 		"artifacts/data.json": []byte(`{}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	opts := Options{
@@ -852,7 +852,7 @@ func TestMerge_SameStreamCollision(t *testing.T) {
 		"artifacts/config.json": []byte(`{"version": 2}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	sources := []SourcePack{
@@ -922,7 +922,7 @@ func TestMerge_VerificationFailsWithAttestations(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// Create a verifier that always fails
@@ -949,7 +949,7 @@ func TestMerge_IncludeAttestationsDefault(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// Default options should not include attestations
@@ -992,7 +992,7 @@ func TestMerge_SourcePackDigestRecorded(t *testing.T) {
 	sourceDigest := sourcePack.Manifest().PackDigest
 	_ = sourcePack.Close()
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{Stream: "org/merged"}); err != nil {
@@ -1021,7 +1021,7 @@ func TestMerge_MergedPackDigestComputation(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{Stream: "org/merged"}); err != nil {
@@ -1058,7 +1058,7 @@ func TestMerge_BothPackAndPathProvided(t *testing.T) {
 	}
 	defer func() { _ = p.Close() }()
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// Provide both Pack and Path - Pack should be preferred
@@ -1080,7 +1080,7 @@ func TestMerge_EmptyPackStream(t *testing.T) {
 		"artifacts/data.json": []byte(`{}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	// Empty output stream should fail
@@ -1097,7 +1097,7 @@ func TestMerge_ArtifactContentVerification(t *testing.T) {
 		"artifacts/data.json": originalContent,
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}}, outputPath, Options{Stream: "org/merged"}); err != nil {
@@ -1132,7 +1132,7 @@ func TestMerge_DuplicateStreamFromDirectSources(t *testing.T) {
 		"artifacts/data2.json": []byte(`{"from": "pack2"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	err := Merge(ctx, []SourcePack{{Path: pack1}, {Path: pack2}}, outputPath, Options{Stream: "org/merged"})
@@ -1153,7 +1153,7 @@ func TestMerge_DuplicateStreamFromNestedMergedPack(t *testing.T) {
 		"artifacts/data.json": []byte(`{"from": "b"}`),
 	})
 
-	mergedPath := filepath.Join(t.TempDir(), "merged1.pack")
+	mergedPath := filepath.Join(t.TempDir(), "merged1.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}, {Path: pack2}}, mergedPath, Options{Stream: "org/merged1"}); err != nil {
@@ -1165,7 +1165,7 @@ func TestMerge_DuplicateStreamFromNestedMergedPack(t *testing.T) {
 		"artifacts/other.json": []byte(`{"from": "duplicate-a"}`),
 	})
 
-	finalPath := filepath.Join(t.TempDir(), "final.pack")
+	finalPath := filepath.Join(t.TempDir(), "final.epack")
 
 	// This should fail: org/a exists in mergedPath's provenance
 	err := Merge(ctx, []SourcePack{{Path: mergedPath}, {Path: pack3}}, finalPath, Options{Stream: "org/final"})
@@ -1186,7 +1186,7 @@ func TestMerge_FlattenAlreadyMergedPack(t *testing.T) {
 		"artifacts/data.json": []byte(`{"from": "b"}`),
 	})
 
-	mergedPath := filepath.Join(t.TempDir(), "merged1.pack")
+	mergedPath := filepath.Join(t.TempDir(), "merged1.epack")
 	ctx := context.Background()
 
 	if err := Merge(ctx, []SourcePack{{Path: pack1}, {Path: pack2}}, mergedPath, Options{Stream: "org/merged1"}); err != nil {
@@ -1198,7 +1198,7 @@ func TestMerge_FlattenAlreadyMergedPack(t *testing.T) {
 		"artifacts/data.json": []byte(`{"from": "c"}`),
 	})
 
-	finalPath := filepath.Join(t.TempDir(), "final.pack")
+	finalPath := filepath.Join(t.TempDir(), "final.epack")
 
 	if err := Merge(ctx, []SourcePack{{Path: mergedPath}, {Path: pack3}}, finalPath, Options{Stream: "org/final"}); err != nil {
 		t.Fatalf("Second merge failed: %v", err)
@@ -1249,7 +1249,7 @@ func TestMerge_DeepNestingStaysFlat(t *testing.T) {
 	})
 
 	// First merge: A + B -> M1
-	m1Path := filepath.Join(t.TempDir(), "m1.pack")
+	m1Path := filepath.Join(t.TempDir(), "m1.epack")
 	if err := Merge(ctx, []SourcePack{{Path: packA}, {Path: packB}}, m1Path, Options{Stream: "org/m1"}); err != nil {
 		t.Fatalf("Merge 1 failed: %v", err)
 	}
@@ -1260,7 +1260,7 @@ func TestMerge_DeepNestingStaysFlat(t *testing.T) {
 	})
 
 	// Second merge: M1 + C -> M2
-	m2Path := filepath.Join(t.TempDir(), "m2.pack")
+	m2Path := filepath.Join(t.TempDir(), "m2.epack")
 	if err := Merge(ctx, []SourcePack{{Path: m1Path}, {Path: packC}}, m2Path, Options{Stream: "org/m2"}); err != nil {
 		t.Fatalf("Merge 2 failed: %v", err)
 	}
@@ -1271,7 +1271,7 @@ func TestMerge_DeepNestingStaysFlat(t *testing.T) {
 	})
 
 	// Third merge: M2 + D -> M3
-	m3Path := filepath.Join(t.TempDir(), "m3.pack")
+	m3Path := filepath.Join(t.TempDir(), "m3.epack")
 	if err := Merge(ctx, []SourcePack{{Path: m2Path}, {Path: packD}}, m3Path, Options{Stream: "org/m3"}); err != nil {
 		t.Fatalf("Merge 3 failed: %v", err)
 	}
@@ -1322,19 +1322,19 @@ func TestMerge_DuplicateStreamAcrossTwoMergedPacks(t *testing.T) {
 	})
 
 	// First merged pack: A + B
-	m1Path := filepath.Join(t.TempDir(), "m1.pack")
+	m1Path := filepath.Join(t.TempDir(), "m1.epack")
 	if err := Merge(ctx, []SourcePack{{Path: packA}, {Path: packB}}, m1Path, Options{Stream: "org/m1"}); err != nil {
 		t.Fatalf("Merge 1 failed: %v", err)
 	}
 
 	// Second merged pack: A + C (reuses org/a!)
-	m2Path := filepath.Join(t.TempDir(), "m2.pack")
+	m2Path := filepath.Join(t.TempDir(), "m2.epack")
 	if err := Merge(ctx, []SourcePack{{Path: packA}, {Path: packC}}, m2Path, Options{Stream: "org/m2"}); err != nil {
 		t.Fatalf("Merge 2 failed: %v", err)
 	}
 
 	// Try to merge M1 + M2 - should fail because org/a appears in both
-	finalPath := filepath.Join(t.TempDir(), "final.pack")
+	finalPath := filepath.Join(t.TempDir(), "final.epack")
 	err := Merge(ctx, []SourcePack{{Path: m1Path}, {Path: m2Path}}, finalPath, Options{Stream: "org/final"})
 	if err == nil {
 		t.Fatal("Expected error for duplicate stream across merged packs, got nil")
@@ -1359,13 +1359,13 @@ func TestMerge_UniqueStreamsSucceeds(t *testing.T) {
 	})
 
 	// Merge A + B
-	m1Path := filepath.Join(t.TempDir(), "m1.pack")
+	m1Path := filepath.Join(t.TempDir(), "m1.epack")
 	if err := Merge(ctx, []SourcePack{{Path: packA}, {Path: packB}}, m1Path, Options{Stream: "org/m1"}); err != nil {
 		t.Fatalf("Merge 1 failed: %v", err)
 	}
 
 	// Merge M1 + C (all streams unique)
-	finalPath := filepath.Join(t.TempDir(), "final.pack")
+	finalPath := filepath.Join(t.TempDir(), "final.epack")
 	if err := Merge(ctx, []SourcePack{{Path: m1Path}, {Path: packC}}, finalPath, Options{Stream: "org/final"}); err != nil {
 		t.Fatalf("Final merge failed: %v", err)
 	}

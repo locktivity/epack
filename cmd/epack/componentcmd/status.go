@@ -38,6 +38,7 @@ type statusInfo struct {
 	ProjectRoot string            `json:"project_root"`
 	ConfigPath  string            `json:"config_path"`
 	ConfigValid bool              `json:"config_valid"`
+	ConfigReady bool              `json:"config_ready"`
 	ConfigError string            `json:"config_error,omitempty"`
 	Stream      string            `json:"stream,omitempty"`
 	Lockfile    *lockfileStatus   `json:"lockfile,omitempty"`
@@ -101,10 +102,20 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// Load config
 	cfg, cfgErr := config.Load(status.ConfigPath)
 	if cfgErr != nil {
-		status.ConfigValid = false
-		status.ConfigError = cfgErr.Error()
+		rawCfg, rawErr := config.LoadUnvalidated(status.ConfigPath)
+		if rawErr == nil && isStarterConfig(rawCfg) {
+			cfg = rawCfg
+			status.ConfigValid = true
+			status.ConfigReady = false
+			status.Stream = cfg.Stream
+		} else {
+			status.ConfigValid = false
+			status.ConfigReady = false
+			status.ConfigError = cfgErr.Error()
+		}
 	} else {
 		status.ConfigValid = true
+		status.ConfigReady = true
 		status.Stream = cfg.Stream
 	}
 
@@ -183,7 +194,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// Config status
 	out.Print("%s\n", palette.Bold("Configuration:"))
 	if status.ConfigValid {
-		out.Print("  %s %s\n", palette.Green("✓"), "epack.yaml")
+		if status.ConfigReady {
+			out.Print("  %s %s\n", palette.Green("✓"), "epack.yaml")
+		} else {
+			out.Print("  %s %s\n", palette.Yellow("○"), "epack.yaml")
+			out.Print("    Starter config: add at least one collector, tool, or remote.\n")
+		}
 		if status.Stream != "" {
 			out.Print("    Stream: %s\n", status.Stream)
 		}
@@ -246,6 +262,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func isStarterConfig(cfg *config.JobConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	return len(cfg.Collectors) == 0 && len(cfg.Tools) == 0 && len(cfg.Remotes) == 0
 }
 
 // isComponentInstalled checks if a component binary is installed.

@@ -149,7 +149,7 @@ func prepareOutputDir(outputDir string) (string, error) {
 		return "", fmt.Errorf("output parent directory does not exist: %w", err)
 	}
 	if parentInfo.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("refusing to extract: parent directory %s is a symlink", parentDir)
+		return "", fmt.Errorf("refusing to extract: parent directory %s is a symlink (security restriction)\n\nUse a different output directory with --output, e.g.:\n  epack extract pack.epack --output ./extracted", parentDir)
 	}
 	if err := safefile.MkdirAll(parentDir, absOutputDir); err != nil {
 		return "", fmt.Errorf("creating output directory: %w", err)

@@ -49,6 +49,16 @@ type CollectorContext interface {
 	// Use this for secrets listed in epack.yaml secrets array.
 	Secret(name string) string
 
+	// Status reports a status update during collection.
+	// Use this for indeterminate progress like "Connecting to API...".
+	// Status messages are written to stdout as JSON for the CLI to display.
+	Status(message string)
+
+	// Progress reports progress with current/total counts.
+	// Use this when iterating over a known number of items.
+	// Example: Progress(5, 100, "Fetching repositories")
+	Progress(current, total int64, message string)
+
 	// Emit outputs the collected data. This should be called once.
 	// The data is wrapped in the protocol envelope automatically.
 	Emit(data any) error
@@ -197,6 +207,14 @@ func (c *collectorContext) Name() string              { return c.name }
 func (c *collectorContext) Config() map[string]any    { return c.config }
 func (c *collectorContext) Secret(name string) string { return os.Getenv(name) }
 
+func (c *collectorContext) Status(message string) {
+	defaultProgressWriter.writeStatus(message)
+}
+
+func (c *collectorContext) Progress(current, total int64, message string) {
+	defaultProgressWriter.writeProgress(current, total, message)
+}
+
 func (c *collectorContext) Emit(data any) error {
 	if c.emitted {
 		return fmt.Errorf("Emit can only be called once")
@@ -204,7 +222,9 @@ func (c *collectorContext) Emit(data any) error {
 	c.emitted = true
 
 	// Wrap in protocol envelope (COL-002)
+	// Include "type" field for unified message format
 	envelope := map[string]any{
+		"type":             "epack_result",
 		"protocol_version": componenttypes.CollectorProtocolVersion,
 		"data":             data,
 	}

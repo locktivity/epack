@@ -151,7 +151,7 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 
 	// Ensure base directory exists for component installation.
 	// This is done early so safefile.MkdirAll can use it as the security boundary.
-	if err := safefile.MkdirAll(s.BaseDir, s.BaseDir); err != nil {
+	if err := safefile.EnsureBaseDir(s.BaseDir); err != nil {
 		return nil, fmt.Errorf("creating base directory: %w", err)
 	}
 

@@ -224,6 +224,18 @@ func TestScaffold(t *testing.T) {
 	if !strings.Contains(string(gitignoreContent), gitignoreBlockEnd) {
 		t.Error(".gitignore should contain managed block end marker")
 	}
+	if !strings.Contains(string(gitignoreContent), "packs/*.epack") {
+		t.Error(".gitignore should ignore generated .epack files")
+	}
+
+	// Check README quickstart uses .epack extension
+	readmeContent, err := os.ReadFile(filepath.Join(projectDir, readmeFile))
+	if err != nil {
+		t.Fatalf("failed to read README: %v", err)
+	}
+	if !strings.Contains(string(readmeContent), "epack sign packs/*.epack") {
+		t.Error("README should use .epack extension in sign example")
+	}
 }
 
 func TestScaffoldIdempotent(t *testing.T) {

@@ -78,7 +78,7 @@ func TestBuildCommand_CreatesValidPack(t *testing.T) {
 	}
 
 	// Build pack using the builder directly (since we can't easily call the CLI)
-	outputPath := filepath.Join(tmpDir, "test.pack")
+	outputPath := filepath.Join(tmpDir, "test.epack")
 
 	// Use the pack builder library directly
 	b := builder.New("test/stream")
@@ -120,7 +120,7 @@ func TestBuildCommand_CreatesValidPack(t *testing.T) {
 
 func TestBuildCommand_EmptyPack(t *testing.T) {
 	tmpDir := t.TempDir()
-	outputPath := filepath.Join(tmpDir, "empty.pack")
+	outputPath := filepath.Join(tmpDir, "empty.epack")
 
 	b := builder.New("test/empty")
 	if err := b.Build(outputPath); err != nil {
@@ -150,7 +150,7 @@ func TestBuild_GoldenHuman(t *testing.T) {
 		t.Fatalf("Failed to write artifact: %v", err)
 	}
 
-	outputPath := filepath.Join(tmpDir, "test.pack")
+	outputPath := filepath.Join(tmpDir, "test.epack")
 
 	var buf bytes.Buffer
 	var errBuf bytes.Buffer
@@ -190,7 +190,7 @@ func TestBuild_GoldenJSON(t *testing.T) {
 		t.Fatalf("Failed to write artifact: %v", err)
 	}
 
-	outputPath := filepath.Join(tmpDir, "test.pack")
+	outputPath := filepath.Join(tmpDir, "test.epack")
 
 	var buf bytes.Buffer
 	var errBuf bytes.Buffer

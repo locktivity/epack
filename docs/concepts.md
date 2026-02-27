@@ -4,10 +4,10 @@ This guide explains how epack works and the key ideas behind it.
 
 ## What is an Evidence Pack?
 
-An Evidence Pack is a ZIP file (`.pack`) containing:
+An Evidence Pack is a ZIP file (`.epack`) containing:
 
 ```
-evidence.pack/
+evidence.epack/
 ├── manifest.json              # Metadata and digests
 ├── artifacts/                 # Evidence files
 │   ├── github-posture.json

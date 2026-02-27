@@ -29,7 +29,7 @@ This command scaffolds a complete project structure with:
   - sample.epack     Demo pack to explore (verify, inspect, list)
   - packs/          Output directory for generated packs
   - README.md       Quick reference
-  - .gitignore      Ignores .epack/ and packs/*.pack
+  - .gitignore      Ignores .epack/ and generated packs
 
 The stream name is automatically inferred from your git remote,
 or uses a placeholder that you can edit in epack.yaml.
@@ -131,7 +131,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 func printNewSuccess(out *output.Writer, projectName string, result *ScaffoldResult) {
 	p := out.Palette()
 
-	out.Print("%s Created %s/\n\n", p.Success("✓"), projectName)
+	out.Print("%s\n\n", p.Success(fmt.Sprintf("Created %s/", projectName)))
 
 	// Print structure
 	out.Print("  %s/\n", projectName)
@@ -173,5 +173,5 @@ func printNewSuccess(out *output.Writer, projectName string, result *ScaffoldRes
 	out.Print("%s\n", p.Bold("When ready:"))
 	out.Print("  vim %s                  %s\n", configFileName, p.Dim("# Configure your collectors"))
 	out.Print("  epack collect                   %s\n", p.Dim("# Run collection"))
-	out.Print("  epack sign %s/*.pack         %s\n", packsDir, p.Dim("# Sign the output"))
+	out.Print("  epack sign %s/*.epack        %s\n", packsDir, p.Dim("# Sign the output"))
 }

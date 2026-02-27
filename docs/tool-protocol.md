@@ -29,11 +29,11 @@ Tools can be invoked in two ways:
 
 ```bash
 # Direct invocation - most ergonomic
-epack ai --pack vendor.pack "What controls exist?"
-epack policy --pack vendor.pack
+epack ai --pack vendor.epack "What controls exist?"
+epack policy --pack vendor.epack
 
 # With environment variables
-EPACK_PACK=vendor.pack epack ai "What controls exist?"
+EPACK_PACK=vendor.epack epack ai "What controls exist?"
 ```
 
 This follows the pattern used by kubectl (plugins), git (aliases), and gh (extensions).
@@ -117,6 +117,58 @@ Standard flags all tools should support:
 
 Note: `result.json` in the run directory is the source of truth; stdout JSON is for scripting convenience.
 
+### Progress Messages
+
+Tools can emit progress messages to stdout during execution. Progress messages use the same format as collectors:
+
+```json
+{"type":"epack_progress","protocol_version":1,"kind":"status","message":"Processing pack..."}
+{"type":"epack_progress","protocol_version":1,"kind":"progress","current":5,"total":100,"message":"Analyzing files"}
+```
+
+Progress message fields:
+- `type`: Always `"epack_progress"`
+- `protocol_version`: Progress protocol version (currently 1)
+- `kind`: Either `"status"` (indeterminate) or `"progress"` (determinate with current/total)
+- `message`: Human-readable status message
+- `current`, `total`: Progress counters (only for `kind: "progress"`)
+
+Unlike collectors, tools write their final result to `result.json` in the run directory (not stdout), so stdout is available purely for progress messages.
+
+**Using the SDK:**
+
+```go
+package main
+
+import "github.com/locktivity/epack/componentsdk"
+
+func main() {
+    componentsdk.RunTool(componentsdk.ToolSpec{
+        Name:         "example",
+        Version:      "1.0.0",
+        Description:  "Example tool with progress",
+        RequiresPack: true,
+    }, func(ctx componentsdk.ToolContext) error {
+        ctx.Status("Loading pack...")
+
+        // Process with progress
+        for i := 1; i <= 10; i++ {
+            ctx.Progress(int64(i), 10, "Processing")
+        }
+
+        ctx.Status("Writing output...")
+
+        return ctx.WriteOutput("result.json", map[string]any{
+            "message": "Done",
+        })
+    })
+}
+```
+
+SDK methods for progress:
+- `ctx.Status(message)` - Report indeterminate status
+- `ctx.Progress(current, total, message)` - Report determinate progress
+
 ## Output Convention
 
 ### Sidecar Directory
@@ -158,7 +210,7 @@ Every tool run produces this file:
     "protocol_version": 1
   },
   "run_id": "2026-02-19T14-30-00-123456Z-000000",
-  "pack_path": "vendor.pack",
+  "pack_path": "vendor.epack",
   "pack_digest": "sha256:abc123...",
   "started_at": "2026-02-19T14:30:00Z",
   "completed_at": "2026-02-19T14:30:05Z",
@@ -417,10 +469,10 @@ Error: required tool 'index' has not been run
 The tool "ai" requires "index" to run first.
 
 Run:
-  epack index --pack vendor.pack
+  epack index --pack vendor.epack
 
 Then retry:
-  epack ai --pack vendor.pack
+  epack ai --pack vendor.epack
 ```
 
 ## Configuration

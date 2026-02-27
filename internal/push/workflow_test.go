@@ -76,19 +76,19 @@ func TestValidateFileRoot(t *testing.T) {
 		wantErr  bool
 	}{
 		// Valid: file within root
-		{"file in root", "/storage/packs/test.pack", "/storage/packs", false},
-		{"file in subdir", "/storage/packs/org/test.pack", "/storage/packs", false},
-		{"deeply nested", "/storage/packs/org/team/v1/test.pack", "/storage/packs", false},
+		{"file in root", "/storage/packs/test.epack", "/storage/packs", false},
+		{"file in subdir", "/storage/packs/org/test.epack", "/storage/packs", false},
+		{"deeply nested", "/storage/packs/org/team/v1/test.epack", "/storage/packs", false},
 		{"file equals root", "/storage/packs", "/storage/packs", false},
 
 		// Invalid: file outside root (path traversal)
 		{"parent dir traversal", "/storage/packs/../secrets/key", "/storage/packs", true},
 		{"absolute escape", "/etc/passwd", "/storage/packs", true},
-		{"sibling dir", "/storage/other/test.pack", "/storage/packs", true},
-		{"prefix confusion", "/storage/packs-evil/test.pack", "/storage/packs", true},
+		{"sibling dir", "/storage/other/test.epack", "/storage/packs", true},
+		{"prefix confusion", "/storage/packs-evil/test.epack", "/storage/packs", true},
 
 		// Edge cases
-		{"root with trailing slash", "/storage/packs/test.pack", "/storage/packs/", false},
+		{"root with trailing slash", "/storage/packs/test.epack", "/storage/packs/", false},
 	}
 
 	for _, tt := range tests {
@@ -187,7 +187,7 @@ func TestUploadPackToFile_RequiresFileRoot(t *testing.T) {
 	// adapters from directing writes to arbitrary filesystem locations.
 
 	t.Run("empty file_root rejected", func(t *testing.T) {
-		err := uploadPackToFile(context.TODO(), "/tmp/source.pack", "/some/path/dest.pack", "", nil)
+		err := uploadPackToFile(context.TODO(), "/tmp/source.epack", "/some/path/dest.epack", "", nil)
 		if err == nil {
 			t.Error("expected error when file_root is empty")
 		}

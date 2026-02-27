@@ -19,7 +19,8 @@ type CollectorRunner interface {
 type CollectorExecutor interface {
 	// Execute runs a single collector binary and returns its output.
 	// The execPath must be a verified path (from execsafe.VerifiedBinaryFD or explicit opt-in).
-	Execute(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions) ([]byte, error)
+	// collectorIndex and collectorTotal are used for progress event context (use 0 if not in a batch).
+	Execute(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions, collectorIndex, collectorTotal int) ([]byte, error)
 }
 
 // BinaryResolver abstracts collector binary path resolution for testability.
@@ -44,6 +45,6 @@ func NewDefaultCollectorExecutor(runner *Runner) *DefaultCollectorExecutor {
 }
 
 // Execute implements CollectorExecutor using the runner's executeCollector method.
-func (e *DefaultCollectorExecutor) Execute(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions) ([]byte, error) {
-	return e.runner.executeCollector(ctx, name, execPath, config, secrets, opts)
+func (e *DefaultCollectorExecutor) Execute(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions, collectorIndex, collectorTotal int) ([]byte, error) {
+	return e.runner.executeCollector(ctx, name, execPath, config, secrets, opts, collectorIndex, collectorTotal)
 }

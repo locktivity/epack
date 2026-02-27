@@ -419,8 +419,8 @@ func TestInTotoStatementParsing(t *testing.T) {
 				"_type": "https://in-toto.io/Statement/v1",
 				"predicateType": "https://evidencepack.org/attestation/v1",
 				"subject": [
-					{"name": "pack1.pack", "digest": {"sha256": "abc"}},
-					{"name": "pack2.pack", "digest": {"sha256": "def"}}
+					{"name": "pack1.epack", "digest": {"sha256": "abc"}},
+					{"name": "pack2.epack", "digest": {"sha256": "def"}}
 				],
 				"predicate": {"pack_digest": "sha256:xyz"}
 			}`,
@@ -522,7 +522,7 @@ func TestResultStruct_AllFields(t *testing.T) {
 			Type:          "https://in-toto.io/Statement/v1",
 			PredicateType: "https://evidencepack.org/attestation/v1",
 			Subjects: []Subject{
-				{Name: "test.pack", Digest: map[string]string{"sha256": "abc123"}},
+				{Name: "test.epack", Digest: map[string]string{"sha256": "abc123"}},
 			},
 			Predicate: []byte(`{"pack_digest": "sha256:abc123"}`),
 		},

@@ -37,7 +37,7 @@ func (m *mockSigner) Identity() string {
 // createTestPack creates a test pack with the given stream and artifacts.
 func createTestPack(t *testing.T, stream string, artifacts map[string][]byte) string {
 	t.Helper()
-	outputPath := filepath.Join(t.TempDir(), "test.pack")
+	outputPath := filepath.Join(t.TempDir(), "test.epack")
 
 	b := builder.New(stream)
 	for path, content := range artifacts {
@@ -344,7 +344,7 @@ func TestSignPackFileWithOptions_NilSigner(t *testing.T) {
 
 func TestSignPackFileWithOptions_NonexistentPack(t *testing.T) {
 	signer := &mockSigner{identity: "test@example.com"}
-	err := SignPackFileWithOptions(context.Background(), "/nonexistent/pack.pack", signer, MemoryLimitOptions{})
+	err := SignPackFileWithOptions(context.Background(), "/nonexistent/pack.epack", signer, MemoryLimitOptions{})
 	if err == nil {
 		t.Error("Expected error for nonexistent pack, got nil")
 	}
@@ -848,7 +848,7 @@ func TestWriteZipFromSnapshot_AtomicWrite(t *testing.T) {
 	}
 
 	// Write to new path to test atomic write
-	newPath := filepath.Join(t.TempDir(), "output.pack")
+	newPath := filepath.Join(t.TempDir(), "output.epack")
 	attestationContent := []byte(`{"attestation": true}`)
 	attestationName := "attestations/test.sigstore.json"
 

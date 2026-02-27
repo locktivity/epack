@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/version"
 )
 
 //go:embed templates/*.tmpl templates/docs/*.tmpl
@@ -21,6 +22,7 @@ type templateData struct {
 	ConfigSection string // YAML config section (e.g., "tools", "collectors")
 	GOOS          string // Target OS for SLSA configs (e.g., "linux", "darwin")
 	GOARCH        string // Target architecture for SLSA configs (e.g., "amd64", "arm64")
+	EpackVersion  string // epack version for go.mod (e.g., "v0.1.16")
 }
 
 // newTemplateData creates template data from scaffold options.
@@ -69,7 +71,10 @@ func generateMainGo(name string, kind componenttypes.ComponentKind) (string, err
 
 // generateGoMod generates go.mod content.
 func generateGoMod(modulePath string) (string, error) {
-	data := templateData{ModulePath: modulePath}
+	data := templateData{
+		ModulePath:   modulePath,
+		EpackVersion: version.Version,
+	}
 	return renderTemplate("go.mod.tmpl", data)
 }
 

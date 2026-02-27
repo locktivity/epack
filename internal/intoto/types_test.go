@@ -41,7 +41,7 @@ func TestStatementJSONSerialization(t *testing.T) {
 		Type: StatementType,
 		Subject: []Subject{
 			{
-				Name:   "test.pack",
+				Name:   "test.epack",
 				Digest: map[string]string{"sha256": "abc123"},
 			},
 		},
@@ -77,8 +77,8 @@ func TestStatementJSONSerialization(t *testing.T) {
 	if len(decoded.Subject) != 1 {
 		t.Fatalf("len(Subject) = %d, want 1", len(decoded.Subject))
 	}
-	if decoded.Subject[0].Name != "test.pack" {
-		t.Errorf("Subject[0].Name = %q, want %q", decoded.Subject[0].Name, "test.pack")
+	if decoded.Subject[0].Name != "test.epack" {
+		t.Errorf("Subject[0].Name = %q, want %q", decoded.Subject[0].Name, "test.epack")
 	}
 	if decoded.Predicate.PackDigest != "sha256:abc123" {
 		t.Errorf("Predicate.PackDigest = %q, want %q", decoded.Predicate.PackDigest, "sha256:abc123")

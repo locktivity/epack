@@ -50,7 +50,7 @@ func (h *fixtureHandler) PullPrepare(req componentsdk.PullPrepareRequest) (*comp
 	token := generateToken()
 	return &componentsdk.PullPrepareResponse{
 		Download: componentsdk.DownloadInfo{
-			URL:       "https://fixture.example.com/download/example.pack",
+			URL:       "https://fixture.example.com/download/example.epack",
 			ExpiresAt: time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
 		},
 		Pack: componentsdk.PackResult{

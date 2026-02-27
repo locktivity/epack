@@ -46,9 +46,9 @@ go install -tags components github.com/locktivity/epack/cmd/epack@latest
 **Option A: Build from files you already have**
 
 ```bash
-epack build evidence.pack ./reports/*.json --stream myorg/security
-epack sign evidence.pack
-epack verify evidence.pack
+epack build evidence.epack ./reports/*.json --stream myorg/security
+epack sign evidence.epack
+epack verify evidence.epack
 ```
 
 **Option B: Automated collection pipeline**
@@ -58,7 +58,7 @@ epack new my-pipeline && cd my-pipeline
 # Edit epack.yaml to add collectors (GitHub, AWS, Okta, etc.)
 export GITHUB_TOKEN=ghp_...
 epack collect          # Lock deps → sync binaries → run collectors → build pack
-epack sign *.pack
+epack sign *.epack
 ```
 
 ## Core Commands
@@ -75,7 +75,7 @@ epack sign *.pack
 ## What's in a Pack?
 
 ```
-evidence.pack/
+evidence.epack/
 ├── manifest.json           # Metadata + SHA-256 digests
 ├── artifacts/              # Your evidence files
 │   ├── github-posture.json
@@ -107,7 +107,7 @@ epack install collector github
 epack utility install viewer
 
 # Run an installed utility
-epack utility viewer evidence.pack
+epack utility viewer evidence.epack
 ```
 
 ## When to Use epack
@@ -171,10 +171,10 @@ import (
 // Build
 b := builder.New("myorg/stream")
 b.AddFile("./config.json")
-b.Write("evidence.pack")
+b.Write("evidence.epack")
 
 // Read and verify
-p, _ := pack.Open("evidence.pack")
+p, _ := pack.Open("evidence.epack")
 defer p.Close()
 p.VerifyIntegrity()
 ```

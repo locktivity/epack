@@ -21,7 +21,7 @@ func TestMerge_TwoPacks(t *testing.T) {
 	})
 
 	// Merge them
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	sources := []merge.SourcePack{
@@ -78,7 +78,7 @@ func TestMerge_ArtifactPathPrefixing(t *testing.T) {
 		"artifacts/config.json": []byte(`{"source": "b"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	sources := []merge.SourcePack{
@@ -125,7 +125,7 @@ func TestMerge_ProvenanceFields(t *testing.T) {
 		"artifacts/b.json": []byte(`{}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	sources := []merge.SourcePack{
@@ -181,7 +181,7 @@ func TestMerge_IntegrityVerification(t *testing.T) {
 		"artifacts/data.json": []byte(`{"test": true}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 	ctx := context.Background()
 
 	sources := []merge.SourcePack{
@@ -210,7 +210,7 @@ func TestMerge_IntegrityVerification(t *testing.T) {
 
 func TestMerge_EmptySourcePacks(t *testing.T) {
 	ctx := context.Background()
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 
 	opts := merge.Options{
 		Stream: "test/merged",
@@ -229,7 +229,7 @@ func TestMerge_MissingStream(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 
 	sources := []merge.SourcePack{
 		{Path: pack1},
@@ -257,7 +257,7 @@ func TestMerge_GoldenHuman(t *testing.T) {
 		"artifacts/data2.json": []byte(`{"from": "pack2"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 
 	var buf bytes.Buffer
 	var errBuf bytes.Buffer
@@ -296,7 +296,7 @@ func TestMerge_GoldenJSON(t *testing.T) {
 		"artifacts/data2.json": []byte(`{"from": "pack2"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 
 	var buf bytes.Buffer
 	var errBuf bytes.Buffer
@@ -335,7 +335,7 @@ func TestMerge_GoldenDryRun(t *testing.T) {
 		"artifacts/data2.json": []byte(`{"from": "pack2"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 
 	var buf bytes.Buffer
 	var errBuf bytes.Buffer
@@ -376,7 +376,7 @@ func TestMerge_GoldenDryRunJSON(t *testing.T) {
 		"artifacts/data2.json": []byte(`{"from": "pack2"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 
 	var buf bytes.Buffer
 	var errBuf bytes.Buffer
@@ -430,7 +430,7 @@ func TestMerge_RequiresIdentityPolicyForAttestations(t *testing.T) {
 		"artifacts/data2.json": []byte(`{"from": "pack2"}`),
 	})
 
-	outputPath := filepath.Join(t.TempDir(), "merged.pack")
+	outputPath := filepath.Join(t.TempDir(), "merged.epack")
 
 	var buf bytes.Buffer
 	var errBuf bytes.Buffer

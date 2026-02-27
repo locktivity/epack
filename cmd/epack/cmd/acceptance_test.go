@@ -172,7 +172,7 @@ func TestAcceptance_BuildInspectVerify(t *testing.T) {
 		t.Fatalf("failed to write artifact: %v", err)
 	}
 
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 
 	// Build
 	result := runCLI(t, "build", packPath, artifactPath, "--stream", "test/workflow")
@@ -221,7 +221,7 @@ func TestAcceptance_ExitCode_MalformedPack(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create an invalid pack file
-	invalidPack := filepath.Join(tmpDir, "invalid.pack")
+	invalidPack := filepath.Join(tmpDir, "invalid.epack")
 	if err := os.WriteFile(invalidPack, []byte("not a zip file"), 0644); err != nil {
 		t.Fatalf("failed to write invalid pack: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestAcceptance_ExitCode_MalformedPack(t *testing.T) {
 
 // Acceptance Test: Exit code for missing pack
 func TestAcceptance_ExitCode_MissingPack(t *testing.T) {
-	result := runCLI(t, "verify", "--integrity-only", "/nonexistent/path.pack")
+	result := runCLI(t, "verify", "--integrity-only", "/nonexistent/path.epack")
 
 	// Should fail with malformed pack code (can't open)
 	if result.ExitCode != ExitMalformedPack {
@@ -253,7 +253,7 @@ func TestAcceptance_ListArtifacts(t *testing.T) {
 	_ = os.WriteFile(artifact1, []byte(`{"config": true}`), 0644)
 	_ = os.WriteFile(artifact2, []byte(`{"data": [1,2,3]}`), 0644)
 
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 
 	// Build with multiple artifacts
 	result := runCLI(t, "build", packPath, artifact1, artifact2, "--stream", "test/list")
@@ -285,7 +285,7 @@ func TestAcceptance_Extract(t *testing.T) {
 	artifactPath := filepath.Join(tmpDir, "extract-test.json")
 	_ = os.WriteFile(artifactPath, []byte(artifactContent), 0644)
 
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 	outputDir := filepath.Join(tmpDir, "extracted")
 
 	// Build
@@ -320,7 +320,7 @@ func TestAcceptance_QuietMode(t *testing.T) {
 	artifactPath := filepath.Join(tmpDir, "data.json")
 	_ = os.WriteFile(artifactPath, []byte(`{}`), 0644)
 
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 
 	// Build with --quiet
 	result := runCLI(t, "build", "--quiet", packPath, artifactPath, "--stream", "test/quiet")
@@ -341,7 +341,7 @@ func TestAcceptance_JSONOutput(t *testing.T) {
 	artifactPath := filepath.Join(tmpDir, "data.json")
 	_ = os.WriteFile(artifactPath, []byte(`{"test": 123}`), 0644)
 
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 
 	// Build
 	result := runCLI(t, "build", packPath, artifactPath, "--stream", "test/json")
@@ -376,7 +376,7 @@ func TestAcceptance_VerifyTamperedPack(t *testing.T) {
 	artifactPath := filepath.Join(tmpDir, "data.json")
 	_ = os.WriteFile(artifactPath, []byte(`{"original": true}`), 0644)
 
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 
 	// Build
 	result := runCLI(t, "build", packPath, artifactPath, "--stream", "test/tamper")
@@ -405,9 +405,9 @@ func TestAcceptance_Merge(t *testing.T) {
 	_ = os.WriteFile(artifact1, []byte(`{"source": 1}`), 0644)
 	_ = os.WriteFile(artifact2, []byte(`{"source": 2}`), 0644)
 
-	pack1 := filepath.Join(tmpDir, "pack1.pack")
-	pack2 := filepath.Join(tmpDir, "pack2.pack")
-	merged := filepath.Join(tmpDir, "merged.pack")
+	pack1 := filepath.Join(tmpDir, "pack1.epack")
+	pack2 := filepath.Join(tmpDir, "pack2.epack")
+	merged := filepath.Join(tmpDir, "merged.epack")
 
 	// Build source packs
 	result := runCLI(t, "build", pack1, artifact1, "--stream", "test/source1")
@@ -449,7 +449,7 @@ func TestAcceptance_NoColor(t *testing.T) {
 	artifactPath := filepath.Join(tmpDir, "data.json")
 	_ = os.WriteFile(artifactPath, []byte(`{}`), 0644)
 
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 
 	result := runCLI(t, "build", packPath, artifactPath, "--stream", "test/nocolor")
 	if result.ExitCode != 0 {
@@ -475,7 +475,7 @@ func TestAcceptance_NOCOLOREnv(t *testing.T) {
 	artifactPath := filepath.Join(tmpDir, "data.json")
 	_ = os.WriteFile(artifactPath, []byte(`{}`), 0644)
 
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 
 	result := runCLI(t, "build", packPath, artifactPath, "--stream", "test/envnocolor")
 	if result.ExitCode != 0 {

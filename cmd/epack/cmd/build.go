@@ -37,7 +37,7 @@ func init() {
 }
 
 var buildCmd = &cobra.Command{
-	Use:        "build [flags] <output.pack> [artifact...]",
+	Use:        "build [flags] <output.epack> [artifact...]",
 	Short:      "Create an evidence pack from artifacts",
 	SuggestFor: []string{"create", "new", "make", "pack"},
 	Long: `Build creates an evidence pack containing the specified artifacts.

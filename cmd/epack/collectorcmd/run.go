@@ -4,7 +4,9 @@ package collectorcmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/locktivity/epack/internal/collector"
@@ -24,6 +26,7 @@ var (
 	runInsecureAllowUnverified bool
 	runInsecureAllowUnpinned   bool
 	runTimeout                 time.Duration
+	runParallel                int
 )
 
 func newRunCommand() *cobra.Command {
@@ -65,7 +68,7 @@ Examples:
 	cmd.Flags().StringVar(&runOnly, "only", "",
 		"run only these collectors (comma-separated)")
 	cmd.Flags().StringVarP(&runOutput, "output", "o", "",
-		"output pack file (default: evidence-<timestamp>.pack)")
+		"output pack file (default: evidence-<timestamp>.epack)")
 	cmd.Flags().BoolVar(&runInsecureAllowUnverified, "insecure-allow-unverified", false,
 		"allow running collectors installed with --insecure-skip-verify (NOT RECOMMENDED)")
 	// Support env var for insecure-allow-unpinned
@@ -76,6 +79,9 @@ Examples:
 		"timeout per collector execution (e.g., 30s, 2m)")
 	cmd.Flags().StringVar(&runProgress, "progress", defaultProgressMode(),
 		"progress display mode: auto, tty, plain, json, quiet (env: EPACK_PROGRESS)")
+	runParallel = parallelFromEnv()
+	cmd.Flags().IntVar(&runParallel, "parallel", runParallel,
+		"max parallel collector executions (0=auto, 1=sequential, env: EPACK_PARALLEL)")
 
 	return cmd
 }
@@ -110,9 +116,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// Build options from flags
 	opts := collector.RunAndBuildOpts{
 		Secure: collector.SecureRunOptions{
-			Frozen:  runFrozen,
-			Only:    only,
-			Timeout: runTimeout,
+			Frozen:   runFrozen,
+			Only:     only,
+			Timeout:  runTimeout,
+			Parallel: runParallel,
 		},
 		Unsafe: collector.UnsafeOverrides{
 			AllowUnverifiedInstall: runInsecureAllowUnverified,
@@ -186,4 +193,18 @@ func validateRunFlags() error {
 		})
 	}
 	return nil
+}
+
+// parallelFromEnv reads EPACK_PARALLEL from environment.
+// Returns 0 (auto) if not set or invalid.
+func parallelFromEnv() int {
+	env := os.Getenv("EPACK_PARALLEL")
+	if env == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(env)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }

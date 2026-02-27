@@ -55,7 +55,7 @@ func init() {
 }
 
 var mergeCmd = &cobra.Command{
-	Use:        "merge [flags] <output.pack> <source.pack>...",
+	Use:        "merge [flags] <output.epack> <source.epack>...",
 	Short:      "Merge multiple packs into one",
 	SuggestFor: []string{"combine", "join"},
 	Long: `Merge combines multiple evidence packs into a single merged pack.
@@ -70,7 +70,7 @@ is not verified during merge since the merge operator is untrusted from the
 receiver's perspective. Receivers should verify embedded attestations with
 their own identity policy:
 
-  epack verify merged.pack --issuer https://accounts.google.com \
+  epack verify merged.epack --issuer https://accounts.google.com \
                            --subject user@example.com
 
 The merged pack can be signed separately using 'epack sign' to attest to the
@@ -78,22 +78,22 @@ merge operation itself.
 
 Examples:
   # Merge two packs
-  epack merge combined.pack pack1.pack pack2.pack --stream myorg/combined
+  epack merge combined.epack pack1.epack pack2.epack --stream myorg/combined
 
   # Merge with attestation preservation (verified by default)
-  epack merge combined.pack pack1.pack pack2.pack --stream myorg/combined --include-attestations
+  epack merge combined.epack pack1.epack pack2.epack --stream myorg/combined --include-attestations
 
   # Merge multiple packs using glob
-  epack merge combined.pack ./packs/*.pack --stream myorg/all
+  epack merge combined.epack ./packs/*.epack --stream myorg/all
 
   # Skip cryptographic validation (INSECURE)
-  epack merge combined.pack pack1.pack pack2.pack --stream myorg/combined --include-attestations --insecure-skip-attestation-verify
+  epack merge combined.epack pack1.epack pack2.epack --stream myorg/combined --include-attestations --insecure-skip-attestation-verify
 
   # Specify who performed the merge
-  epack merge combined.pack pack1.pack pack2.pack --stream myorg/combined --merged-by "ci-system"
+  epack merge combined.epack pack1.epack pack2.epack --stream myorg/combined --merged-by "ci-system"
 
   # Preview what would be merged (dry-run)
-  epack merge combined.pack pack1.pack pack2.pack --stream myorg/combined --dry-run`,
+  epack merge combined.epack pack1.epack pack2.epack --stream myorg/combined --dry-run`,
 	Args: cobra.MinimumNArgs(2),
 	RunE: runMerge,
 }

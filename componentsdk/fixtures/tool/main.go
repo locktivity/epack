@@ -13,6 +13,16 @@ func main() {
 		Description:  "Minimal tool for SDK conformance testing",
 		RequiresPack: false,
 	}, func(ctx componentsdk.ToolContext) error {
+		// Demonstrate progress reporting
+		ctx.Status("Processing...")
+
+		// Simulate work with progress
+		for i := 1; i <= 3; i++ {
+			ctx.Progress(int64(i), 3, "Working")
+		}
+
+		ctx.Status("Finalizing...")
+
 		// Write a simple output
 		result := map[string]any{
 			"message": "SDK fixture executed successfully",

@@ -28,7 +28,7 @@ Supported types:
   utility    - Creates sample command-line invocation scripts
 
 Examples:
-  epack sdk mock tool              # Creates sample-evidence.pack
+  epack sdk mock tool              # Creates sample-evidence.epack
   epack sdk mock collector         # Creates sample-config.yaml and env vars
   epack sdk mock tool -o testdata  # Output to testdata/ directory`,
 		Args:      cobra.ExactArgs(1),

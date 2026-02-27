@@ -147,7 +147,7 @@ func TestVerifyPackDigest(t *testing.T) {
 func TestVerifyCommand_IntegrityCheck(t *testing.T) {
 	// Create a pack and verify it passes integrity check
 	tmpDir := t.TempDir()
-	packPath := filepath.Join(tmpDir, "test.pack")
+	packPath := filepath.Join(tmpDir, "test.epack")
 
 	content := []byte(`{"test": "data"}`)
 	b := builder.New("test/integrity")

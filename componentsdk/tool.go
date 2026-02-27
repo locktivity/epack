@@ -65,6 +65,16 @@ type ToolContext interface {
 	// Config returns the parsed configuration, or nil if none provided.
 	Config() map[string]any
 
+	// Status reports a status update during tool execution.
+	// Use this for indeterminate progress like "Analyzing pack...".
+	// Status messages are written to stdout as JSON for the CLI to display.
+	Status(message string)
+
+	// Progress reports progress with current/total counts.
+	// Use this when iterating over a known number of items.
+	// Example: Progress(5, 100, "Processing artifacts")
+	Progress(current, total int64, message string)
+
 	// WriteOutput writes data as JSON to the outputs directory and registers it.
 	// The path must be a simple filename (no directories, no traversal).
 	// Use WriteOutputBytes for non-JSON content.
@@ -163,7 +173,7 @@ func setupToolPack(ctx *toolContext, spec ToolSpec) int {
 			})
 			return ctx.writeResult("failure", nil)
 		}
-		ctx.pack = pack
+			ctx.pack = pack
 		return 0
 	}
 	if spec.RequiresPack {
@@ -239,6 +249,14 @@ func (c *toolContext) Pack() *Pack            { return c.pack }
 func (c *toolContext) PackPath() string       { return c.packPath }
 func (c *toolContext) PackDigest() string     { return c.packDigest }
 func (c *toolContext) Config() map[string]any { return c.config }
+
+func (c *toolContext) Status(message string) {
+	defaultProgressWriter.writeStatus(message)
+}
+
+func (c *toolContext) Progress(current, total int64, message string) {
+	defaultProgressWriter.writeProgress(current, total, message)
+}
 
 func (c *toolContext) WriteOutput(filename string, data any) error {
 	jsonData, err := json.MarshalIndent(data, "", "  ")

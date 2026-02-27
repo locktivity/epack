@@ -313,9 +313,9 @@ Tools are standalone binaries that operate on signed evidence packs. Unlike comp
 **Top-level commands (recommended):** Configured tools are promoted to top-level commands:
 
 ```bash
-epack ai --pack vendor.pack "What controls exist?"
-epack policy --pack vendor.pack
-EPACK_PACK=vendor.pack epack ai "What is the audit scope?"
+epack ai --pack vendor.epack "What controls exist?"
+epack policy --pack vendor.epack
+EPACK_PACK=vendor.epack epack ai "What is the audit scope?"
 ```
 
 **Explicit dispatch:** For tools not in `epack.yaml`:
@@ -390,7 +390,7 @@ Wrapper exit codes 10-19 are reserved for wrapper pre-execution failures:
   "wrapper": { "version": "1.0.0" },
   "tool": { "name": "policy", "version": "1.2.3", "protocol_version": 1 },
   "run_id": "20240115T123456Z-abc123",
-  "pack_path": "/path/to/vendor.pack",
+  "pack_path": "/path/to/vendor.epack",
   "started_at": "2024-01-15T12:34:56.789Z",
   "completed_at": "2024-01-15T12:34:57.123Z",
   "duration_ms": 334,

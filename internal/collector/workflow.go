@@ -28,7 +28,7 @@ type CollectOpts struct {
 	WorkDir string
 
 	// OutputPath is the output pack file path.
-	// If empty, defaults to "evidence-<timestamp>.pack".
+	// If empty, defaults to "evidence-<timestamp>.epack".
 	OutputPath string
 
 	// OnCollectorEvent receives collector lifecycle events while running.
@@ -367,7 +367,7 @@ type RunAndBuildOpts struct {
 	WorkDir string
 
 	// OutputPath is the output pack file path.
-	// If empty, defaults to "evidence-<timestamp>.pack".
+	// If empty, defaults to "evidence-<timestamp>.epack".
 	OutputPath string
 
 	// OnCollectorEvent receives collector lifecycle events while running.

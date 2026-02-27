@@ -446,7 +446,7 @@ echo '{"status": "ok"}'
 		Config: map[string]any{"key": "value"},
 	}
 
-	result := runner.runOne(context.Background(), "test", cfg, lf, platform, RunOptions{})
+	result := runner.runOne(context.Background(), "test", cfg, lf, platform, RunOptions{}, 1, 1)
 	if !result.Success {
 		t.Errorf("runOne() failed: %v", result.Error)
 	}
@@ -510,7 +510,7 @@ echo '{"pwned": true}'
 		Unsafe: UnsafeOverrides{
 			AllowUnverifiedSourceCollectors: false, // Default - secure mode
 		},
-	})
+	}, 1, 1)
 
 	// MUST fail - if it succeeds, we have an RCE vulnerability
 	if result.Success {
@@ -576,7 +576,7 @@ echo '{"status": "ok"}'
 		Unsafe: UnsafeOverrides{
 			AllowUnverifiedSourceCollectors: true, // INSECURE - explicit opt-in
 		},
-	})
+	}, 1, 1)
 
 	// Should succeed when explicitly opted in
 	if !result.Success {
@@ -975,6 +975,12 @@ func TestParseCollectorOutput_EnvelopeExtraction(t *testing.T) {
 		{
 			name:            "valid envelope",
 			input:           `{"protocol_version":1,"data":{"key":"value"}}`,
+			wantVersion:     1,
+			wantDataContain: `"key":"value"`,
+		},
+		{
+			name:            "new format with type field",
+			input:           `{"type":"epack_result","protocol_version":1,"data":{"key":"value"}}`,
 			wantVersion:     1,
 			wantDataContain: `"key":"value"`,
 		},

@@ -218,7 +218,7 @@ func generateRemoteMocks(outputDir string) ([]string, error) {
 	pushPath := filepath.Join(outputDir, "sample-push-request.json")
 	pushContent := `{
   "action": "push",
-  "pack_path": "./sample-evidence.pack",
+  "pack_path": "./sample-evidence.epack",
   "destination": "registry.example.com/org/sample-evidence:v1.0.0",
   "options": {
     "force": false,
@@ -236,7 +236,7 @@ func generateRemoteMocks(outputDir string) ([]string, error) {
 	pullContent := `{
   "action": "pull",
   "source": "registry.example.com/org/sample-evidence:v1.0.0",
-  "output_path": "./downloaded.pack",
+  "output_path": "./downloaded.epack",
   "options": {
     "verify": true
   }

@@ -287,7 +287,7 @@ func createContentTestPack(t *testing.T, stream string, artifacts map[string][]b
 	t.Helper()
 
 	dir := t.TempDir()
-	packPath := filepath.Join(dir, "test.pack")
+	packPath := filepath.Join(dir, "test.epack")
 
 	b := builder.New(stream)
 	for path, content := range artifacts {

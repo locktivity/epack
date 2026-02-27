@@ -94,7 +94,7 @@ echo '{"packages": 42, "vulnerabilities": 0}' > deps.json
 Build a pack:
 
 ```bash
-epack build my-evidence.pack *.json --stream myorg/security
+epack build my-evidence.epack *.json --stream myorg/security
 ```
 
 ## Sign the Pack
@@ -102,7 +102,7 @@ epack build my-evidence.pack *.json --stream myorg/security
 Sign with Sigstore (opens browser):
 
 ```bash
-epack sign my-evidence.pack
+epack sign my-evidence.epack
 ```
 
 Your browser opens for OIDC authentication. Sign in with Google, GitHub, or Microsoft.
@@ -112,7 +112,7 @@ Your browser opens for OIDC authentication. Sign in with Google, GitHub, or Micr
 Verify the signature and enforce who signed it:
 
 ```bash
-epack verify my-evidence.pack \
+epack verify my-evidence.epack \
   --issuer "https://accounts.google.com" \
   --subject "you@example.com"
 ```
@@ -129,7 +129,7 @@ epack verify my-evidence.pack \
 ## What's Next
 
 - **Automated collection**: Edit `epack.yaml` to configure collectors, then run `epack collect`
-- **Compare over time**: Use `epack diff old.pack new.pack` to see changes
+- **Compare over time**: Use `epack diff old.epack new.epack` to see changes
 - **Share packs**: Configure a remote in `epack.yaml` to push/pull packs
 - **CI/CD**: Use `epack collect --frozen` for reproducible builds
 

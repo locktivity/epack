@@ -28,7 +28,7 @@ import (
 // Example:
 //
 //	verifier, _ := verify.NewStrictVerifier(issuer, subject)
-//	err := merge.Merge(ctx, sources, "merged.pack", merge.SafeMergeOptions("org/merged", verifier))
+//	err := merge.Merge(ctx, sources, "merged.epack", merge.SafeMergeOptions("org/merged", verifier))
 func SafeMergeOptions(stream string, verifier verify.Verifier) Options {
 	return Options{
 		Stream:              stream,

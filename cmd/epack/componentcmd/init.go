@@ -107,9 +107,9 @@ func printInitSuccess(out *output.Writer, result *ScaffoldResult) {
 	p := out.Palette()
 
 	if result.AlreadyInitted {
-		out.Print("%s Already initialized %s\n\n", p.Success("✓"), p.Dim("(epack.yaml unchanged)"))
+		out.Print("%s %s\n\n", p.Success("Already initialized"), p.Dim("(epack.yaml unchanged)"))
 	} else {
-		out.Print("%s Initialized epack\n\n", p.Success("✓"))
+		out.Print("%s\n\n", p.Success("Initialized epack"))
 	}
 
 	// Print files created/updated
@@ -163,5 +163,5 @@ func printInitSuccess(out *output.Writer, result *ScaffoldResult) {
 	out.Print("%s\n", p.Bold("When ready:"))
 	out.Print("  vim %s                  %s\n", configFileName, p.Dim("# Configure your collectors"))
 	out.Print("  epack collect                   %s\n", p.Dim("# Run collection"))
-	out.Print("  epack sign %s/*.pack         %s\n", packsDir, p.Dim("# Sign the output"))
+	out.Print("  epack sign %s/*.epack         %s\n", packsDir, p.Dim("# Sign the output"))
 }

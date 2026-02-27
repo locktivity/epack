@@ -38,7 +38,7 @@ func init() {
 var signCmd = &cobra.Command{
 	Use:        "sign <pack>",
 	Short:      "Sign a pack with Sigstore",
-	SuggestFor: []string{"sgin", "sing", "attest"},
+	SuggestFor: []string{"attest"}, // "sgin" and "sing" are handled by Cobra's edit distance
 	Long: `Sign an evidence pack with Sigstore using keyless or key-based signing.
 
 By default, keyless signing opens a browser for OIDC authentication.

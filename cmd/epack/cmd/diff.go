@@ -36,14 +36,22 @@ it shows a traditional line-based diff.
 
 Examples:
   # Compare two packs
-  epack diff old.pack new.pack
+  epack diff old.epack new.epack
 
   # Compare a specific artifact
-  epack diff old.pack new.pack --artifact artifacts/config.json
+  epack diff old.epack new.epack --artifact artifacts/config.json
 
   # JSON output for scripting
-  epack diff --json old.pack new.pack`,
-	Args: cobra.ExactArgs(2),
+  epack diff --json old.epack new.epack`,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 2 {
+			return fmt.Errorf("requires two pack paths\n\nUsage: epack diff <pack1> <pack2>")
+		}
+		if len(args) > 2 {
+			return fmt.Errorf("accepts at most 2 arguments, received %d", len(args))
+		}
+		return nil
+	},
 	RunE: runDiff,
 }
 

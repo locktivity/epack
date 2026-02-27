@@ -794,7 +794,7 @@ func TestOpen_IntegrationValidPack(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	zipPath := filepath.Join(tmpDir, "test.pack")
+	zipPath := filepath.Join(tmpDir, "test.epack")
 	f, err := os.Create(zipPath)
 	if err != nil {
 		t.Fatalf("failed to create zip file: %v", err)

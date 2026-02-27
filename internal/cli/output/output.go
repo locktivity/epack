@@ -338,6 +338,14 @@ func (s *Spinner) Fail(message string) {
 	}
 }
 
+// UpdateMessage changes the spinner's message while it's still running.
+// This is useful for showing progress updates without stopping the spinner.
+func (s *Spinner) UpdateMessage(message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.message = message
+}
+
 // Stop stops the spinner without showing a completion message.
 func (s *Spinner) Stop() {
 	s.mu.Lock()

@@ -2,6 +2,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/locktivity/epack/componentsdk"
 )
 
@@ -21,9 +23,18 @@ func main() {
 func run(ctx componentsdk.ToolContext) error {
 	pack := ctx.Pack()
 
+	// Report status updates (shown in CLI spinner/progress)
+	ctx.Status("Analyzing evidence pack...")
+
+	artifacts := pack.Artifacts()
+	total := int64(len(artifacts))
+
 	// TODO: Implement your tool logic here
-	// Example: iterate over artifacts
-	for _, artifact := range pack.Artifacts() {
+	// Example: iterate over artifacts with progress reporting
+	for i, artifact := range artifacts {
+		// Report progress (current/total shown in CLI)
+		ctx.Progress(int64(i+1), total, fmt.Sprintf("Processing %s", artifact.Path))
+
 		data, err := pack.ReadArtifact(artifact.Path)
 		if err != nil {
 			continue
@@ -33,9 +44,12 @@ func run(ctx componentsdk.ToolContext) error {
 		_ = data
 	}
 
+	ctx.Status("Analysis complete")
+
 	// Write output
 	result := map[string]any{
-		"message": "Tool executed successfully",
+		"message":   "Tool executed successfully",
+		"artifacts": len(artifacts),
 	}
 	return ctx.WriteOutput("output.json", result)
 }

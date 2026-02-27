@@ -116,19 +116,19 @@ func TestParseWrapperArgs(t *testing.T) {
 	}{
 		{
 			name:         "pack with separator",
-			args:         []string{"--pack", "vendor.pack", "--", "-q"},
-			wantPack:     "vendor.pack",
+			args:         []string{"--pack", "vendor.epack", "--", "-q"},
+			wantPack:     "vendor.epack",
 			wantToolArgs: []string{"-q"},
 		},
 		{
 			name:     "pack equals syntax",
-			args:     []string{"--pack=vendor.pack"},
-			wantPack: "vendor.pack",
+			args:     []string{"--pack=vendor.epack"},
+			wantPack: "vendor.epack",
 		},
 		{
 			name:     "short pack flag",
-			args:     []string{"-p", "vendor.pack"},
-			wantPack: "vendor.pack",
+			args:     []string{"-p", "vendor.epack"},
+			wantPack: "vendor.epack",
 		},
 		{
 			name:      "json and quiet flags",

@@ -6,9 +6,11 @@ package exec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/locktivity/epack/errors"
@@ -27,6 +29,16 @@ const CollectorProtocolVersion = 1
 // maxStderrLen is the maximum length of stderr to include in error messages.
 const maxStderrLen = 500
 
+// ProgressMessage represents a progress update from a component.
+type ProgressMessage struct {
+	Type            string `json:"type"`
+	ProtocolVersion int    `json:"protocol_version"`
+	Kind            string `json:"kind"`              // "status" or "progress"
+	Message         string `json:"message"`
+	Current         int64  `json:"current,omitempty"`
+	Total           int64  `json:"total,omitempty"`
+}
+
 // RunOptions configures collector process execution.
 type RunOptions struct {
 	// Timeout for collector execution. 0 uses DefaultCollectorTimeout.
@@ -35,6 +47,10 @@ type RunOptions struct {
 	// InsecureInheritPath allows inheriting PATH from the environment.
 	// When false (default), collectors run with a safe, deterministic PATH.
 	InsecureInheritPath bool
+
+	// OnProgress is called for each progress message parsed from stdout.
+	// If nil, progress messages are silently discarded.
+	OnProgress func(ProgressMessage)
 }
 
 // RunResult contains the result of executing a collector process.
@@ -42,6 +58,87 @@ type RunResult struct {
 	Stdout []byte
 	Stderr string
 	Err    error
+}
+
+// streamingStdoutWriter intercepts stdout, parses progress messages, and collects
+// the final result. Progress messages are forwarded via callback; the result
+// message is accumulated in the result buffer.
+type streamingStdoutWriter struct {
+	callback   func(ProgressMessage)
+	result     bytes.Buffer // Accumulates the final result (non-progress) output
+	partial    bytes.Buffer // Partial line awaiting newline
+	mu         sync.Mutex
+}
+
+func newStreamingStdoutWriter(callback func(ProgressMessage)) *streamingStdoutWriter {
+	return &streamingStdoutWriter{callback: callback}
+}
+
+func (s *streamingStdoutWriter) Write(p []byte) (n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Process incoming bytes looking for complete lines
+	s.partial.Write(p)
+
+	for {
+		line, err := s.partial.ReadBytes('\n')
+		if err != nil {
+			// No complete line yet - put the partial back
+			s.partial.Reset()
+			s.partial.Write(line)
+			break
+		}
+
+		// Complete line - check if it's a progress message
+		trimmed := bytes.TrimSpace(line)
+		if msg, ok := parseProgressLine(trimmed); ok {
+			// It's a progress message - forward to callback
+			if s.callback != nil {
+				s.callback(msg)
+			}
+		} else {
+			// Not a progress message - accumulate as result
+			s.result.Write(line)
+		}
+	}
+
+	return len(p), nil
+}
+
+// Result returns the accumulated non-progress output.
+func (s *streamingStdoutWriter) Result() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Include any remaining partial line in result
+	if s.partial.Len() > 0 {
+		s.result.Write(s.partial.Bytes())
+		s.partial.Reset()
+	}
+
+	return s.result.Bytes()
+}
+
+// parseProgressLine attempts to parse a line as a progress message.
+// Returns false if the line is not a valid progress JSON.
+func parseProgressLine(line []byte) (ProgressMessage, bool) {
+	// Quick check: must start with { to be JSON
+	if len(line) == 0 || line[0] != '{' {
+		return ProgressMessage{}, false
+	}
+
+	var msg ProgressMessage
+	if err := json.Unmarshal(line, &msg); err != nil {
+		return ProgressMessage{}, false
+	}
+
+	// Verify it's a progress message (not a result or other JSON)
+	if msg.Type != "epack_progress" {
+		return ProgressMessage{}, false
+	}
+
+	return msg, true
 }
 
 // Run executes a collector binary and returns its output.
@@ -54,6 +151,7 @@ type RunResult struct {
 //   - Writes config to a secure temp file
 //   - Builds a restricted environment with protocol variables
 //   - Executes with timeout and output limits
+//   - Streams stdout to parse progress messages in real-time
 //   - Sanitizes stderr before returning errors
 func Run(ctx context.Context, name, execPath, configPath string, env []string, opts RunOptions) RunResult {
 	// Apply timeout to prevent DoS from collectors that hang
@@ -65,9 +163,12 @@ func Run(ctx context.Context, name, execPath, configPath string, env []string, o
 	defer cancel()
 
 	// Execute collector
-	// Capture output with size limit to prevent memory exhaustion
-	var stdout, stderr bytes.Buffer
-	stdoutWriter := limits.NewLimitedWriter(&stdout, limits.CollectorOutput.Bytes())
+	// Use streaming writer for stdout to parse progress messages in real-time
+	streamingStdout := newStreamingStdoutWriter(opts.OnProgress)
+	stdoutWriter := limits.NewLimitedWriter(streamingStdout, limits.CollectorOutput.Bytes())
+
+	// Capture stderr with size limit to prevent memory exhaustion
+	var stderr bytes.Buffer
 	stderrWriter := limits.NewLimitedWriter(&stderr, limits.CollectorOutput.Bytes())
 
 	err := procexec.Run(execCtx, procexec.Spec{
@@ -102,7 +203,7 @@ func Run(ctx context.Context, name, execPath, configPath string, env []string, o
 	}
 
 	return RunResult{
-		Stdout: stdout.Bytes(),
+		Stdout: streamingStdout.Result(),
 		Stderr: stderr.String(),
 	}
 }

@@ -39,7 +39,7 @@ const (
 	gitignoreBlockStart = "# >>> epack (managed) >>>"
 	gitignoreBlockEnd   = "# <<< epack (managed) <<<"
 	gitignoreContent    = `.epack/
-packs/*.pack
+packs/*.epack
 !packs/.gitkeep`
 )
 
@@ -383,7 +383,7 @@ Evidence pack pipeline created with [epack](https://epack.dev).
     epack collect
 
     # Sign the pack
-    epack sign packs/*.pack
+    epack sign packs/*.epack
 
 ## Structure
 

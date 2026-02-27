@@ -192,7 +192,7 @@ func createTestPackForExtract(t *testing.T, stream string, artifacts map[string]
 	t.Helper()
 
 	dir := t.TempDir()
-	packPath := filepath.Join(dir, "test.pack")
+	packPath := filepath.Join(dir, "test.epack")
 
 	b := builder.New(stream)
 	for path, content := range artifacts {

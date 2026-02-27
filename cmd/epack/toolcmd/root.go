@@ -25,8 +25,8 @@ INVOCATION STYLES
 
 Configured tools (in epack.yaml) are promoted to top-level commands:
 
-  epack ask --pack vendor.pack "What controls exist?"
-  epack policy --pack vendor.pack
+  epack ask --pack vendor.epack "What controls exist?"
+  epack policy --pack vendor.epack
 
 For tools not in epack.yaml, use the explicit dispatch syntax:
 
@@ -62,13 +62,13 @@ EXAMPLES
   epack tool list
 
   # Run a configured tool (top-level)
-  epack ask --pack vendor.pack "What controls exist?"
+  epack ask --pack vendor.epack "What controls exist?"
 
   # Run with environment variables
-  EPACK_PACK=vendor.pack epack ask "What controls exist?"
+  EPACK_PACK=vendor.epack epack ask "What controls exist?"
 
   # Run a tool not in epack.yaml (explicit dispatch)
-  epack tool custom --pack vendor.pack
+  epack tool custom --pack vendor.epack
 
   # Get tool capabilities
   epack tool info ask`,
@@ -117,9 +117,9 @@ Wrapper flags:
 All other arguments are passed to the tool.
 
 Examples:
-  epack %s --pack vendor.pack
-  EPACK_PACK=vendor.pack epack %s
-  epack %s -p vendor.pack --json`, toolName, toolName, toolName, toolName),
+  epack %s --pack vendor.epack
+  EPACK_PACK=vendor.epack epack %s
+  epack %s -p vendor.epack --json`, toolName, toolName, toolName, toolName),
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return dispatchTool(cmd, toolName, args)

@@ -28,15 +28,21 @@ func init() {
 }
 
 var listCmd = &cobra.Command{
-	Use:        "list",
+	Use:        "list [pack]",
 	Short:      "List pack contents",
 	SuggestFor: []string{"ls"},
 	Long: `List artifacts, attestations, or sources in an evidence pack.
 
+When called with just a pack path, shows a summary of all contents.
+Use subcommands for filtered listings.
+
 Examples:
-  epack list artifacts evidence.epack
-  epack list attestations evidence.epack
-  epack list sources evidence.epack`,
+  epack list evidence.epack                  # Show all contents
+  epack list artifacts evidence.epack        # List only artifacts
+  epack list attestations evidence.epack     # List only attestations
+  epack list sources evidence.epack          # List only sources`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runListAll,
 }
 
 var listArtifactsCmd = &cobra.Command{
@@ -78,6 +84,75 @@ Examples:
   epack list sources evidence.epack`,
 	Args: cobra.ExactArgs(1),
 	RunE: runListSources,
+}
+
+func runListAll(cmd *cobra.Command, args []string) error {
+	// If no pack path provided, show help
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+
+	packPath := args[0]
+	out := outputWriter()
+
+	p, err := pack.Open(packPath)
+	if err != nil {
+		return packOpenError(packPath, err)
+	}
+	defer func() { _ = p.Close() }()
+
+	manifest := p.Manifest()
+	attestations := p.ListAttestations()
+
+	// JSON output
+	if out.IsJSON() {
+		return out.JSON(map[string]interface{}{
+			"artifacts":    manifest.Artifacts,
+			"attestations": attestations,
+			"sources":      manifest.Sources,
+		})
+	}
+
+	// Human-readable output
+	palette := out.Palette()
+
+	// Artifacts section
+	out.Print("%s (%d)\n", palette.Bold("Artifacts"), len(manifest.Artifacts))
+	if len(manifest.Artifacts) == 0 {
+		out.Print("  none\n")
+	} else {
+		for _, a := range manifest.Artifacts {
+			out.Print("  %s\n", a.Path)
+		}
+	}
+	out.Print("\n")
+
+	// Attestations section
+	out.Print("%s (%d)\n", palette.Bold("Attestations"), len(attestations))
+	if len(attestations) == 0 {
+		out.Print("  none\n")
+	} else {
+		for _, a := range attestations {
+			out.Print("  %s\n", a)
+		}
+	}
+	out.Print("\n")
+
+	// Sources section
+	out.Print("%s (%d)\n", palette.Bold("Sources"), len(manifest.Sources))
+	if len(manifest.Sources) == 0 {
+		out.Print("  none\n")
+	} else {
+		for _, s := range manifest.Sources {
+			if s.Version != "" {
+				out.Print("  %s:%s\n", s.Name, s.Version)
+			} else {
+				out.Print("  %s\n", s.Name)
+			}
+		}
+	}
+
+	return nil
 }
 
 func runListArtifacts(cmd *cobra.Command, args []string) error {

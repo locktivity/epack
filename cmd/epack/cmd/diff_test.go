@@ -24,7 +24,7 @@ func createTestPack(t *testing.T, stream string, artifacts map[string][]byte) st
 			t.Fatalf("AddBytes(%q) failed: %v", path, err)
 		}
 	}
-	outputPath := filepath.Join(t.TempDir(), "test.pack")
+	outputPath := filepath.Join(t.TempDir(), "test.epack")
 	if err := b.Build(outputPath); err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}

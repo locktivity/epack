@@ -41,6 +41,11 @@ type jsonProgressEvent struct {
 	Frozen    bool   `json:"frozen,omitempty"`
 	ElapsedMS int64  `json:"elapsed_ms,omitempty"`
 	Timestamp string `json:"timestamp"`
+
+	// Progress-specific fields (for status/progress events)
+	Message         string `json:"message,omitempty"`
+	ProgressCurrent int64  `json:"progress_current,omitempty"`
+	ProgressTotal   int64  `json:"progress_total,omitempty"`
 }
 
 // startCollectionProgress shows collection progress while the workflow runs.
@@ -77,6 +82,24 @@ func startTTYProgress(ctx context.Context, out *output.Writer, frozen bool, star
 	message := collectMessage(frozen)
 	spinner := out.StartSpinnerWithContext(ctx, message)
 	var mu sync.Mutex
+	activeCollectors := make(map[string]struct{}) // Track which collectors are running
+
+	// updateSpinnerForActive updates the spinner message based on active collectors.
+	updateSpinnerForActive := func() {
+		count := len(activeCollectors)
+		switch count {
+		case 0:
+			spinner.UpdateMessage(message)
+		case 1:
+			// Show single collector name
+			for name := range activeCollectors {
+				spinner.UpdateMessage(fmt.Sprintf("%s: %s", message, name))
+			}
+		default:
+			// Show count when multiple running in parallel
+			spinner.UpdateMessage(fmt.Sprintf("%s (%d running)", message, count))
+		}
+	}
 
 	return collectionProgress{
 		Done: func(success bool) {
@@ -93,19 +116,44 @@ func startTTYProgress(ctx context.Context, out *output.Writer, frozen bool, star
 			mu.Lock()
 			defer mu.Unlock()
 
-			// Pause spinner to keep per-collector lines readable in interactive terminals.
-			spinner.Stop()
 			switch evt.Type {
 			case collector.CollectorEventStart:
-				out.Print("[%d/%d] %s started\n", evt.Index, evt.Total, evt.Collector)
-			case collector.CollectorEventFinish:
-				if evt.Success {
-					out.Print("[%d/%d] %s done (%s)\n", evt.Index, evt.Total, evt.Collector, formatDuration(evt.Duration))
-				} else {
-					out.Print("[%d/%d] %s failed (%s)\n", evt.Index, evt.Total, evt.Collector, formatDuration(evt.Duration))
+				activeCollectors[evt.Collector] = struct{}{}
+				// In parallel mode, don't print start lines (too noisy)
+				// Just update the spinner
+				updateSpinnerForActive()
+
+			case collector.CollectorEventStatus:
+				// Update spinner with status from the reporting collector
+				if len(activeCollectors) == 1 {
+					spinner.UpdateMessage(fmt.Sprintf("%s: %s", evt.Collector, evt.Message))
 				}
+				// In parallel mode with multiple collectors, status updates would be confusing
+
+			case collector.CollectorEventProgress:
+				// Update spinner with progress from the reporting collector
+				if len(activeCollectors) == 1 {
+					if evt.ProgressTotal > 0 {
+						pct := float64(evt.ProgressCurrent) / float64(evt.ProgressTotal) * 100
+						spinner.UpdateMessage(fmt.Sprintf("%s: %s (%.0f%%)", evt.Collector, evt.Message, pct))
+					} else {
+						spinner.UpdateMessage(fmt.Sprintf("%s: %s (%d)", evt.Collector, evt.Message, evt.ProgressCurrent))
+					}
+				}
+				// In parallel mode with multiple collectors, progress updates would be confusing
+
+			case collector.CollectorEventFinish:
+				delete(activeCollectors, evt.Collector)
+				// Print completion line
+				spinner.Stop()
+				if evt.Success {
+					out.Print("%s %s done (%s)\n", out.Palette().Success(""), evt.Collector, formatDuration(evt.Duration))
+				} else {
+					out.Print("%s %s failed (%s)\n", out.Palette().Failure(""), evt.Collector, formatDuration(evt.Duration))
+				}
+				spinner = out.StartSpinnerWithContext(ctx, message)
+				updateSpinnerForActive()
 			}
-			spinner = out.StartSpinnerWithContext(ctx, message)
 		},
 	}
 }
@@ -146,6 +194,8 @@ func startPlainProgress(ctx context.Context, out *output.Writer, frozen bool, st
 		}
 	}()
 
+	var currentCollector string
+
 	return collectionProgress{
 		Done: func(success bool) {
 			doneOnce.Do(func() { close(done) })
@@ -159,7 +209,20 @@ func startPlainProgress(ctx context.Context, out *output.Writer, frozen bool, st
 		OnCollectorEvent: func(evt collector.CollectorEvent) {
 			switch evt.Type {
 			case collector.CollectorEventStart:
+				currentCollector = evt.Collector
 				print("[%d/%d] %s started\n", evt.Index, evt.Total, evt.Collector)
+
+			case collector.CollectorEventStatus:
+				print("  %s: %s\n", currentCollector, evt.Message)
+
+			case collector.CollectorEventProgress:
+				if evt.ProgressTotal > 0 {
+					pct := float64(evt.ProgressCurrent) / float64(evt.ProgressTotal) * 100
+					print("  %s: %s (%.0f%%)\n", currentCollector, evt.Message, pct)
+				} else {
+					print("  %s: %s (%d)\n", currentCollector, evt.Message, evt.ProgressCurrent)
+				}
+
 			case collector.CollectorEventFinish:
 				if evt.Success {
 					print("[%d/%d] %s done (%s)\n", evt.Index, evt.Total, evt.Collector, formatDuration(evt.Duration))
@@ -232,6 +295,12 @@ func startJSONProgress(ctx context.Context, frozen bool, started time.Time) coll
 			}
 			if evt.Error != nil {
 				j.Error = evt.Error.Error()
+			}
+			// Add progress-specific fields for status/progress events
+			if evt.Type == collector.CollectorEventStatus || evt.Type == collector.CollectorEventProgress {
+				j.Message = evt.Message
+				j.ProgressCurrent = evt.ProgressCurrent
+				j.ProgressTotal = evt.ProgressTotal
 			}
 			emitJSONProgress(j)
 		},

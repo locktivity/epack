@@ -175,9 +175,36 @@ If the collector has a `config` section in `epack.yaml`, a temporary JSON file i
 
 ### Output Format
 
-Collectors write JSON to stdout. Two formats are supported:
+Collectors write JSON lines to stdout. The protocol supports two message types:
 
-**Protocol envelope (recommended):**
+**Progress messages** (optional, 0 or more during execution):
+
+```json
+{"type":"epack_progress","protocol_version":1,"kind":"status","message":"Connecting to API..."}
+{"type":"epack_progress","protocol_version":1,"kind":"progress","current":5,"total":100,"message":"Fetching repos"}
+```
+
+Progress message fields:
+- `type`: Always `"epack_progress"`
+- `protocol_version`: Progress protocol version (currently 1)
+- `kind`: Either `"status"` (indeterminate) or `"progress"` (determinate with current/total)
+- `message`: Human-readable status message
+- `current`, `total`: Progress counters (only for `kind: "progress"`)
+
+**Result message** (exactly 1, at end of execution):
+
+```json
+{"type":"epack_result","protocol_version":1,"data":{"collected_at":"2026-02-19T14:30:00Z","items":[...]}}
+```
+
+Result message fields:
+- `type`: Always `"epack_result"`
+- `protocol_version`: Protocol version (currently 1)
+- `data`: The collected evidence data
+
+**Legacy format (backwards compatible):**
+
+Collectors that omit the `type` field are still supported:
 
 ```json
 {
@@ -189,9 +216,11 @@ Collectors write JSON to stdout. Two formats are supported:
 }
 ```
 
+The parser detects legacy format (no `type` + has `protocol_version` + has `data`) and treats it as `"epack_result"`.
+
 **Plain JSON:**
 
-Any valid JSON object or array. The protocol version is inferred as 0.
+Any valid JSON object or array without the envelope. The protocol version is inferred as 0.
 
 **Non-JSON text:**
 
@@ -347,6 +376,7 @@ epack update
 | `--timeout` | Timeout per collector (e.g., 30s, 2m) |
 | `--output, -o` | Output pack file path |
 | `--only` | Run only specific collectors (comma-separated) |
+| `--parallel` | Max parallel collector executions (0=auto, 1=sequential) |
 
 ### Security Flags
 
@@ -436,7 +466,56 @@ For production deployments:
 
 ## Example Collector Implementation
 
-A minimal collector in Go:
+### Using the SDK (Recommended)
+
+The `componentsdk` package provides a simple API with built-in progress support:
+
+```go
+package main
+
+import (
+    "time"
+    "github.com/locktivity/epack/componentsdk"
+)
+
+func main() {
+    componentsdk.RunCollector(componentsdk.CollectorSpec{
+        Name:        "example",
+        Version:     "1.0.0",
+        Description: "Example collector with progress",
+    }, func(ctx componentsdk.CollectorContext) error {
+        // Report indeterminate status
+        ctx.Status("Connecting to API...")
+
+        // Simulate collecting items with progress
+        items := []any{}
+        for i := 1; i <= 10; i++ {
+            ctx.Progress(int64(i), 10, "Fetching items")
+            items = append(items, map[string]any{"id": i})
+        }
+
+        ctx.Status("Finalizing...")
+
+        // Emit evidence (automatically wrapped with type and protocol_version)
+        return ctx.Emit(map[string]any{
+            "collected_at": time.Now().UTC().Format(time.RFC3339),
+            "source":       ctx.Name(),
+            "items":        items,
+        })
+    })
+}
+```
+
+SDK methods:
+- `ctx.Status(message)` - Report indeterminate status (e.g., "Connecting...")
+- `ctx.Progress(current, total, message)` - Report determinate progress (e.g., 5/100)
+- `ctx.Emit(data)` - Emit the final result (handles envelope automatically)
+- `ctx.Config()` - Access collector configuration from epack.yaml
+- `ctx.Name()` - Get collector name
+
+### Manual Implementation
+
+For collectors not using the SDK:
 
 ```go
 package main
@@ -447,6 +526,7 @@ import (
 )
 
 type Output struct {
+    Type            string      `json:"type"`
     ProtocolVersion int         `json:"protocol_version"`
     Data            interface{} `json:"data"`
 }
@@ -479,8 +559,9 @@ func main() {
         },
     }
 
-    // Output with protocol envelope
+    // Output with protocol envelope (include type field)
     output := Output{
+        Type:            "epack_result",
         ProtocolVersion: 1,
         Data:            evidence,
     }
@@ -507,5 +588,3 @@ The following features are reserved but not yet implemented:
 - **Collector capabilities**: `--capabilities` command for self-description
 - **Incremental collection**: Delta collection based on previous runs
 - **Collector dependencies**: Declaring dependencies on other collectors
-- **Parallel execution**: Running independent collectors concurrently
-- **Progress reporting**: Streaming progress updates during collection

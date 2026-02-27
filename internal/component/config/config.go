@@ -77,6 +77,7 @@ type ToolPolicy struct {
 	// Not yet implemented.
 	Deny []string `yaml:"deny,omitempty"`
 }
+
 // SigningConfig configures pack signing.
 type SigningConfig struct {
 	Enabled bool   `yaml:"enabled"`
@@ -311,6 +312,30 @@ type EnvironmentConfig struct {
 
 // Load reads and validates an epack config file (collectors and tools).
 func Load(path string) (*JobConfig, error) {
+	data, err := loadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return Parse(data)
+}
+
+// LoadUnvalidated reads an epack config file without running semantic validation.
+// This is useful for status/introspection commands that should still work while
+// the user is incrementally editing a new config.
+func LoadUnvalidated(path string) (*JobConfig, error) {
+	data, err := loadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var cfg JobConfig
+	if err := safeyaml.Unmarshal(data, limits.ConfigFile, &cfg); err != nil {
+		return nil, fmt.Errorf("config validation: %w", err)
+	}
+	return &cfg, nil
+}
+
+func loadFile(path string) ([]byte, error) {
 	// Check file size before reading to prevent DoS via large files
 	info, err := os.Stat(path)
 	if err != nil {
@@ -325,8 +350,7 @@ func Load(path string) (*JobConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
-
-	return Parse(data)
+	return data, nil
 }
 
 // Parse validates raw epack config YAML and enforces size/structure limits
@@ -354,7 +378,7 @@ func Parse(data []byte) (*JobConfig, error) {
 func (c *JobConfig) Validate() error {
 	// At least one collector, tool, or remote must be defined
 	if len(c.Collectors) == 0 && len(c.Tools) == 0 && len(c.Remotes) == 0 {
-		return fmt.Errorf("config: at least one collector, tool, or remote is required")
+		return fmt.Errorf("at least one collector, tool, or remote is required")
 	}
 
 	// SECURITY: Enforce collector count limit to prevent DoS

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/locktivity/epack/componentsdk"
@@ -26,14 +27,34 @@ func run(ctx componentsdk.CollectorContext) error {
 	// Access secrets from environment
 	// apiToken := ctx.Secret("API_TOKEN")
 
+	// Report status updates (shown in CLI spinner/progress)
+	ctx.Status("Connecting to API...")
+
 	// TODO: Implement your collection logic here
 	// Example: fetch data from an API
+
+	// Example: report progress for multi-item operations
+	items := []string{"item1", "item2", "item3"} // TODO: Replace with actual items
+	results := make([]any, 0, len(items))
+
+	for i, item := range items {
+		// Report progress (current/total shown in CLI)
+		ctx.Progress(int64(i+1), int64(len(items)), fmt.Sprintf("Processing %s", item))
+
+		// TODO: Process each item
+		results = append(results, map[string]any{
+			"id":   item,
+			"data": "TODO",
+		})
+	}
+
+	ctx.Status("Collection complete")
 
 	// Emit collected evidence
 	data := map[string]any{
 		"collected_at": time.Now().UTC().Format(time.RFC3339),
 		"source":       ctx.Name(),
-		"items":        []any{},
+		"items":        results,
 	}
 
 	return ctx.Emit(data)

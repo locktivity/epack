@@ -48,7 +48,7 @@ func LoadConfig(path string) (*config.JobConfig, error) {
 		return nil, &epackerrors.Error{
 			Code:    epackerrors.InvalidInput,
 			Exit:    exitcode.General,
-			Message: fmt.Sprintf("loading config: %v", err),
+			Message: "loading config",
 			Cause:   err,
 		}
 	}

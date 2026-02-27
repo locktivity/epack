@@ -40,28 +40,28 @@ Show
 
 # Build
 Sleep 600ms
-Type "epack build february.pack *.json --stream acme/security"
+Type "epack build february.epack *.json --stream acme/security"
 Sleep 300ms
 Enter
 Sleep 2s
 
 # Sign (opens browser for OIDC auth - VHS waits for completion)
 Sleep 500ms
-Type "epack sign february.pack --yes"
+Type "epack sign february.epack --yes"
 Sleep 300ms
 Enter
 Sleep 5s
 
 # Verify signed pack
 Sleep 500ms
-Type "epack verify february.pack --subject michael.nipper@locktivity.com --issuer https://accounts.google.com"
+Type "epack verify february.epack --subject michael.nipper@locktivity.com --issuer https://accounts.google.com"
 Sleep 300ms
 Enter
 Sleep 2.5s
 
 # Inspect to show attestation
 Sleep 500ms
-Type "epack inspect february.pack"
+Type "epack inspect february.epack"
 Sleep 300ms
 Enter
 Sleep 3s
@@ -80,21 +80,21 @@ Show
 
 # Build March
 Sleep 500ms
-Type "epack build march.pack *.json --stream acme/security"
+Type "epack build march.epack *.json --stream acme/security"
 Sleep 300ms
 Enter
 Sleep 2s
 
 # Diff
 Sleep 500ms
-Type "epack diff february.pack march.pack"
+Type "epack diff february.epack march.epack"
 Sleep 300ms
 Enter
 Sleep 2.5s
 
 # Content diff
 Sleep 500ms
-Type "epack diff february.pack march.pack --artifact artifacts/github.json"
+Type "epack diff february.epack march.epack --artifact artifacts/github.json"
 Sleep 300ms
 Enter
 Sleep 3s

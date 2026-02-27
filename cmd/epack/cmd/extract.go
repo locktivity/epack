@@ -84,7 +84,7 @@ func runExtract(cmd *cobra.Command, args []string) error {
 		Force:     extractForce,
 	})
 	if err != nil {
-		return exitError("failed to extract artifacts: %v\n\nCheck that the output directory is writable: %s", err, extractOutput)
+		return exitError("failed to extract artifacts: %v", err)
 	}
 
 	if len(result.Extracted) == 0 {

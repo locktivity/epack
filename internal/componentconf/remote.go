@@ -212,7 +212,7 @@ func (r *Runner) testRemotePushPrepare(ctx context.Context) {
 			"environment": "test",
 		},
 		"pack": map[string]interface{}{
-			"path":       "test.pack",
+			"path":       "test.epack",
 			"digest":     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 			"size_bytes": 1024,
 		},
@@ -276,7 +276,7 @@ func (r *Runner) testRemotePushFinalize(ctx context.Context) {
 			"environment": "test",
 		},
 		"pack": map[string]interface{}{
-			"path":       "test.pack",
+			"path":       "test.epack",
 			"digest":     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 			"size_bytes": 1024,
 		},

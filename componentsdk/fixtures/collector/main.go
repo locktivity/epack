@@ -14,11 +14,23 @@ func main() {
 		Version:     "1.0.0",
 		Description: "Minimal collector for SDK conformance testing",
 	}, func(ctx componentsdk.CollectorContext) error {
-		// Emit minimal evidence
+		// Demonstrate progress reporting
+		ctx.Status("Starting collection...")
+
+		// Simulate collecting multiple items with progress
+		items := []any{}
+		for i := 1; i <= 3; i++ {
+			ctx.Progress(int64(i), 3, "Collecting items")
+			items = append(items, map[string]any{"id": i})
+		}
+
+		ctx.Status("Finalizing...")
+
+		// Emit evidence
 		data := map[string]any{
 			"collected_at": time.Now().UTC().Format(time.RFC3339),
 			"source":       ctx.Name(),
-			"items":        []any{},
+			"items":        items,
 		}
 		return ctx.Emit(data)
 	})

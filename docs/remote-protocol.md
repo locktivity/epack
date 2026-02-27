@@ -222,7 +222,7 @@ The push workflow consists of:
     "environment": "prod"
   },
   "pack": {
-    "path": "packs/evidence.pack",
+    "path": "packs/evidence.epack",
     "digest": "sha256:abc123...",
     "size_bytes": 1048576
   },
@@ -275,7 +275,7 @@ The push workflow consists of:
     "environment": "prod"
   },
   "pack": {
-    "path": "packs/evidence.pack",
+    "path": "packs/evidence.epack",
     "digest": "sha256:abc123...",
     "size_bytes": 1048576
   },
@@ -596,16 +596,16 @@ See [Hardening Guide](hardening.md) for additional recommendations.
 
 ```bash
 # Push a pack to a remote
-epack push locktivity packs/evidence.pack
+epack push locktivity packs/evidence.epack
 
 # Push with labels
-epack push locktivity packs/evidence.pack --label monthly --label soc2
+epack push locktivity packs/evidence.epack --label monthly --label soc2
 
 # Preview what would be pushed (dry-run)
-epack push locktivity packs/evidence.pack --dry-run
+epack push locktivity packs/evidence.epack --dry-run
 
 # Push in background (returns immediately)
-epack push locktivity packs/evidence.pack --detach
+epack push locktivity packs/evidence.epack --detach
 
 # Pull the latest pack from a remote
 epack pull locktivity
@@ -620,7 +620,7 @@ epack pull locktivity --release rel_abc123
 epack pull locktivity --digest sha256:abc123...
 
 # Pull to specific output path
-epack pull locktivity -o ./packs/evidence.pack
+epack pull locktivity -o ./packs/evidence.epack
 
 # Preview what would be pulled (dry-run)
 epack pull locktivity --dry-run

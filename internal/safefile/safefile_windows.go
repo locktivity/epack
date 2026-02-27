@@ -98,6 +98,13 @@ func MkdirAllPrivate(baseDir, targetDir string) error {
 	return mkdirAllInternal(baseDir, targetDir, limits.PrivateDirMode)
 }
 
+// EnsureBaseDir creates the base directory if it doesn't exist.
+// Use this for trusted paths derived from code (like .epack in project root).
+// For creating directories inside the base, use MkdirAll.
+func EnsureBaseDir(baseDir string) error {
+	return os.MkdirAll(baseDir, limits.StandardDirMode)
+}
+
 // OpenForRead opens a file for reading.
 // Returns an *os.File that the caller must close.
 //
