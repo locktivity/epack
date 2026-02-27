@@ -346,7 +346,8 @@ func validateToolInputs(
 
 	if requiresPack && packPath == "" {
 		return writePreExecFailure(out, toolName, runID, runDir, "", toolVersion,
-			componenttypes.ExitPackRequired, componenttypes.ErrCodePackRequired, "pack required but not provided")
+			componenttypes.ExitPackRequired, componenttypes.ErrCodePackRequired,
+			fmt.Sprintf("pack required but not provided\n\nUsage: epack tool %s <file.epack> [tool args...]\n\nExample: epack tool %s evidence.epack", toolName, toolName))
 	}
 
 	return nil

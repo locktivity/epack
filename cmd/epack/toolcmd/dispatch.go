@@ -22,12 +22,16 @@ func (o *cobraOutput) Stderr() interface{ Write([]byte) (int, error) } {
 	return o.cmd.ErrOrStderr()
 }
 
-// exitError is a simple error type that carries an exit code.
+// exitError is an error type that carries an exit code and message.
 type exitError struct {
-	code int
+	code    int
+	message string
 }
 
 func (e *exitError) Error() string {
+	if e.message != "" {
+		return e.message
+	}
 	return fmt.Sprintf("exit code %d", e.code)
 }
 
@@ -60,7 +64,7 @@ func dispatchTool(cmd *cobra.Command, toolName string, args []string) error {
 
 	// Convert errors.Error to our exitError for cobra handling
 	if exitErr, ok := err.(*errors.Error); ok {
-		return &exitError{code: exitErr.ExitCode()}
+		return &exitError{code: exitErr.ExitCode(), message: exitErr.Error()}
 	}
 	return err
 }

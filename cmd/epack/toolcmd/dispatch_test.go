@@ -151,6 +151,28 @@ func TestParseWrapperArgs(t *testing.T) {
 			args:         []string{"--unknown", "value"},
 			wantToolArgs: []string{"--unknown", "value"},
 		},
+		{
+			name:     "positional pack argument",
+			args:     []string{"evidence.epack"},
+			wantPack: "evidence.epack",
+		},
+		{
+			name:         "positional pack with tool args",
+			args:         []string{"evidence.epack", "--config", "custom.yaml"},
+			wantPack:     "evidence.epack",
+			wantToolArgs: []string{"--config", "custom.yaml"},
+		},
+		{
+			name:         "pack flag takes precedence over positional",
+			args:         []string{"--pack", "flag.epack", "positional.epack"},
+			wantPack:     "flag.epack",
+			wantToolArgs: []string{"positional.epack"},
+		},
+		{
+			name:         "non-epack positional goes to tool",
+			args:         []string{"config.yaml"},
+			wantToolArgs: []string{"config.yaml"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -285,5 +307,69 @@ func TestValidateDispatchFlags_AllowsSecure(t *testing.T) {
 
 	if err := validateDispatchFlags(false); err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestParseWrapperArgs_EnvPrecedence(t *testing.T) {
+	tests := []struct {
+		name         string
+		envPack      string
+		args         []string
+		wantPack     string
+		wantToolArgs []string
+	}{
+		{
+			name:         "env pack takes precedence over positional",
+			envPack:      "env.epack",
+			args:         []string{"positional.epack"},
+			wantPack:     "env.epack",
+			wantToolArgs: []string{"positional.epack"},
+		},
+		{
+			name:         "cli flag overrides env",
+			envPack:      "env.epack",
+			args:         []string{"--pack", "flag.epack"},
+			wantPack:     "flag.epack",
+			wantToolArgs: nil,
+		},
+		{
+			name:         "env pack with additional tool args",
+			envPack:      "env.epack",
+			args:         []string{"positional.epack", "--config", "custom.yaml"},
+			wantPack:     "env.epack",
+			wantToolArgs: []string{"positional.epack", "--config", "custom.yaml"},
+		},
+		{
+			name:         "no env with positional uses positional",
+			envPack:      "",
+			args:         []string{"positional.epack"},
+			wantPack:     "positional.epack",
+			wantToolArgs: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("EPACK_PACK", tt.envPack)
+
+			flags, toolArgs, err := dispatch.ParseWrapperArgs(tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if flags.PackPath != tt.wantPack {
+				t.Errorf("PackPath: expected %q, got %q", tt.wantPack, flags.PackPath)
+			}
+
+			if len(toolArgs) != len(tt.wantToolArgs) {
+				t.Errorf("toolArgs length: expected %d, got %d", len(tt.wantToolArgs), len(toolArgs))
+			} else {
+				for i, want := range tt.wantToolArgs {
+					if toolArgs[i] != want {
+						t.Errorf("toolArgs[%d]: expected %q, got %q", i, want, toolArgs[i])
+					}
+				}
+			}
+		})
 	}
 }

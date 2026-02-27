@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -44,15 +45,6 @@ func TestRunAndBuild_RejectsIncompatibleSecurityFlags(t *testing.T) {
 	}
 }
 
-// TestAddCollectorArtifacts_OutputConsistency verifies that addCollectorArtifacts
-// produces consistent output regardless of the input format.
-//
-// This is a regression test for the bug where Collect and RunAndBuild produced
-// different artifact content for the same collector output:
-// - Collect: artifact contained full protocol envelope
-// - RunAndBuild: artifact contained extracted data only
-//
-// After the fix, both use addCollectorArtifacts which extracts only the data field.
 func TestAddCollectorArtifacts_OutputConsistency(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -108,10 +100,8 @@ func TestAddCollectorArtifacts_OutputConsistency(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a builder to capture the artifact
 			b := builder.New("test-stream")
 
-			// Create a successful run result with the test output
 			results := []RunResult{
 				{
 					Collector: "test-collector",
@@ -120,7 +110,6 @@ func TestAddCollectorArtifacts_OutputConsistency(t *testing.T) {
 				},
 			}
 
-			// Run the shared helper
 			err := addCollectorArtifacts(b, results)
 			if err != nil {
 				t.Fatalf("addCollectorArtifacts failed: %v", err)
@@ -191,8 +180,6 @@ func TestAddCollectorArtifacts_SkipsFailedCollectors(t *testing.T) {
 // TestAddCollectorArtifacts_EnvelopeStripping verifies that protocol envelope
 // metadata is stripped from the final artifact.
 func TestAddCollectorArtifacts_EnvelopeStripping(t *testing.T) {
-	// This test specifically verifies the fix for the bug where Collect
-	// was including protocol_version in artifacts while RunAndBuild wasn't.
 	output := `{"protocol_version":1,"data":{"evidence":"collected"}}`
 
 	envelope, err := ParseCollectorOutput([]byte(output))
@@ -216,5 +203,70 @@ func TestAddCollectorArtifacts_EnvelopeStripping(t *testing.T) {
 	// The artifact SHOULD contain the data content
 	if _, hasEvidence := artifactMap["evidence"]; !hasEvidence {
 		t.Error("artifact should contain evidence field from data")
+	}
+}
+
+// TestResolveOutputPath verifies that output path resolution handles directories correctly.
+func TestResolveOutputPath(t *testing.T) {
+	tempDir := t.TempDir()
+
+	tests := []struct {
+		name         string
+		path         string
+		wantDir      string // expected directory part
+		wantFilename bool   // true if result should have a generated filename
+	}{
+		{
+			name:         "empty generates default filename",
+			path:         "",
+			wantDir:      "",
+			wantFilename: true,
+		},
+		{
+			name:         "directory generates filename inside",
+			path:         tempDir,
+			wantDir:      tempDir,
+			wantFilename: true,
+		},
+		{
+			name:         "file path returned unchanged",
+			path:         "/some/path/output.epack",
+			wantDir:      "/some/path",
+			wantFilename: false,
+		},
+		{
+			name:         "nonexistent path returned unchanged",
+			path:         "/nonexistent/dir/output.epack",
+			wantDir:      "/nonexistent/dir",
+			wantFilename: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveOutputPath(tt.path)
+
+			if tt.wantFilename {
+				// Verify directory prefix (handle empty case specially)
+				if tt.wantDir == "" {
+					// Empty wantDir means filename only (no directory prefix)
+					if strings.Contains(got, string(filepath.Separator)) {
+						t.Errorf("path %q should be filename only, but contains directory separator", got)
+					}
+				} else if !strings.HasPrefix(got, tt.wantDir+string(filepath.Separator)) {
+					t.Errorf("path %q should start with %q/", got, tt.wantDir)
+				}
+				if !strings.Contains(got, "evidence-") {
+					t.Errorf("path %q should contain 'evidence-'", got)
+				}
+				if !strings.HasSuffix(got, ".epack") {
+					t.Errorf("path %q should end with .epack", got)
+				}
+			} else {
+				if got != tt.path {
+					t.Errorf("resolveOutputPath(%q) = %q, want %q", tt.path, got, tt.path)
+				}
+			}
+		})
 	}
 }

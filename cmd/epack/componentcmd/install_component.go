@@ -3,6 +3,7 @@
 package componentcmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,8 +15,8 @@ import (
 	"github.com/locktivity/epack/internal/catalog/resolve"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/sync"
-	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/exitcode"
+	"github.com/locktivity/epack/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -258,138 +259,180 @@ func runInstallComponent(cmd *cobra.Command, args []string, inst componentInstal
 	out := getOutput(cmd)
 	kind := inst.kind
 
-	// Parse the argument
-	parsed, err := resolve.ParseComponentArg(args[0])
+	parsed, err := parseInstallArgument(args[0])
 	if err != nil {
-		return &exitError{
+		return err
+	}
+	if err := ensureInstallProject(); err != nil {
+		return err
+	}
+	if err := refreshInstallCatalog(ctx, out); err != nil {
+		return err
+	}
+
+	cat, err := readInstallCatalog(kind, parsed.Name)
+	if err != nil {
+		return err
+	}
+
+	toInstall, err := resolveInstallDependencies(out, inst, kind, cat, parsed)
+	if err != nil {
+		return err
+	}
+	components, err := lookupInstallComponents(inst, kind, cat, parsed, toInstall)
+	if err != nil {
+		return err
+	}
+
+	newComponents := filterNewComponents(components)
+	if len(newComponents) == 0 {
+		out.Print("%s %q is already installed\n\n", kind.Title(), parsed.Name)
+		out.Print("To update: epack update %s\n", parsed.Name)
+		return nil
+	}
+
+	if installComponentDryRun {
+		return printInstallDryRun(out, kind, newComponents)
+	}
+	return installAndSyncComponents(ctx, out, inst, kind, newComponents)
+}
+
+type installOutput interface {
+	Print(format string, args ...interface{})
+}
+
+func parseInstallArgument(arg string) (*resolve.ParsedComponent, error) {
+	parsed, err := resolve.ParseComponentArg(arg)
+	if err != nil {
+		return nil, &exitError{
 			Exit:    exitcode.General,
 			Message: fmt.Sprintf("invalid argument: %v", err),
 		}
 	}
+	return parsed, nil
+}
 
-	// Check if we're in an epack project
+func ensureInstallProject() error {
 	if _, err := os.Stat(installComponentConfigPath); os.IsNotExist(err) {
 		return &exitError{
-			Exit:    exitcode.General,
+			Exit: exitcode.General,
 			Message: fmt.Sprintf(`No epack project found (missing %s)
 
 To create a new project:     epack new my-project
 To initialize this directory: epack init`, installComponentConfigPath),
 		}
 	}
+	return nil
+}
 
-	// Refresh catalog unless --no-refresh is set
-	// By default, use conditional requests (fast if unchanged)
-	// --refresh forces a full refresh, ignoring cached data
-	if !installComponentNoRefresh {
-		opts := catalog.FetchOptions{}
+func refreshInstallCatalog(ctx context.Context, out installOutput) error {
+	if installComponentNoRefresh {
+		return nil
+	}
 
-		// Use conditional request unless --refresh forces full refresh
-		if !installComponentRefresh {
-			if meta, err := catalog.ReadMeta(); err == nil {
-				opts.ETag = meta.ETag
-				opts.LastModified = meta.LastModified
-			}
-		}
-
-		out.Print("Checking catalog...\n")
-		result, err := catalog.FetchCatalog(ctx, opts)
-		if err != nil {
-			return &exitError{
-				Exit:    exitcode.Network,
-				Message: fmt.Sprintf("fetching catalog: %v", err),
-			}
-		}
-
-		// Report what happened
-		if result.Status == catalog.MetaStatusNotModified {
-			out.Print("  catalog is up to date\n")
-		} else if result.Updated {
-			out.Print("  catalog updated\n")
+	opts := catalog.FetchOptions{}
+	if !installComponentRefresh {
+		if meta, err := catalog.ReadMeta(); err == nil {
+			opts.ETag = meta.ETag
+			opts.LastModified = meta.LastModified
 		}
 	}
 
-	// Load the cached catalog
-	cat, _, err := catalog.ReadCatalog()
+	out.Print("Checking catalog...\n")
+	result, err := catalog.FetchCatalog(ctx, opts)
 	if err != nil {
-		if errors.Is(err, catalog.ErrNoCatalog) {
-			return &exitError{
-				Exit:    exitcode.General,
-				Message: fmt.Sprintf("catalog not found; run 'epack install %s --refresh %s'", kind, parsed.Name),
-			}
+		return &exitError{
+			Exit:    exitcode.Network,
+			Message: fmt.Sprintf("fetching catalog: %v", err),
 		}
+	}
+	if result.Status == catalog.MetaStatusNotModified {
+		out.Print("  catalog is up to date\n")
+	} else if result.Updated {
+		out.Print("  catalog updated\n")
+	}
+	return nil
+}
+
+func readInstallCatalog(kind componentKind, name string) (*catalog.Catalog, error) {
+	cat, _, err := catalog.ReadCatalog()
+	if err == nil {
+		return cat, nil
+	}
+	if errors.Is(err, catalog.ErrNoCatalog) {
+		return nil, &exitError{
+			Exit:    exitcode.General,
+			Message: fmt.Sprintf("catalog not found; run 'epack install %s --refresh %s'", kind, name),
+		}
+	}
+	return nil, &exitError{
+		Exit:    exitcode.General,
+		Message: fmt.Sprintf("reading catalog: %v", err),
+	}
+}
+
+func resolveInstallDependencies(out installOutput, inst componentInstaller, kind componentKind, cat *catalog.Catalog, parsed *resolve.ParsedComponent) ([]resolve.ResolvedDependency, error) {
+	if !inst.supportsDeps || installComponentNoDeps {
+		return []resolve.ResolvedDependency{{Name: parsed.Name, IsDirect: true}}, nil
+	}
+
+	out.Print("Resolving dependencies...\n")
+	toInstall, err := resolve.ResolveDependencies(cat, parsed.Name)
+	if err != nil {
+		return nil, mapResolveDependencyError(err, kind, parsed.Name)
+	}
+	if len(toInstall) > 1 {
+		for _, dep := range toInstall[:len(toInstall)-1] {
+			out.Print("  %s -> %s\n", parsed.Name, dep.Name)
+		}
+	}
+	return toInstall, nil
+}
+
+func mapResolveDependencyError(err error, kind componentKind, name string) error {
+	if errors.Is(err, catalog.ErrNotFound) {
 		return &exitError{
 			Exit:    exitcode.General,
-			Message: fmt.Sprintf("reading catalog: %v", err),
+			Message: fmt.Sprintf("%s %q not found in catalog\n\nTry: epack tool catalog search %s", kind, name, name),
 		}
 	}
-
-	// Resolve what to install
-	var toInstall []resolve.ResolvedDependency
-	if inst.supportsDeps && !installComponentNoDeps {
-		out.Print("Resolving dependencies...\n")
-		toInstall, err = resolve.ResolveDependencies(cat, parsed.Name)
-		if err != nil {
-			if errors.Is(err, catalog.ErrNotFound) {
-				return &exitError{
-					Exit:    exitcode.General,
-					Message: fmt.Sprintf("%s %q not found in catalog\n\nTry: epack tool catalog search %s", kind, parsed.Name, parsed.Name),
-				}
-			}
-			if errors.Is(err, resolve.ErrCircularDependency) {
-				return &exitError{
-					Exit:    exitcode.General,
-					Message: fmt.Sprintf("circular dependency: %v", err),
-				}
-			}
-			if errors.Is(err, resolve.ErrDependencyNotFound) {
-				return &exitError{
-					Exit:    exitcode.General,
-					Message: fmt.Sprintf("%v\n\nThe catalog may be out of date; try: epack install %s --refresh %s", err, kind, parsed.Name),
-				}
-			}
-			return &exitError{
-				Exit:    exitcode.General,
-				Message: fmt.Sprintf("resolving dependencies: %v", err),
-			}
+	if errors.Is(err, resolve.ErrCircularDependency) {
+		return &exitError{
+			Exit:    exitcode.General,
+			Message: fmt.Sprintf("circular dependency: %v", err),
 		}
-
-		// Show dependency chain
-		if len(toInstall) > 1 {
-			for _, dep := range toInstall[:len(toInstall)-1] {
-				out.Print("  %s -> %s\n", parsed.Name, dep.Name)
-			}
-		}
-	} else {
-		// No dependency resolution - just install the requested component
-		toInstall = []resolve.ResolvedDependency{{
-			Name:     parsed.Name,
-			IsDirect: true,
-		}}
 	}
+	if errors.Is(err, resolve.ErrDependencyNotFound) {
+		return &exitError{
+			Exit:    exitcode.General,
+			Message: fmt.Sprintf("%v\n\nThe catalog may be out of date; try: epack install %s --refresh %s", err, kind, name),
+		}
+	}
+	return &exitError{
+		Exit:    exitcode.General,
+		Message: fmt.Sprintf("resolving dependencies: %v", err),
+	}
+}
 
-	// Look up each component and determine what needs to be installed
-	var components []componentToInstall
-	for _, dep := range toInstall {
-		// Check if already in config
+func lookupInstallComponents(inst componentInstaller, kind componentKind, cat *catalog.Catalog, parsed *resolve.ParsedComponent, deps []resolve.ResolvedDependency) ([]componentToInstall, error) {
+	components := make([]componentToInstall, 0, len(deps))
+	for _, dep := range deps {
 		exists, err := inst.hasComponent(installComponentConfigPath, dep.Name)
 		if err != nil {
-			return &exitError{
+			return nil, &exitError{
 				Exit:    exitcode.General,
 				Message: fmt.Sprintf("checking config: %v", err),
 			}
 		}
 
-		// Determine constraint: use specified for direct, latest for deps
 		constraint := "latest"
 		if dep.IsDirect {
 			constraint = parsed.Constraint
 		}
 
-		// Look up in catalog
 		result, err := catalog.LookupComponentInCatalog(cat, dep.Name, kind.CatalogKind(), constraint)
 		if err != nil {
-			return &exitError{
+			return nil, &exitError{
 				Exit:    exitcode.General,
 				Message: fmt.Sprintf("looking up %q: %v", dep.Name, err),
 			}
@@ -403,46 +446,70 @@ To initialize this directory: epack init`, installComponentConfigPath),
 			AlreadyIn:  exists,
 		})
 	}
+	return components, nil
+}
 
-	// Filter to new components only
+func filterNewComponents(components []componentToInstall) []componentToInstall {
 	var newComponents []componentToInstall
 	for _, c := range components {
 		if !c.AlreadyIn {
 			newComponents = append(newComponents, c)
 		}
 	}
+	return newComponents
+}
 
-	// If everything is already installed, report it
-	if len(newComponents) == 0 {
-		out.Print("%s %q is already installed\n\n", kind.Title(), parsed.Name)
-		out.Print("To update: epack update %s\n", parsed.Name)
-		return nil
-	}
-
-	// Dry run: just show what would happen
-	if installComponentDryRun {
-		out.Print("\nWould install:\n")
-		for _, c := range newComponents {
-			if c.IsDirect {
-				out.Print("  + %s\n", c.Name)
-			} else {
-				out.Print("  + %s (dependency of %s)\n", c.Name, c.DependedBy)
-			}
+func printInstallDryRun(out installOutput, kind componentKind, newComponents []componentToInstall) error {
+	out.Print("\nWould install:\n")
+	for _, c := range newComponents {
+		if c.IsDirect {
+			out.Print("  + %s\n", c.Name)
+		} else {
+			out.Print("  + %s (dependency of %s)\n", c.Name, c.DependedBy)
 		}
-		out.Print("\nWould add to %s:\n", installComponentConfigPath)
-		for _, c := range newComponents {
-			out.Print("  %s.%s: %s\n", kind.Plural(), c.Name, c.Source)
-		}
-		out.Print("\nRun without --dry-run to install.\n")
-		return nil
 	}
+	out.Print("\nWould add to %s:\n", installComponentConfigPath)
+	for _, c := range newComponents {
+		out.Print("  %s.%s: %s\n", kind.Plural(), c.Name, c.Source)
+	}
+	out.Print("\nRun without --dry-run to install.\n")
+	return nil
+}
 
-	// Add components to config
+func installAndSyncComponents(ctx context.Context, out installOutput, inst componentInstaller, kind componentKind, newComponents []componentToInstall) error {
 	if len(newComponents) == 1 {
 		out.Print("Installing %s %s...\n", kind, newComponents[0].Name)
 	} else {
 		out.Print("\nInstalling %d %s:\n", len(newComponents), kind.Plural())
 	}
+	if err := addInstallComponents(inst, out, newComponents); err != nil {
+		return err
+	}
+	filteredCfg, workDir, err := prepareInstallSync(newComponents, out)
+	if err != nil {
+		return err
+	}
+	lockResults, err := lockInstallComponents(ctx, workDir, filteredCfg)
+	if err != nil {
+		return err
+	}
+	for _, r := range lockResults {
+		out.Print("  locked %s@%s\n", r.Name, r.Version)
+	}
+	syncResults, err := syncInstallComponents(ctx, workDir, filteredCfg)
+	if err != nil {
+		return err
+	}
+	for _, r := range syncResults {
+		if r.Installed {
+			out.Print("  installed %s@%s\n", r.Name, r.Version)
+		}
+	}
+	printInstallSummary(out, kind, newComponents, workDir)
+	return nil
+}
+
+func addInstallComponents(inst componentInstaller, out installOutput, newComponents []componentToInstall) error {
 	for _, c := range newComponents {
 		if len(newComponents) > 1 {
 			if c.IsDirect {
@@ -451,93 +518,74 @@ To initialize this directory: epack init`, installComponentConfigPath),
 				out.Print("  + %s (dependency of %s)\n", c.Name, c.DependedBy)
 			}
 		}
-
 		err := inst.addComponent(installComponentConfigPath, c.Name, c.Source)
-		if err != nil {
-			if errors.Is(err, config.ErrAlreadyExists) {
-				// This can happen in a race; skip it
-				continue
-			}
-			return &exitError{
-				Exit:    exitcode.General,
-				Message: fmt.Sprintf("adding %q to config: %v", c.Name, err),
-			}
+		if err == nil || errors.Is(err, config.ErrAlreadyExists) {
+			continue
+		}
+		return &exitError{
+			Exit:    exitcode.General,
+			Message: fmt.Sprintf("adding %q to config: %v", c.Name, err),
 		}
 	}
+	return nil
+}
 
-	// Lock and sync
+func prepareInstallSync(newComponents []componentToInstall, out installOutput) (*config.JobConfig, string, error) {
 	out.Print("Locking and syncing...\n")
 
 	cfg, err := loadConfig(installComponentConfigPath)
 	if err != nil {
-		return &exitError{
+		return nil, "", &exitError{
 			Exit:    exitcode.General,
 			Message: fmt.Sprintf("loading config: %v", err),
 		}
 	}
-
 	workDir, err := resolveWorkDir()
 	if err != nil {
-		return handleComponentError(err)
+		return nil, "", handleComponentError(err)
 	}
-
-	// Filter to just the new components
-	var newNames []string
+	names := make([]string, 0, len(newComponents))
 	for _, c := range newComponents {
-		newNames = append(newNames, c.Name)
+		names = append(names, c.Name)
 	}
-
-	filteredCfg, err := filterConfigComponents(cfg, newNames)
+	filteredCfg, err := filterConfigComponents(cfg, names)
 	if err != nil {
-		return handleComponentError(err)
+		return nil, "", handleComponentError(err)
 	}
+	return filteredCfg, workDir, nil
+}
 
-	// Lock
-	platform := platform.Key(runtime.GOOS, runtime.GOARCH)
+func lockInstallComponents(ctx context.Context, workDir string, cfg *config.JobConfig) ([]sync.LockResult, error) {
 	locker := sync.NewLocker(workDir)
-	lockResults, err := locker.Lock(ctx, filteredCfg, sync.LockOpts{
-		Platforms: []string{platform},
+	lockResults, err := locker.Lock(ctx, cfg, sync.LockOpts{
+		Platforms: []string{platform.Key(runtime.GOOS, runtime.GOARCH)},
 	})
 	if err != nil {
-		return handleComponentError(err)
+		return nil, handleComponentError(err)
 	}
+	return lockResults, nil
+}
 
-	for _, r := range lockResults {
-		out.Print("  locked %s@%s\n", r.Name, r.Version)
-	}
-
-	// Sync just the newly installed components.
-	// SkipStaleEntryCheck allows syncing with a filtered config without failing
-	// when the lockfile contains entries not present in the filtered config.
+func syncInstallComponents(ctx context.Context, workDir string, cfg *config.JobConfig) ([]sync.SyncResult, error) {
 	syncer := sync.NewSyncer(workDir)
-	syncResults, err := syncer.Sync(ctx, filteredCfg, sync.SyncOpts{
+	syncResults, err := syncer.Sync(ctx, cfg, sync.SyncOpts{
 		SkipStaleEntryCheck: true,
 	})
 	if err != nil {
-		return handleComponentError(err)
+		return nil, handleComponentError(err)
 	}
+	return syncResults, nil
+}
 
-	for _, r := range syncResults {
-		if r.Installed {
-			out.Print("  installed %s@%s\n", r.Name, r.Version)
-		}
-	}
-
-	// Summary
+func printInstallSummary(out installOutput, kind componentKind, newComponents []componentToInstall, workDir string) {
 	out.Print("\nAdded to %s:\n", installComponentConfigPath)
 	for _, c := range newComponents {
 		out.Print("  %s.%s: %s\n", kind.Plural(), c.Name, c.Source)
 	}
-
 	if len(newComponents) == 1 {
 		out.Print("\n✓ Installed %s %s\n", kind, newComponents[0].Name)
 	} else {
 		out.Print("\n✓ Installed %d %s\n", len(newComponents), kind.Plural())
 	}
-
-	// Remind about lockfile
-	lockfilePath := filepath.Join(workDir, "epack.lock.yaml")
-	out.Print("Remember to commit %s\n", lockfilePath)
-
-	return nil
+	out.Print("Remember to commit %s\n", filepath.Join(workDir, "epack.lock.yaml"))
 }

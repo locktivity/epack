@@ -263,11 +263,7 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 	}
 
 	// Build evidence pack
-	outputPath := opts.OutputPath
-	if outputPath == "" {
-		timestamp := time.Now().UTC().Format("20060102-150405")
-		outputPath = fmt.Sprintf("evidence-%s%s", timestamp, packpath.PackExtension)
-	}
+	outputPath := resolveOutputPath(opts.OutputPath)
 
 	b := builder.New(cfg.Stream)
 
@@ -300,6 +296,30 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 
 	result.PackPath = outputPath
 	return result, nil
+}
+
+// resolveOutputPath determines the output pack file path.
+// If path is empty, generates a default timestamped filename.
+// If path is a directory, generates a timestamped filename inside it.
+// Otherwise returns the path unchanged.
+func resolveOutputPath(path string) string {
+	if path == "" {
+		return defaultPackFilename()
+	}
+
+	// Check if path is a directory
+	info, err := os.Stat(path)
+	if err == nil && info.IsDir() {
+		return filepath.Join(path, defaultPackFilename())
+	}
+
+	return path
+}
+
+// defaultPackFilename generates a timestamped pack filename.
+func defaultPackFilename() string {
+	timestamp := time.Now().UTC().Format("20060102-150405")
+	return fmt.Sprintf("evidence-%s%s", timestamp, packpath.PackExtension)
 }
 
 // lockfileNeedsUpdateWorkflow checks if the lockfile needs updating for the given platform.
@@ -440,11 +460,7 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 	}
 
 	// Build evidence pack
-	outputPath := opts.OutputPath
-	if outputPath == "" {
-		timestamp := time.Now().UTC().Format("20060102-150405")
-		outputPath = fmt.Sprintf("evidence-%s%s", timestamp, packpath.PackExtension)
-	}
+	outputPath := resolveOutputPath(opts.OutputPath)
 
 	b := builder.New(cfg.Stream)
 

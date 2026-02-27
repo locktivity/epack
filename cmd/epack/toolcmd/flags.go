@@ -24,6 +24,7 @@ type WrapperFlags struct {
 // Wrapper flags can be set via:
 //   - CLI flags: --pack, --output-dir, --json, --quiet
 //   - Environment variables: EPACK_PACK, EPACK_OUTPUT_DIR, EPACK_JSON, EPACK_QUIET
+//   - Positional: first arg ending in .epack is treated as pack path
 //
 // CLI flags take precedence over environment variables.
 // Use "--" to explicitly end wrapper flags and pass remaining args to the tool.
@@ -34,6 +35,7 @@ func ParseWrapperArgs(args []string) (WrapperFlags, []string, error) {
 	// Start with env var defaults
 	flags := WrapperFlagsFromEnv()
 	var toolArgs []string
+	packFromFlag := flags.PackPath != "" // Track if pack came from env or will come from flag
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -55,8 +57,10 @@ func ParseWrapperArgs(args []string) (WrapperFlags, []string, error) {
 			}
 			i++
 			flags.PackPath = args[i]
+			packFromFlag = true
 		case strings.HasPrefix(arg, "--pack="):
 			flags.PackPath = strings.TrimPrefix(arg, "--pack=")
+			packFromFlag = true
 		case arg == "--output-dir" || arg == "-o":
 			if i+1 >= len(args) {
 				return flags, nil, fmt.Errorf("--output-dir requires an argument")
@@ -72,8 +76,18 @@ func ParseWrapperArgs(args []string) (WrapperFlags, []string, error) {
 		case arg == "--insecure-allow-unpinned":
 			flags.InsecureAllowUnpinned = true
 		default:
-			// Not a wrapper flag - everything from here goes to tool
-			toolArgs = args[i:]
+			// Not a wrapper flag - check if first positional is a pack file
+			// If no --pack flag was provided and first arg looks like a pack, use it
+			if !packFromFlag && strings.HasSuffix(arg, ".epack") {
+				flags.PackPath = arg
+				// Rest of args go to tool
+				if i+1 < len(args) {
+					toolArgs = args[i+1:]
+				}
+			} else {
+				// Everything from here goes to tool
+				toolArgs = args[i:]
+			}
 			return flags, toolArgs, nil
 		}
 	}

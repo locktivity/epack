@@ -13,10 +13,10 @@ const ProgressProtocolVersion = 1
 // ProgressMessage is the JSON envelope for progress updates written to stdout.
 // Components can emit zero or more progress messages during execution.
 type ProgressMessage struct {
-	Type            string `json:"type"`             // Always "epack_progress"
-	ProtocolVersion int    `json:"protocol_version"` // Progress protocol version
-	Kind            string `json:"kind"`             // "status" or "progress"
-	Message         string `json:"message"`          // Human-readable message
+	Type            string `json:"type"`              // Always "epack_progress"
+	ProtocolVersion int    `json:"protocol_version"`  // Progress protocol version
+	Kind            string `json:"kind"`              // "status" or "progress"
+	Message         string `json:"message"`           // Human-readable message
 	Current         int64  `json:"current,omitempty"` // For kind="progress": current value
 	Total           int64  `json:"total,omitempty"`   // For kind="progress": total value
 }

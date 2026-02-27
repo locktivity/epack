@@ -33,7 +33,7 @@ const maxStderrLen = 500
 type ProgressMessage struct {
 	Type            string `json:"type"`
 	ProtocolVersion int    `json:"protocol_version"`
-	Kind            string `json:"kind"`              // "status" or "progress"
+	Kind            string `json:"kind"` // "status" or "progress"
 	Message         string `json:"message"`
 	Current         int64  `json:"current,omitempty"`
 	Total           int64  `json:"total,omitempty"`
@@ -64,10 +64,10 @@ type RunResult struct {
 // the final result. Progress messages are forwarded via callback; the result
 // message is accumulated in the result buffer.
 type streamingStdoutWriter struct {
-	callback   func(ProgressMessage)
-	result     bytes.Buffer // Accumulates the final result (non-progress) output
-	partial    bytes.Buffer // Partial line awaiting newline
-	mu         sync.Mutex
+	callback func(ProgressMessage)
+	result   bytes.Buffer // Accumulates the final result (non-progress) output
+	partial  bytes.Buffer // Partial line awaiting newline
+	mu       sync.Mutex
 }
 
 func newStreamingStdoutWriter(callback func(ProgressMessage)) *streamingStdoutWriter {

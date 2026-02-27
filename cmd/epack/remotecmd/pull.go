@@ -15,8 +15,8 @@ import (
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/pull"
 	"github.com/locktivity/epack/internal/remote"
-	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -124,53 +124,19 @@ func runPull(cmd *cobra.Command, args []string) error {
 		return exitError("pull failed: %v", err)
 	}
 
-	// Build pack reference
-	ref := remote.PackRef{}
-	if pullDigest != "" {
-		ref.Digest = pullDigest
-	} else if pullReleaseID != "" {
-		ref.ReleaseID = pullReleaseID
-	} else if pullVersion != "" {
-		ref.Version = pullVersion
-	} else if len(args) > 1 {
-		// Allow positional ref argument (version or release ID)
-		refArg := args[1]
-		if len(refArg) > 7 && refArg[:7] == "sha256:" {
-			ref.Digest = refArg
-		} else if len(refArg) > 4 && refArg[:4] == "rel_" {
-			ref.ReleaseID = refArg
-		} else {
-			// Assume version
-			ref.Version = refArg
-		}
-	} else {
-		ref.Latest = true
+	ref := buildPullRef(args)
+	if handled, err := handlePullModes(cmd, args, remoteName, ref, out); handled || err != nil {
+		return err
 	}
 
-	// Dry-run mode: show what would be pulled without executing
-	if pullDryRun {
-		return runPullDryRun(remoteName, ref, out)
-	}
-
-	// Detach mode: spawn background process and return immediately
-	if pullDetach {
-		return runPullDetached(cmd, args, out)
-	}
-
-	// Verbose logging
 	out.Verbose("Pulling from remote %q\n", remoteName)
 	if pullEnv != "" {
 		out.Verbose("Using environment: %s\n", pullEnv)
 	}
 
-	// Track current step spinner and progress bar
-	var currentSpinner *output.Spinner
-	var progressBar *output.ProgressBar
-
-	// Track duration
 	startTime := time.Now()
+	ui := newCommandUI(out, "Downloading", "Download failed", "Pull failed")
 
-	// Build options with step callbacks for multi-step progress
 	opts := pull.Options{
 		Secure: struct{ Frozen bool }{
 			Frozen: false,
@@ -178,78 +144,67 @@ func runPull(cmd *cobra.Command, args []string) error {
 		Unsafe: struct{ AllowUnpinned bool }{
 			AllowUnpinned: pullInsecureAllowUnpinned,
 		},
-		Remote:      remoteName,
-		Ref:         ref,
-		OutputPath:  pullOutput,
-		Force:       pullForce,
-		Environment: pullEnv,
-		Workspace:   pullWorkspace,
-		Verify:      pullVerify,
-		Stderr:      os.Stderr,
-		OnStep: func(step string, started bool) {
-			if out.IsQuiet() || out.IsJSON() {
-				return
-			}
-			if started {
-				// Stop any existing progress bar before starting new spinner
-				if progressBar != nil {
-					progressBar = nil
-				}
-				currentSpinner = out.StartSpinner(step)
-			} else if currentSpinner != nil {
-				currentSpinner.Success(step)
-				currentSpinner = nil
-			}
-		},
-		OnDownloadProgress: func(read, total int64) {
-			if out.IsQuiet() || out.IsJSON() {
-				return
-			}
-			// Stop spinner, switch to progress bar for download
-			if currentSpinner != nil {
-				currentSpinner.Stop()
-				currentSpinner = nil
-				progressBar = out.StartProgress("Downloading", total)
-			}
-			if progressBar != nil {
-				progressBar.Update(read)
-			}
-		},
+		Remote:             remoteName,
+		Ref:                ref,
+		OutputPath:         pullOutput,
+		Force:              pullForce,
+		Environment:        pullEnv,
+		Workspace:          pullWorkspace,
+		Verify:             pullVerify,
+		Stderr:             os.Stderr,
+		OnStep:             ui.onStep,
+		OnDownloadProgress: ui.onProgress,
 		PromptInstallAdapter: func(remoteName, adapterName string) bool {
-			// Don't prompt in non-interactive modes
-			if out.IsQuiet() || out.IsJSON() || !out.IsTTY() {
-				return false
-			}
-			// Stop current spinner before prompting
-			if currentSpinner != nil {
-				currentSpinner.Stop()
-				currentSpinner = nil
-			}
-			// Prompt user
-			return out.PromptConfirm(
-				"Adapter %q for remote %q is not installed. Install now?",
-				adapterName, remoteName,
-			)
+			return ui.promptInstallAdapter(remoteName, adapterName, true)
 		},
 	}
 
 	result, err := pull.Pull(ctx, opts)
 	if err != nil {
-		// Clean up any active UI
-		if progressBar != nil {
-			progressBar.Fail("Download failed")
-		} else if currentSpinner != nil {
-			currentSpinner.Fail("Pull failed")
-		}
+		ui.fail()
 		return exitError("pull failed: %v", err)
 	}
 
-	// Clean up progress bar if it was still active (download completed)
-	if progressBar != nil {
-		progressBar.Done("Downloaded")
-	}
+	ui.done("Downloaded")
+	return outputPullResult(out, remoteName, result, time.Since(startTime))
+}
 
-	// Output result
+func buildPullRef(args []string) remote.PackRef {
+	switch {
+	case pullDigest != "":
+		return remote.PackRef{Digest: pullDigest}
+	case pullReleaseID != "":
+		return remote.PackRef{ReleaseID: pullReleaseID}
+	case pullVersion != "":
+		return remote.PackRef{Version: pullVersion}
+	case len(args) > 1:
+		return parsePositionalPullRef(args[1])
+	default:
+		return remote.PackRef{Latest: true}
+	}
+}
+
+func parsePositionalPullRef(refArg string) remote.PackRef {
+	if len(refArg) > 7 && refArg[:7] == "sha256:" {
+		return remote.PackRef{Digest: refArg}
+	}
+	if len(refArg) > 4 && refArg[:4] == "rel_" {
+		return remote.PackRef{ReleaseID: refArg}
+	}
+	return remote.PackRef{Version: refArg}
+}
+
+func handlePullModes(cmd *cobra.Command, args []string, remoteName string, ref remote.PackRef, out *output.Writer) (bool, error) {
+	if pullDryRun {
+		return true, runPullDryRun(remoteName, ref, out)
+	}
+	if pullDetach {
+		return true, runPullDetached(cmd, args, out)
+	}
+	return false, nil
+}
+
+func outputPullResult(out *output.Writer, remoteName string, result *pull.Result, duration time.Duration) error {
 	if out.IsJSON() {
 		return out.JSON(map[string]interface{}{
 			"pulled":       true,
@@ -264,8 +219,6 @@ func runPull(cmd *cobra.Command, args []string) error {
 			"receipt_path": result.ReceiptPath,
 		})
 	}
-
-	duration := time.Since(startTime)
 
 	out.Print("\n✓ Pulled from %s in %s\n", remoteName, formatPullDuration(duration))
 	out.Print("\nPack:\n")
@@ -282,13 +235,11 @@ func runPull(cmd *cobra.Command, args []string) error {
 	}
 	out.Print("\nOutput: %s\n", result.OutputPath)
 
-	// Post-command hints
 	p := out.Palette()
 	out.Print("\n%s\n", p.Dim("Next steps:"))
 	out.Print("%s  epack inspect %s   %s\n", p.Dim("  •"), result.OutputPath, p.Dim("# View pack contents"))
 	out.Print("%s  epack verify %s    %s\n", p.Dim("  •"), result.OutputPath, p.Dim("# Verify signatures"))
 	out.Print("%s  epack list artifacts %s  %s\n", p.Dim("  •"), result.OutputPath, p.Dim("# List artifacts"))
-
 	return nil
 }
 

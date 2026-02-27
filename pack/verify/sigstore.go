@@ -3,8 +3,11 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"regexp"
+	"strings"
 
 	"github.com/locktivity/epack/internal/jsonutil"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
@@ -63,7 +66,7 @@ func NewSigstoreVerifier(opts ...Option) (*SigstoreVerifier, error) {
 		// Use Sigstore Public Good instance via LiveTrustedRoot
 		liveTrustedRoot, err := root.NewLiveTrustedRoot(tuf.DefaultOptions())
 		if err != nil {
-			return nil, fmt.Errorf("failed to get trusted root: %w", err)
+			return nil, wrapTrustedRootError(err)
 		}
 		trustedMaterial = liveTrustedRoot
 	}
@@ -371,4 +374,43 @@ func extractIdentityFromBundle(b *bundle.Bundle) *Identity {
 		Issuer:  summary.Issuer,
 		Subject: summary.SubjectAlternativeName,
 	}
+}
+
+// wrapTrustedRootError wraps TUF/network errors with user-friendly messages.
+func wrapTrustedRootError(err error) error {
+	errStr := err.Error()
+
+	// Check for DNS resolution failures
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) || strings.Contains(errStr, "no such host") {
+		return fmt.Errorf("cannot reach Sigstore trust repository (DNS lookup failed)\n\n"+
+			"This typically means:\n"+
+			"  - No network connection\n"+
+			"  - DNS server issues\n"+
+			"  - Firewall blocking sigstore.dev\n"+
+			"  - Sigstore service outage (check https://status.sigstore.dev)\n\n"+
+			"Workarounds:\n"+
+			"  1. Use --trust-root with a local trust root file\n"+
+			"  2. Use --integrity-only to skip attestation verification\n\n"+
+			"To download a trust root for offline use:\n"+
+			"  curl -o trusted_root.json https://raw.githubusercontent.com/sigstore/root-signing/main/targets/trusted_root.json\n"+
+			"  epack verify pack.epack --trust-root trusted_root.json ...\n\n"+
+			"Original error: %w", err)
+	}
+
+	// Check for connection refused/timeout
+	var netErr net.Error
+	if errors.As(err, &netErr) || strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection timed out") || strings.Contains(errStr, "i/o timeout") {
+		return fmt.Errorf("cannot connect to Sigstore trust repository (network error)\n\n"+
+			"Check Sigstore status: https://status.sigstore.dev\n\n"+
+			"Workarounds:\n"+
+			"  1. Check your network connection\n"+
+			"  2. Use --trust-root with a local trust root file\n"+
+			"  3. Use --integrity-only to skip attestation verification\n\n"+
+			"Original error: %w", err)
+	}
+
+	// Default: pass through with context
+	return fmt.Errorf("failed to get Sigstore trusted root: %w", err)
 }

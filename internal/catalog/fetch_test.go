@@ -9,7 +9,6 @@ import (
 )
 
 func TestFetchCatalog(t *testing.T) {
-	// Setup temp cache dir
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", tmpDir)
 
@@ -22,238 +21,238 @@ func TestFetchCatalog(t *testing.T) {
 		]
 	}`
 
-	t.Run("successful fetch", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("ETag", `"abc123"`)
-			w.Header().Set("Last-Modified", "Fri, 20 Feb 2026 16:00:00 GMT")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(catalogJSON))
-		}))
-		defer server.Close()
+	t.Run("successful fetch", func(t *testing.T) { testFetchCatalogSuccessful(t, catalogJSON) })
+	t.Run("304 not modified", func(t *testing.T) { testFetchCatalogNotModified(t, catalogJSON) })
+	t.Run("If-Modified-Since header", func(t *testing.T) { testFetchCatalogIfModifiedSince(t, catalogJSON) })
+	t.Run("server error", testFetchCatalogServerError)
+	t.Run("invalid JSON", testFetchCatalogInvalidJSON)
+	t.Run("context cancellation", func(t *testing.T) { testFetchCatalogContextCancellation(t, catalogJSON) })
+}
 
-		result, err := FetchCatalog(context.Background(), FetchOptions{
-			URL:               server.URL,
-			HTTPClient:        server.Client(),
-			InsecureAllowHTTP: true,
-		})
+func testFetchCatalogSuccessful(t *testing.T, catalogJSON string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"abc123"`)
+		w.Header().Set("Last-Modified", "Fri, 20 Feb 2026 16:00:00 GMT")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(catalogJSON))
+	}))
+	defer server.Close()
 
-		if err != nil {
-			t.Fatalf("FetchCatalog() error = %v", err)
-		}
-		if !result.Updated {
-			t.Error("result.Updated = false, want true")
-		}
-		if result.Status != MetaStatusOK {
-			t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusOK)
-		}
-		if result.HTTPStatus != 200 {
-			t.Errorf("result.HTTPStatus = %d, want 200", result.HTTPStatus)
-		}
-
-		// Verify catalog was written
-		cat, _, err := ReadCatalog()
-		if err != nil {
-			t.Fatalf("ReadCatalog() error = %v", err)
-		}
-		if len(cat.Tools) != 1 {
-			t.Errorf("len(cat.Tools) = %d, want 1", len(cat.Tools))
-		}
-
-		// Verify meta was written
-		meta, err := ReadMeta()
-		if err != nil {
-			t.Fatalf("ReadMeta() error = %v", err)
-		}
-		if meta.ETag != `"abc123"` {
-			t.Errorf("meta.ETag = %q, want %q", meta.ETag, `"abc123"`)
-		}
-		if meta.LastStatus != MetaStatusOK {
-			t.Errorf("meta.LastStatus = %q, want %q", meta.LastStatus, MetaStatusOK)
-		}
+	result, err := FetchCatalog(context.Background(), FetchOptions{
+		URL:               server.URL,
+		HTTPClient:        server.Client(),
+		InsecureAllowHTTP: true,
 	})
+	if err != nil {
+		t.Fatalf("FetchCatalog() error = %v", err)
+	}
+	if !result.Updated {
+		t.Error("result.Updated = false, want true")
+	}
+	if result.Status != MetaStatusOK {
+		t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusOK)
+	}
+	if result.HTTPStatus != 200 {
+		t.Errorf("result.HTTPStatus = %d, want 200", result.HTTPStatus)
+	}
 
-	t.Run("304 not modified", func(t *testing.T) {
-		// Clear cache first
-		_ = ClearCache()
+	cat, _, err := ReadCatalog()
+	if err != nil {
+		t.Fatalf("ReadCatalog() error = %v", err)
+	}
+	if len(cat.Tools) != 1 {
+		t.Errorf("len(cat.Tools) = %d, want 1", len(cat.Tools))
+	}
 
-		// First fetch to populate cache
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Check for conditional headers
-			if r.Header.Get("If-None-Match") == `"abc123"` {
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
-			w.Header().Set("ETag", `"abc123"`)
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(catalogJSON))
-		}))
-		defer server.Close()
+	meta, err := ReadMeta()
+	if err != nil {
+		t.Fatalf("ReadMeta() error = %v", err)
+	}
+	if meta.ETag != `"abc123"` {
+		t.Errorf("meta.ETag = %q, want %q", meta.ETag, `"abc123"`)
+	}
+	if meta.LastStatus != MetaStatusOK {
+		t.Errorf("meta.LastStatus = %q, want %q", meta.LastStatus, MetaStatusOK)
+	}
+}
 
-		// First fetch
-		result1, err := FetchCatalog(context.Background(), FetchOptions{
-			URL:               server.URL,
-			HTTPClient:        server.Client(),
-			InsecureAllowHTTP: true,
-		})
-		if err != nil {
-			t.Fatalf("First FetchCatalog() error = %v", err)
-		}
-		if !result1.Updated {
-			t.Error("First fetch: result.Updated = false, want true")
-		}
+func testFetchCatalogNotModified(t *testing.T, catalogJSON string) {
+	t.Helper()
+	_ = ClearCache()
 
-		// Second fetch with ETag should get 304
-		result2, err := FetchCatalog(context.Background(), FetchOptions{
-			URL:               server.URL,
-			HTTPClient:        server.Client(),
-			InsecureAllowHTTP: true,
-			ETag:              `"abc123"`,
-		})
-		if err != nil {
-			t.Fatalf("Second FetchCatalog() error = %v", err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"abc123"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
 		}
-		if result2.Updated {
-			t.Error("Second fetch: result.Updated = true, want false")
-		}
-		if result2.Status != MetaStatusNotModified {
-			t.Errorf("result.Status = %q, want %q", result2.Status, MetaStatusNotModified)
-		}
-		if result2.HTTPStatus != 304 {
-			t.Errorf("result.HTTPStatus = %d, want 304", result2.HTTPStatus)
-		}
+		w.Header().Set("ETag", `"abc123"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(catalogJSON))
+	}))
+	defer server.Close()
+
+	result1, err := FetchCatalog(context.Background(), FetchOptions{
+		URL:               server.URL,
+		HTTPClient:        server.Client(),
+		InsecureAllowHTTP: true,
 	})
+	if err != nil {
+		t.Fatalf("First FetchCatalog() error = %v", err)
+	}
+	if !result1.Updated {
+		t.Error("First fetch: result.Updated = false, want true")
+	}
 
-	t.Run("If-Modified-Since header", func(t *testing.T) {
-		_ = ClearCache()
-
-		lastMod := "Fri, 20 Feb 2026 16:00:00 GMT"
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("If-Modified-Since") == lastMod {
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
-			w.Header().Set("Last-Modified", lastMod)
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(catalogJSON))
-		}))
-		defer server.Close()
-
-		// Fetch with Last-Modified
-		result, err := FetchCatalog(context.Background(), FetchOptions{
-			URL:               server.URL,
-			HTTPClient:        server.Client(),
-			LastModified:      lastMod,
-			InsecureAllowHTTP: true,
-		})
-		if err != nil {
-			t.Fatalf("FetchCatalog() error = %v", err)
-		}
-		if result.Updated {
-			t.Error("result.Updated = true, want false (304)")
-		}
-		if result.Status != MetaStatusNotModified {
-			t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusNotModified)
-		}
+	result2, err := FetchCatalog(context.Background(), FetchOptions{
+		URL:               server.URL,
+		HTTPClient:        server.Client(),
+		InsecureAllowHTTP: true,
+		ETag:              `"abc123"`,
 	})
+	if err != nil {
+		t.Fatalf("Second FetchCatalog() error = %v", err)
+	}
+	if result2.Updated {
+		t.Error("Second fetch: result.Updated = true, want false")
+	}
+	if result2.Status != MetaStatusNotModified {
+		t.Errorf("result.Status = %q, want %q", result2.Status, MetaStatusNotModified)
+	}
+	if result2.HTTPStatus != 304 {
+		t.Errorf("result.HTTPStatus = %d, want 304", result2.HTTPStatus)
+	}
+}
 
-	t.Run("server error", func(t *testing.T) {
-		_ = ClearCache()
+func testFetchCatalogIfModifiedSince(t *testing.T, catalogJSON string) {
+	t.Helper()
+	_ = ClearCache()
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-		}))
-		defer server.Close()
+	lastMod := "Fri, 20 Feb 2026 16:00:00 GMT"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-Modified-Since") == lastMod {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Last-Modified", lastMod)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(catalogJSON))
+	}))
+	defer server.Close()
 
-		result, err := FetchCatalog(context.Background(), FetchOptions{
-			URL:               server.URL,
-			HTTPClient:        server.Client(),
-			InsecureAllowHTTP: true,
-		})
-
-		if err != nil {
-			t.Fatalf("FetchCatalog() error = %v (should return result with error)", err)
-		}
-		if result.Updated {
-			t.Error("result.Updated = true, want false")
-		}
-		if result.Status != MetaStatusError {
-			t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusError)
-		}
-		if result.HTTPStatus != 500 {
-			t.Errorf("result.HTTPStatus = %d, want 500", result.HTTPStatus)
-		}
-		if result.Error == nil {
-			t.Error("result.Error = nil, want error")
-		}
-
-		// Verify meta records the error
-		meta, err := ReadMeta()
-		if err != nil {
-			t.Fatalf("ReadMeta() error = %v", err)
-		}
-		if meta.LastStatus != MetaStatusError {
-			t.Errorf("meta.LastStatus = %q, want %q", meta.LastStatus, MetaStatusError)
-		}
-		if meta.LastError == "" {
-			t.Error("meta.LastError is empty, want error message")
-		}
+	result, err := FetchCatalog(context.Background(), FetchOptions{
+		URL:               server.URL,
+		HTTPClient:        server.Client(),
+		LastModified:      lastMod,
+		InsecureAllowHTTP: true,
 	})
+	if err != nil {
+		t.Fatalf("FetchCatalog() error = %v", err)
+	}
+	if result.Updated {
+		t.Error("result.Updated = true, want false (304)")
+	}
+	if result.Status != MetaStatusNotModified {
+		t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusNotModified)
+	}
+}
 
-	t.Run("invalid JSON", func(t *testing.T) {
-		_ = ClearCache()
+func testFetchCatalogServerError(t *testing.T) {
+	t.Helper()
+	_ = ClearCache()
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{not valid json`))
-		}))
-		defer server.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
 
-		result, err := FetchCatalog(context.Background(), FetchOptions{
-			URL:               server.URL,
-			HTTPClient:        server.Client(),
-			InsecureAllowHTTP: true,
-		})
-
-		if err != nil {
-			t.Fatalf("FetchCatalog() error = %v", err)
-		}
-		if result.Updated {
-			t.Error("result.Updated = true, want false")
-		}
-		if result.Status != MetaStatusError {
-			t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusError)
-		}
+	result, err := FetchCatalog(context.Background(), FetchOptions{
+		URL:               server.URL,
+		HTTPClient:        server.Client(),
+		InsecureAllowHTTP: true,
 	})
+	if err != nil {
+		t.Fatalf("FetchCatalog() error = %v (should return result with error)", err)
+	}
+	if result.Updated {
+		t.Error("result.Updated = true, want false")
+	}
+	if result.Status != MetaStatusError {
+		t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusError)
+	}
+	if result.HTTPStatus != 500 {
+		t.Errorf("result.HTTPStatus = %d, want 500", result.HTTPStatus)
+	}
+	if result.Error == nil {
+		t.Error("result.Error = nil, want error")
+	}
 
-	t.Run("context cancellation", func(t *testing.T) {
-		_ = ClearCache()
+	meta, err := ReadMeta()
+	if err != nil {
+		t.Fatalf("ReadMeta() error = %v", err)
+	}
+	if meta.LastStatus != MetaStatusError {
+		t.Errorf("meta.LastStatus = %q, want %q", meta.LastStatus, MetaStatusError)
+	}
+	if meta.LastError == "" {
+		t.Error("meta.LastError is empty, want error message")
+	}
+}
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			time.Sleep(100 * time.Millisecond)
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(catalogJSON))
-		}))
-		defer server.Close()
+func testFetchCatalogInvalidJSON(t *testing.T) {
+	t.Helper()
+	_ = ClearCache()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-		defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{not valid json`))
+	}))
+	defer server.Close()
 
-		result, err := FetchCatalog(ctx, FetchOptions{
-			URL:               server.URL,
-			HTTPClient:        server.Client(),
-			InsecureAllowHTTP: true,
-		})
-
-		if err != nil {
-			t.Fatalf("FetchCatalog() error = %v", err)
-		}
-		if result.Updated {
-			t.Error("result.Updated = true, want false")
-		}
-		if result.Status != MetaStatusError {
-			t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusError)
-		}
+	result, err := FetchCatalog(context.Background(), FetchOptions{
+		URL:               server.URL,
+		HTTPClient:        server.Client(),
+		InsecureAllowHTTP: true,
 	})
+	if err != nil {
+		t.Fatalf("FetchCatalog() error = %v", err)
+	}
+	if result.Updated {
+		t.Error("result.Updated = true, want false")
+	}
+	if result.Status != MetaStatusError {
+		t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusError)
+	}
+}
+
+func testFetchCatalogContextCancellation(t *testing.T, catalogJSON string) {
+	t.Helper()
+	_ = ClearCache()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(catalogJSON))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	result, err := FetchCatalog(ctx, FetchOptions{
+		URL:               server.URL,
+		HTTPClient:        server.Client(),
+		InsecureAllowHTTP: true,
+	})
+	if err != nil {
+		t.Fatalf("FetchCatalog() error = %v", err)
+	}
+	if result.Updated {
+		t.Error("result.Updated = true, want false")
+	}
+	if result.Status != MetaStatusError {
+		t.Errorf("result.Status = %q, want %q", result.Status, MetaStatusError)
+	}
 }
 
 func TestFetchCatalogSizeLimit(t *testing.T) {

@@ -115,7 +115,6 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return exitError("push failed: %v", err)
 	}
 
-	// Check pack exists
 	packInfo, err := os.Stat(packPath)
 	if os.IsNotExist(err) {
 		return exitError("pack not found: %s", packPath)
@@ -124,30 +123,18 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return exitError("checking pack: %v", err)
 	}
 
-	// Dry-run mode: show what would be pushed without executing
-	if pushDryRun {
-		return runPushDryRun(remoteName, packPath, packInfo.Size(), out)
+	if handled, err := handlePushModes(cmd, args, remoteName, packPath, packInfo.Size(), out); handled || err != nil {
+		return err
 	}
 
-	// Detach mode: spawn background process and return immediately
-	if pushDetach {
-		return runPushDetached(cmd, args, out)
-	}
-
-	// Verbose logging
 	out.Verbose("Pushing to remote %q\n", remoteName)
 	if pushEnv != "" {
 		out.Verbose("Using environment: %s\n", pushEnv)
 	}
 
-	// Track current step spinner and progress bar
-	var currentSpinner *output.Spinner
-	var progressBar *output.ProgressBar
-
-	// Track duration
 	startTime := time.Now()
+	ui := newCommandUI(out, "Uploading", "Upload failed", "Push failed")
 
-	// Build options with step callbacks for multi-step progress
 	opts := push.Options{
 		Secure: struct{ Frozen bool }{
 			Frozen: false,
@@ -155,85 +142,48 @@ func runPush(cmd *cobra.Command, args []string) error {
 		Unsafe: struct{ AllowUnpinned bool }{
 			AllowUnpinned: pushInsecureAllowUnpinned,
 		},
-		Remote:         remoteName,
-		PackPath:       packPath,
-		Environment:    pushEnv,
-		Workspace:      pushWorkspace,
-		Labels:         pushLabels,
-		Notes:          pushNotes,
-		RunsPaths:      pushRunsPaths,
-		NoRuns:         pushNoRuns,
-		NonInteractive: pushYes,
-		Stderr:         os.Stderr,
-		OnStep: func(step string, started bool) {
-			if out.IsQuiet() || out.IsJSON() {
-				return
-			}
-			if started {
-				// Stop any existing progress bar before starting new spinner
-				if progressBar != nil {
-					progressBar = nil
-				}
-				currentSpinner = out.StartSpinner(step)
-			} else if currentSpinner != nil {
-				currentSpinner.Success(step)
-				currentSpinner = nil
-			}
-		},
-		OnUploadProgress: func(written, total int64) {
-			if out.IsQuiet() || out.IsJSON() {
-				return
-			}
-			// Stop spinner, switch to progress bar for upload
-			if currentSpinner != nil {
-				currentSpinner.Stop()
-				currentSpinner = nil
-				progressBar = out.StartProgress("Uploading", total)
-			}
-			if progressBar != nil {
-				progressBar.Update(written)
-			}
-		},
+		Remote:           remoteName,
+		PackPath:         packPath,
+		Environment:      pushEnv,
+		Workspace:        pushWorkspace,
+		Labels:           pushLabels,
+		Notes:            pushNotes,
+		RunsPaths:        pushRunsPaths,
+		NoRuns:           pushNoRuns,
+		NonInteractive:   pushYes,
+		Stderr:           os.Stderr,
+		OnStep:           ui.onStep,
+		OnUploadProgress: ui.onProgress,
 		PromptInstallAdapter: func(remoteName, adapterName string) bool {
-			// Don't prompt in non-interactive modes
-			if out.IsQuiet() || out.IsJSON() || !out.IsTTY() || pushYes {
-				return false
-			}
-			// Stop current spinner before prompting
-			if currentSpinner != nil {
-				currentSpinner.Stop()
-				currentSpinner = nil
-			}
-			// Prompt user
-			return out.PromptConfirm(
-				"Adapter %q for remote %q is not installed. Install now?",
-				adapterName, remoteName,
-			)
+			return ui.promptInstallAdapter(remoteName, adapterName, !pushYes)
 		},
 	}
 
 	result, err := push.Push(ctx, opts)
 	if err != nil {
-		// Clean up any active UI
-		if progressBar != nil {
-			progressBar.Fail("Upload failed")
-		} else if currentSpinner != nil {
-			currentSpinner.Fail("Push failed")
-		}
+		ui.fail()
 		return exitError("push failed: %v", err)
 	}
 
-	// Clean up progress bar if it was still active (upload completed)
-	if progressBar != nil {
-		progressBar.Done("Uploaded")
-	}
+	ui.done("Uploaded")
+	return outputPushResult(out, remoteName, packPath, result, time.Since(startTime))
+}
 
-	// Show run sync results
+func handlePushModes(cmd *cobra.Command, args []string, remoteName, packPath string, packSize int64, out *output.Writer) (bool, error) {
+	if pushDryRun {
+		return true, runPushDryRun(remoteName, packPath, packSize, out)
+	}
+	if pushDetach {
+		return true, runPushDetached(cmd, args, out)
+	}
+	return false, nil
+}
+
+func outputPushResult(out *output.Writer, remoteName, packPath string, result *push.Result, duration time.Duration) error {
 	if len(result.SyncedRuns) > 0 || len(result.FailedRuns) > 0 {
 		out.Verbose("Synced %d runs, %d failed\n", len(result.SyncedRuns), len(result.FailedRuns))
 	}
 
-	// Output result
 	if out.IsJSON() {
 		return out.JSON(map[string]interface{}{
 			"pushed":        true,
@@ -247,8 +197,6 @@ func runPush(cmd *cobra.Command, args []string) error {
 			"receipt_path":  result.ReceiptPath,
 		})
 	}
-
-	duration := time.Since(startTime)
 
 	out.Print("\n✓ Pushed to %s in %s\n", remoteName, formatPushDuration(duration))
 	out.Print("\nRelease:\n")
@@ -266,12 +214,10 @@ func runPush(cmd *cobra.Command, args []string) error {
 		out.Print("Share: %s\n", shareURL)
 	}
 
-	// Post-command hints
 	p := out.Palette()
 	out.Print("\n%s\n", p.Dim("Next steps:"))
 	out.Print("%s  epack pull %s           %s\n", p.Dim("  •"), remoteName, p.Dim("# Pull on another machine"))
 	out.Print("%s  epack remote whoami %s  %s\n", p.Dim("  •"), remoteName, p.Dim("# Check auth status"))
-
 	return nil
 }
 

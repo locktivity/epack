@@ -2,8 +2,11 @@
 package sigstore
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 
 	"github.com/locktivity/epack/internal/digest"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
@@ -141,7 +144,7 @@ func VerifyBundle(bundlePath, artifactPath string, expected *ExpectedIdentity) (
 func buildSigstoreVerifier() (*verify.Verifier, error) {
 	trustedRoot, err := root.FetchTrustedRoot()
 	if err != nil {
-		return nil, fmt.Errorf("fetching trusted root: %w", err)
+		return nil, wrapTrustedRootError(err)
 	}
 	sev, err := verify.NewVerifier(
 		trustedRoot,
@@ -152,6 +155,41 @@ func buildSigstoreVerifier() (*verify.Verifier, error) {
 		return nil, fmt.Errorf("creating verifier: %w", err)
 	}
 	return sev, nil
+}
+
+// wrapTrustedRootError wraps TUF/network errors with user-friendly messages.
+func wrapTrustedRootError(err error) error {
+	errStr := err.Error()
+
+	// Check for DNS resolution failures
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) || strings.Contains(errStr, "no such host") {
+		return fmt.Errorf("cannot reach Sigstore trust repository (DNS lookup failed)\n\n"+
+			"This typically means:\n"+
+			"  - No network connection\n"+
+			"  - DNS server issues\n"+
+			"  - Firewall blocking sigstore.dev\n"+
+			"  - Sigstore service outage (check https://status.sigstore.dev)\n\n"+
+			"Workarounds:\n"+
+			"  1. Use --insecure-skip-verify to skip signature verification (NOT RECOMMENDED)\n"+
+			"  2. Check your network connection and try again\n\n"+
+			"Original error: %w", err)
+	}
+
+	// Check for connection refused/timeout
+	var netErr net.Error
+	if errors.As(err, &netErr) || strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection timed out") || strings.Contains(errStr, "i/o timeout") {
+		return fmt.Errorf("cannot connect to Sigstore trust repository (network error)\n\n"+
+			"Check Sigstore status: https://status.sigstore.dev\n\n"+
+			"Workarounds:\n"+
+			"  1. Check your network connection\n"+
+			"  2. Use --insecure-skip-verify to skip signature verification (NOT RECOMMENDED)\n\n"+
+			"Original error: %w", err)
+	}
+
+	// Default: pass through with context
+	return fmt.Errorf("failed to fetch Sigstore trusted root: %w", err)
 }
 
 func buildVerificationPolicy(artifact *os.File, expected *ExpectedIdentity) (verify.PolicyBuilder, error) {

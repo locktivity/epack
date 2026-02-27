@@ -173,7 +173,7 @@ func setupToolPack(ctx *toolContext, spec ToolSpec) int {
 			})
 			return ctx.writeResult("failure", nil)
 		}
-			ctx.pack = pack
+		ctx.pack = pack
 		return 0
 	}
 	if spec.RequiresPack {

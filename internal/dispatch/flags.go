@@ -23,6 +23,7 @@ type WrapperFlags struct {
 // Wrapper flags can be set via:
 //   - CLI flags: --pack, --output-dir, --json, --quiet
 //   - Environment variables: EPACK_PACK, EPACK_OUTPUT_DIR, EPACK_JSON, EPACK_QUIET
+//   - Positional: first arg ending in .epack is treated as pack path
 //
 // CLI flags take precedence over environment variables.
 // Use "--" to explicitly end wrapper flags and pass remaining args to the tool.
@@ -31,6 +32,8 @@ type WrapperFlags struct {
 // Returns (WrapperFlags, toolArgs, error)
 func ParseWrapperArgs(args []string) (WrapperFlags, []string, error) {
 	flags := WrapperFlagsFromEnv()
+	packFromFlag := flags.PackPath != "" // Track if pack came from env or will come from flag
+
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -44,10 +47,24 @@ func ParseWrapperArgs(args []string) (WrapperFlags, []string, error) {
 		if err != nil {
 			return flags, nil, err
 		}
-		if !isWrapper {
-			return flags, args[i:], nil
+		if isWrapper {
+			// Track if --pack flag was used
+			if arg == "--pack" || arg == "-p" || strings.HasPrefix(arg, "--pack=") {
+				packFromFlag = true
+			}
+			i += consumed
+			continue
 		}
-		i += consumed
+		// Not a wrapper flag - check if first positional is a pack file
+		// If no --pack flag was provided and first arg looks like a pack, use it
+		if !packFromFlag && strings.HasSuffix(arg, ".epack") {
+			flags.PackPath = arg
+			if i+1 < len(args) {
+				return flags, args[i+1:], nil
+			}
+			return flags, nil, nil
+		}
+		return flags, args[i:], nil
 	}
 	return flags, nil, nil
 }
