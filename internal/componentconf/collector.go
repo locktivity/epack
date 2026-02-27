@@ -53,8 +53,12 @@ func (r *Runner) testCollectorOutput(ctx context.Context) {
 		return
 	}
 
+	// Extract result output, filtering out progress messages.
+	// The new protocol allows interleaved epack_progress messages in stdout.
+	resultOutput := extractResultOutput(result.Stdout)
+
 	// COL-001: Output valid JSON to stdout
-	if isValidJSON(result.Stdout) {
+	if isValidJSON(resultOutput) {
 		r.pass("COL-001")
 	} else {
 		r.fail("COL-001", "output is not valid JSON")
@@ -65,7 +69,7 @@ func (r *Runner) testCollectorOutput(ctx context.Context) {
 	}
 
 	// COL-006: JSON is UTF-8 encoded
-	if isValidUTF8(result.Stdout) {
+	if isValidUTF8(resultOutput) {
 		r.pass("COL-006")
 	} else {
 		r.fail("COL-006", "output is not valid UTF-8")
@@ -76,7 +80,7 @@ func (r *Runner) testCollectorOutput(ctx context.Context) {
 		ProtocolVersion int             `json:"protocol_version"`
 		Data            json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(result.Stdout, &envelope); err == nil && envelope.ProtocolVersion > 0 && len(envelope.Data) > 0 {
+	if err := json.Unmarshal(resultOutput, &envelope); err == nil && envelope.ProtocolVersion > 0 && len(envelope.Data) > 0 {
 		r.pass("COL-002")
 	} else {
 		// Not using envelope is allowed (COL-003)
@@ -85,8 +89,9 @@ func (r *Runner) testCollectorOutput(ctx context.Context) {
 	}
 
 	// COL-005: Output size does not exceed 64 MB
+	// Check the result output size (not including progress messages)
 	const maxSize = 64 * 1024 * 1024
-	if len(result.Stdout) <= maxSize {
+	if len(resultOutput) <= maxSize {
 		r.pass("COL-005")
 	} else {
 		r.fail("COL-005", "output exceeds 64 MB")

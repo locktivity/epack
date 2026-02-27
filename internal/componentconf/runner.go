@@ -216,6 +216,48 @@ func isValidJSON(data []byte) bool {
 	return json.Unmarshal(data, &v) == nil
 }
 
+// extractResultOutput filters stdout to extract only the result output,
+// removing any progress messages. This handles the JSON Lines protocol where
+// components can emit epack_progress messages before the final result.
+func extractResultOutput(stdout []byte) []byte {
+	var result bytes.Buffer
+	lines := bytes.Split(stdout, []byte("\n"))
+
+	for _, line := range lines {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			continue
+		}
+
+		// Check if this line is a progress message
+		if isProgressMessage(trimmed) {
+			continue // Skip progress messages
+		}
+
+		// Include non-progress lines in result
+		result.Write(line)
+		result.WriteByte('\n')
+	}
+
+	return bytes.TrimSpace(result.Bytes())
+}
+
+// isProgressMessage checks if a line is an epack_progress JSON message.
+func isProgressMessage(line []byte) bool {
+	if len(line) == 0 || line[0] != '{' {
+		return false
+	}
+
+	var msg struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(line, &msg); err != nil {
+		return false
+	}
+
+	return msg.Type == "epack_progress"
+}
+
 func isValidUTF8(data []byte) bool {
 	return utf8.Valid(data)
 }
