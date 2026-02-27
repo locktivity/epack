@@ -86,6 +86,7 @@ type componentInstaller struct {
 var (
 	installComponentConfigPath string
 	installComponentRefresh    bool
+	installComponentNoRefresh  bool
 	installComponentNoDeps     bool
 	installComponentDryRun     bool
 )
@@ -120,7 +121,9 @@ Examples:
 	cmd.Flags().StringVarP(&installComponentConfigPath, "config", "c", "epack.yaml",
 		"path to epack config file")
 	cmd.Flags().BoolVar(&installComponentRefresh, "refresh", false,
-		"refresh catalog before lookup")
+		"force full catalog refresh (ignore cached data)")
+	cmd.Flags().BoolVar(&installComponentNoRefresh, "no-refresh", false,
+		"skip catalog refresh (use cached catalog only)")
 	cmd.Flags().BoolVar(&installComponentNoDeps, "no-deps", false,
 		"skip installing dependencies")
 	cmd.Flags().BoolVar(&installComponentDryRun, "dry-run", false,
@@ -156,7 +159,9 @@ Examples:
 	cmd.Flags().StringVarP(&installComponentConfigPath, "config", "c", "epack.yaml",
 		"path to epack config file")
 	cmd.Flags().BoolVar(&installComponentRefresh, "refresh", false,
-		"refresh catalog before lookup")
+		"force full catalog refresh (ignore cached data)")
+	cmd.Flags().BoolVar(&installComponentNoRefresh, "no-refresh", false,
+		"skip catalog refresh (use cached catalog only)")
 	cmd.Flags().BoolVar(&installComponentDryRun, "dry-run", false,
 		"show what would be installed without making changes")
 
@@ -190,7 +195,9 @@ Examples:
 	cmd.Flags().StringVarP(&installComponentConfigPath, "config", "c", "epack.yaml",
 		"path to epack config file")
 	cmd.Flags().BoolVar(&installComponentRefresh, "refresh", false,
-		"refresh catalog before lookup")
+		"force full catalog refresh (ignore cached data)")
+	cmd.Flags().BoolVar(&installComponentNoRefresh, "no-refresh", false,
+		"skip catalog refresh (use cached catalog only)")
 	cmd.Flags().BoolVar(&installComponentDryRun, "dry-run", false,
 		"show what would be installed without making changes")
 
@@ -271,15 +278,34 @@ To initialize this directory: epack init`, installComponentConfigPath),
 		}
 	}
 
-	// Refresh catalog if requested or missing
-	if installComponentRefresh || !catalog.Exists() {
-		out.Print("Refreshing catalog...\n")
-		_, err := catalog.FetchCatalog(ctx, catalog.FetchOptions{})
+	// Refresh catalog unless --no-refresh is set
+	// By default, use conditional requests (fast if unchanged)
+	// --refresh forces a full refresh, ignoring cached data
+	if !installComponentNoRefresh {
+		opts := catalog.FetchOptions{}
+
+		// Use conditional request unless --refresh forces full refresh
+		if !installComponentRefresh {
+			if meta, err := catalog.ReadMeta(); err == nil {
+				opts.ETag = meta.ETag
+				opts.LastModified = meta.LastModified
+			}
+		}
+
+		out.Print("Checking catalog...\n")
+		result, err := catalog.FetchCatalog(ctx, opts)
 		if err != nil {
 			return &exitError{
 				Exit:    exitcode.Network,
 				Message: fmt.Sprintf("fetching catalog: %v", err),
 			}
+		}
+
+		// Report what happened
+		if result.Status == catalog.MetaStatusNotModified {
+			out.Print("  catalog is up to date\n")
+		} else if result.Updated {
+			out.Print("  catalog updated\n")
 		}
 	}
 
