@@ -277,7 +277,9 @@ func (s *Spinner) animate() {
 			s.mu.Lock()
 			if !s.stopped {
 				// Clear line and print spinner frame
-				_, _ = fmt.Fprintf(s.w.stdout, "\r%s %s", s.w.palette.Cyan(spinnerFrames[frame]), s.message)
+				// Use \033[K to clear to end of line, preventing leftover characters
+				// when the new message is shorter than the previous one
+				_, _ = fmt.Fprintf(s.w.stdout, "\r\033[K%s %s", s.w.palette.Cyan(spinnerFrames[frame]), s.message)
 				frame = (frame + 1) % len(spinnerFrames)
 			}
 			s.mu.Unlock()
