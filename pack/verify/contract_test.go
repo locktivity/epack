@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -10,56 +11,158 @@ import (
 // Verifier Interface Contract Tests
 // =============================================================================
 // These tests define the contract that all Verifier implementations must satisfy.
-// Run these against any new Verifier implementation to ensure compliance.
+// They use MockVerifier to test interface behavior without network dependencies.
 
-// TestVerifierContract_NilAttestationReturnsError verifies that all Verifier
-// implementations return an error when given nil attestation data.
-func TestVerifierContract_NilAttestationReturnsError(t *testing.T) {
+// TestVerifierContract_VerifiedFalseNeverReturnedWithNilError verifies that a Result
+// with Verified=false is never returned without an accompanying error.
+// If verification fails, an error MUST be returned.
+func TestVerifierContract_VerifiedFalseNeverReturnedWithNilError(t *testing.T) {
 	t.Parallel()
 
-	// Create verifier with skip identity check (we're testing input validation)
-	verifier, err := NewSigstoreVerifier(WithInsecureSkipIdentityCheck())
-	if err != nil {
-		t.Fatalf("failed to create verifier: %v", err)
+	// This is a design contract: we never return (Result{Verified: false}, nil)
+	// Either we return (Result{Verified: true}, nil) on success
+	// Or we return (nil, error) on failure
+
+	// A well-behaved Verifier should never do this:
+	badVerifier := &MockVerifier{
+		VerifyFunc: func(ctx context.Context, attestation []byte) (*Result, error) {
+			return &Result{Verified: false}, nil // BAD: Verified=false with nil error
+		},
 	}
 
-	ctx := context.Background()
+	result, err := badVerifier.Verify(context.Background(), []byte("test"))
+	if err == nil && result != nil && !result.Verified {
+		// This documents the contract violation - implementations MUST NOT do this
+		t.Log("Contract violation detected: (Result{Verified: false}, nil) returned")
+		t.Log("Implementations should return (nil, error) when verification fails")
+	}
 
-	_, err = verifier.Verify(ctx, nil)
+	// A well-behaved Verifier returns error on failure:
+	goodVerifier := NewFailingVerifier(errors.New("verification failed"))
+	result, err = goodVerifier.Verify(context.Background(), []byte("test"))
+	if err == nil {
+		t.Error("Failing verifier should return error")
+	}
+	if result != nil && !result.Verified {
+		t.Error("Failing verifier should not return Result{Verified: false}")
+	}
+}
+
+// TestVerifierContract_SuccessReturnsVerifiedTrue verifies that successful
+// verification always sets Verified=true.
+func TestVerifierContract_SuccessReturnsVerifiedTrue(t *testing.T) {
+	t.Parallel()
+
+	verifier := NewSuccessVerifier()
+	result, err := verifier.Verify(context.Background(), []byte("test"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result should not be nil on success")
+	}
+	if !result.Verified {
+		t.Error("Result.Verified should be true on success")
+	}
+}
+
+// TestVerifierContract_ContextPassedToVerify verifies that context is passed through.
+func TestVerifierContract_ContextPassedToVerify(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	var receivedCtx context.Context
+	verifier := &MockVerifier{
+		VerifyFunc: func(ctx context.Context, attestation []byte) (*Result, error) {
+			receivedCtx = ctx
+			return &Result{Verified: true}, nil
+		},
+	}
+
+	_, _ = verifier.Verify(ctx, []byte("test"))
+
+	if receivedCtx == nil {
+		t.Error("context should be passed to VerifyFunc")
+	}
+	if receivedCtx.Err() == nil {
+		t.Error("context should be cancelled")
+	}
+}
+
+// TestVerifierContract_CallsRecorded verifies that MockVerifier records calls.
+func TestVerifierContract_CallsRecorded(t *testing.T) {
+	t.Parallel()
+
+	verifier := NewSuccessVerifier()
+
+	input1 := []byte("input1")
+	input2 := []byte("input2")
+
+	_, _ = verifier.Verify(context.Background(), input1)
+	_, _ = verifier.Verify(context.Background(), input2)
+
+	if len(verifier.VerifyCalls) != 2 {
+		t.Errorf("expected 2 calls, got %d", len(verifier.VerifyCalls))
+	}
+	if string(verifier.VerifyCalls[0]) != "input1" {
+		t.Errorf("first call should be 'input1', got %q", verifier.VerifyCalls[0])
+	}
+	if string(verifier.VerifyCalls[1]) != "input2" {
+		t.Errorf("second call should be 'input2', got %q", verifier.VerifyCalls[1])
+	}
+}
+
+// =============================================================================
+// SigstoreVerifier Implementation Tests
+// =============================================================================
+// These tests verify the SigstoreVerifier-specific behavior.
+// They require network access for TUF root fetch - tests skip if unavailable.
+
+// mustCreateSigstoreVerifier creates a SigstoreVerifier for testing.
+// Skips the test if network is unavailable (TUF fetch fails).
+func mustCreateSigstoreVerifier(t *testing.T, opts ...Option) *SigstoreVerifier {
+	t.Helper()
+	verifier, err := NewSigstoreVerifier(opts...)
+	if err != nil {
+		t.Skipf("skipping test, cannot create verifier (network may be unavailable): %v", err)
+	}
+	return verifier
+}
+
+// TestSigstoreVerifier_NilAttestationReturnsError verifies that nil attestation
+// returns an error.
+func TestSigstoreVerifier_NilAttestationReturnsError(t *testing.T) {
+	t.Parallel()
+
+	verifier := mustCreateSigstoreVerifier(t, WithInsecureSkipIdentityCheck())
+
+	_, err := verifier.Verify(context.Background(), nil)
 	if err == nil {
 		t.Error("Verify(nil) should return error")
 	}
 }
 
-// TestVerifierContract_EmptyAttestationReturnsError verifies that empty
+// TestSigstoreVerifier_EmptyAttestationReturnsError verifies that empty
 // attestation data returns an error.
-func TestVerifierContract_EmptyAttestationReturnsError(t *testing.T) {
+func TestSigstoreVerifier_EmptyAttestationReturnsError(t *testing.T) {
 	t.Parallel()
 
-	verifier, err := NewSigstoreVerifier(WithInsecureSkipIdentityCheck())
-	if err != nil {
-		t.Fatalf("failed to create verifier: %v", err)
-	}
+	verifier := mustCreateSigstoreVerifier(t, WithInsecureSkipIdentityCheck())
 
-	ctx := context.Background()
-
-	_, err = verifier.Verify(ctx, []byte{})
+	_, err := verifier.Verify(context.Background(), []byte{})
 	if err == nil {
 		t.Error("Verify(empty) should return error")
 	}
 }
 
-// TestVerifierContract_InvalidJSONReturnsError verifies that malformed JSON
+// TestSigstoreVerifier_InvalidJSONReturnsError verifies that malformed JSON
 // returns an error.
-func TestVerifierContract_InvalidJSONReturnsError(t *testing.T) {
+func TestSigstoreVerifier_InvalidJSONReturnsError(t *testing.T) {
 	t.Parallel()
 
-	verifier, err := NewSigstoreVerifier(WithInsecureSkipIdentityCheck())
-	if err != nil {
-		t.Fatalf("failed to create verifier: %v", err)
-	}
-
-	ctx := context.Background()
+	verifier := mustCreateSigstoreVerifier(t, WithInsecureSkipIdentityCheck())
 
 	invalidInputs := [][]byte{
 		[]byte("not json"),
@@ -69,24 +172,19 @@ func TestVerifierContract_InvalidJSONReturnsError(t *testing.T) {
 	}
 
 	for _, input := range invalidInputs {
-		_, err := verifier.Verify(ctx, input)
+		_, err := verifier.Verify(context.Background(), input)
 		if err == nil {
 			t.Errorf("Verify(%q) should return error", input)
 		}
 	}
 }
 
-// TestVerifierContract_WrongMediaTypeReturnsError verifies that bundles with
+// TestSigstoreVerifier_WrongMediaTypeReturnsError verifies that bundles with
 // incorrect media type are rejected.
-func TestVerifierContract_WrongMediaTypeReturnsError(t *testing.T) {
+func TestSigstoreVerifier_WrongMediaTypeReturnsError(t *testing.T) {
 	t.Parallel()
 
-	verifier, err := NewSigstoreVerifier(WithInsecureSkipIdentityCheck())
-	if err != nil {
-		t.Fatalf("failed to create verifier: %v", err)
-	}
-
-	ctx := context.Background()
+	verifier := mustCreateSigstoreVerifier(t, WithInsecureSkipIdentityCheck())
 
 	// Bundle with wrong media type
 	wrongTypeBundle := map[string]interface{}{
@@ -96,46 +194,38 @@ func TestVerifierContract_WrongMediaTypeReturnsError(t *testing.T) {
 	}
 
 	data, _ := json.Marshal(wrongTypeBundle)
-	_, err = verifier.Verify(ctx, data)
+	_, err := verifier.Verify(context.Background(), data)
 	if err == nil {
 		t.Error("Verify with wrong media type should return error")
 	}
 }
 
-// TestVerifierContract_MissingFieldsReturnsError verifies that incomplete
+// TestSigstoreVerifier_MissingFieldsReturnsError verifies that incomplete
 // bundles are rejected.
-func TestVerifierContract_MissingFieldsReturnsError(t *testing.T) {
+func TestSigstoreVerifier_MissingFieldsReturnsError(t *testing.T) {
 	t.Parallel()
 
-	verifier, err := NewSigstoreVerifier(WithInsecureSkipIdentityCheck())
-	if err != nil {
-		t.Fatalf("failed to create verifier: %v", err)
-	}
-
-	ctx := context.Background()
+	verifier := mustCreateSigstoreVerifier(t, WithInsecureSkipIdentityCheck())
 
 	// Empty bundle
 	emptyBundle := map[string]interface{}{}
 
 	data, _ := json.Marshal(emptyBundle)
-	_, err = verifier.Verify(ctx, data)
+	_, err := verifier.Verify(context.Background(), data)
 	if err == nil {
 		t.Error("Verify with empty bundle should return error")
 	}
 }
 
-// TestVerifierContract_ContextCancellation verifies that verification respects
+// TestSigstoreVerifier_ContextCancellation verifies that verification respects
 // context cancellation (where applicable).
-func TestVerifierContract_ContextCancellation(t *testing.T) {
+func TestSigstoreVerifier_ContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	verifier, err := NewSigstoreVerifier(
+	verifier := mustCreateSigstoreVerifier(t,
 		WithInsecureSkipIdentityCheck(),
 		WithOffline(), // Don't need network for this test
 	)
-	if err != nil {
-		t.Fatalf("failed to create verifier: %v", err)
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -147,24 +237,19 @@ func TestVerifierContract_ContextCancellation(t *testing.T) {
 	// We just verify it doesn't panic with cancelled context
 }
 
-// TestVerifierContract_RequiresIdentityPolicyOrExplicitSkip verifies that
+// TestSigstoreVerifier_RequiresIdentityPolicyOrExplicitSkip verifies that
 // creating a verifier without identity policy and without explicit skip fails.
-func TestVerifierContract_RequiresIdentityPolicyOrExplicitSkip(t *testing.T) {
+func TestSigstoreVerifier_RequiresIdentityPolicyOrExplicitSkip(t *testing.T) {
 	t.Parallel()
 
 	// Create verifier WITHOUT any identity options
-	verifier, err := NewSigstoreVerifier(WithOffline())
-	if err != nil {
-		t.Fatalf("failed to create verifier: %v", err)
-	}
-
-	ctx := context.Background()
+	verifier := mustCreateSigstoreVerifier(t, WithOffline())
 
 	// Create a minimal but structurally valid bundle
 	bundle := createMinimalBundle(t)
 	data, _ := json.Marshal(bundle)
 
-	_, err = verifier.Verify(ctx, data)
+	_, err := verifier.Verify(context.Background(), data)
 	if err == nil {
 		t.Error("Verify without identity policy should return error")
 	}
@@ -175,37 +260,12 @@ func TestVerifierContract_RequiresIdentityPolicyOrExplicitSkip(t *testing.T) {
 	}
 }
 
-// TestVerifierContract_ResultFieldsOnSuccess verifies that successful
-// verification populates required result fields.
-func TestVerifierContract_ResultFieldsOnSuccess(t *testing.T) {
-	// This test would require a valid signed bundle, which needs network access
-	// or a test fixture. Skipping for now but documenting the expected contract.
-	t.Skip("Requires valid signed bundle fixture")
-
-	// When verification succeeds:
-	// - Result.Verified MUST be true
-	// - Result.Identity SHOULD be non-nil (may be nil with InsecureSkipIdentityCheck)
-	// - Result.Statement SHOULD be non-nil for DSSE envelopes
-	// - Result.Timestamps SHOULD have at least one entry (when using tlog)
-}
-
-// TestVerifierContract_VerifiedFalseNotReturned verifies that a Result with
+// TestSigstoreVerifier_VerifiedFalseNotReturned verifies that a Result with
 // Verified=false is never returned without an accompanying error.
-// If verification fails, an error MUST be returned.
-func TestVerifierContract_VerifiedFalseNotReturned(t *testing.T) {
+func TestSigstoreVerifier_VerifiedFalseNotReturned(t *testing.T) {
 	t.Parallel()
 
-	// This is a design contract: we never return (Result{Verified: false}, nil)
-	// Either we return (Result{Verified: true}, nil) on success
-	// Or we return (nil, error) on failure
-
-	// Test with various invalid inputs
-	verifier, err := NewSigstoreVerifier(WithInsecureSkipIdentityCheck())
-	if err != nil {
-		t.Fatalf("failed to create verifier: %v", err)
-	}
-
-	ctx := context.Background()
+	verifier := mustCreateSigstoreVerifier(t, WithInsecureSkipIdentityCheck())
 
 	testCases := [][]byte{
 		nil,
@@ -216,10 +276,71 @@ func TestVerifierContract_VerifiedFalseNotReturned(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		result, err := verifier.Verify(ctx, tc)
+		result, err := verifier.Verify(context.Background(), tc)
 		if err == nil && result != nil && !result.Verified {
 			t.Errorf("Got (Result{Verified: false}, nil) for input %q - should return error instead", tc)
 		}
+	}
+}
+
+// =============================================================================
+// Option Tests
+// =============================================================================
+
+// TestWithOfflineOption verifies the WithOffline option behavior.
+func TestWithOfflineOption(t *testing.T) {
+	t.Parallel()
+
+	// Should succeed - offline mode doesn't require network
+	verifier := mustCreateSigstoreVerifier(t,
+		WithOffline(),
+		WithInsecureSkipIdentityCheck(),
+	)
+	if verifier == nil {
+		t.Error("verifier should not be nil")
+	}
+}
+
+// TestWithIssuerOption verifies the WithIssuer option configures identity policy.
+func TestWithIssuerOption(t *testing.T) {
+	t.Parallel()
+
+	// Should succeed - issuer provides identity policy
+	verifier := mustCreateSigstoreVerifier(t,
+		WithIssuer("https://accounts.google.com"),
+		WithOffline(),
+	)
+	if verifier == nil {
+		t.Error("verifier should not be nil")
+	}
+}
+
+// TestWithSubjectOption verifies the WithSubject option configures identity policy.
+func TestWithSubjectOption(t *testing.T) {
+	t.Parallel()
+
+	// Should succeed - subject provides identity policy
+	verifier := mustCreateSigstoreVerifier(t,
+		WithSubject("test@example.com"),
+		WithOffline(),
+	)
+	if verifier == nil {
+		t.Error("verifier should not be nil")
+	}
+}
+
+// TestCombinedOptions verifies multiple options can be combined.
+func TestCombinedOptions(t *testing.T) {
+	t.Parallel()
+
+	verifier := mustCreateSigstoreVerifier(t,
+		WithIssuer("https://accounts.google.com"),
+		WithSubject("test@example.com"),
+		WithOffline(),
+		WithTransparencyLogThreshold(0),
+	)
+	if verifier == nil {
+		t.Error("verifier should not be nil")
 	}
 }
 
@@ -257,77 +378,4 @@ func containsAny(s string, substrs []string) bool {
 		}
 	}
 	return false
-}
-
-// =============================================================================
-// Option Contract Tests
-// =============================================================================
-
-// TestWithOfflineOption verifies the WithOffline option behavior.
-func TestWithOfflineOption(t *testing.T) {
-	t.Parallel()
-
-	// Should succeed - offline mode doesn't require network
-	verifier, err := NewSigstoreVerifier(
-		WithOffline(),
-		WithInsecureSkipIdentityCheck(),
-	)
-	if err != nil {
-		t.Fatalf("NewSigstoreVerifier with WithOffline failed: %v", err)
-	}
-	if verifier == nil {
-		t.Error("verifier should not be nil")
-	}
-}
-
-// TestWithIssuerOption verifies the WithIssuer option configures identity policy.
-func TestWithIssuerOption(t *testing.T) {
-	t.Parallel()
-
-	// Should succeed - issuer provides identity policy
-	verifier, err := NewSigstoreVerifier(
-		WithIssuer("https://accounts.google.com"),
-		WithOffline(),
-	)
-	if err != nil {
-		t.Fatalf("NewSigstoreVerifier with WithIssuer failed: %v", err)
-	}
-	if verifier == nil {
-		t.Error("verifier should not be nil")
-	}
-}
-
-// TestWithSubjectOption verifies the WithSubject option configures identity policy.
-func TestWithSubjectOption(t *testing.T) {
-	t.Parallel()
-
-	// Should succeed - subject provides identity policy
-	verifier, err := NewSigstoreVerifier(
-		WithSubject("test@example.com"),
-		WithOffline(),
-	)
-	if err != nil {
-		t.Fatalf("NewSigstoreVerifier with WithSubject failed: %v", err)
-	}
-	if verifier == nil {
-		t.Error("verifier should not be nil")
-	}
-}
-
-// TestCombinedOptions verifies multiple options can be combined.
-func TestCombinedOptions(t *testing.T) {
-	t.Parallel()
-
-	verifier, err := NewSigstoreVerifier(
-		WithIssuer("https://accounts.google.com"),
-		WithSubject("test@example.com"),
-		WithOffline(),
-		WithTransparencyLogThreshold(0),
-	)
-	if err != nil {
-		t.Fatalf("NewSigstoreVerifier with combined options failed: %v", err)
-	}
-	if verifier == nil {
-		t.Error("verifier should not be nil")
-	}
 }

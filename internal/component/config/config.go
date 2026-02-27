@@ -77,7 +77,6 @@ type ToolPolicy struct {
 	// Not yet implemented.
 	Deny []string `yaml:"deny,omitempty"`
 }
-
 // SigningConfig configures pack signing.
 type SigningConfig struct {
 	Enabled bool   `yaml:"enabled"`
