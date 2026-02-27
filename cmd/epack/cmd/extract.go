@@ -54,7 +54,19 @@ Examples:
 
   # Preview what would be extracted (dry-run)
   epack extract --all --dry-run evidence.epack`,
-	Args: cobra.MinimumNArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return exitError(`missing pack file argument
+
+Usage: epack extract <pack> [artifact-paths...]
+
+Examples:
+  epack extract evidence.epack --all           # Extract all artifacts
+  epack extract evidence.epack artifacts/*.json # Extract specific paths
+  epack extract --dry-run evidence.epack --all  # Preview extraction`)
+		}
+		return nil
+	},
 	RunE: runExtract,
 }
 

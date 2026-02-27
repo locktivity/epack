@@ -70,7 +70,22 @@ Examples:
 
   # Push in background (returns immediately)
   epack push locktivity packs/acme-prod.epack --detach`,
-		Args: cobra.ExactArgs(2),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				return fmt.Errorf(`missing arguments
+
+Usage: epack push <remote> <pack>
+
+Examples:
+  epack push locktivity evidence.epack
+  epack push locktivity evidence.epack --env production
+  epack push locktivity evidence.epack --dry-run`)
+			}
+			if len(args) > 2 {
+				return fmt.Errorf("too many arguments: expected 2, got %d", len(args))
+			}
+			return nil
+		},
 		RunE: runPush,
 	}
 

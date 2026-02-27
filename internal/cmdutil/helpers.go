@@ -91,12 +91,11 @@ func HandleError(err error) error {
 	if errors.As(err, &e) {
 		return err
 	}
-	// Wrap in our error type
+	// Wrap in our error type.
 	return &epackerrors.Error{
 		Code:    epackerrors.InvalidInput,
 		Exit:    exitcode.General,
 		Message: err.Error(),
-		Cause:   err,
 	}
 }
 

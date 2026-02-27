@@ -86,7 +86,22 @@ Examples:
 
   # INSECURE: Accept any valid signer (not recommended for production)
   epack verify evidence.epack --insecure-skip-identity-check`,
-	Args: cobra.ExactArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return exitError(`missing pack file argument
+
+Usage: epack verify <pack>
+
+Examples:
+  epack verify evidence.epack
+  epack verify evidence.epack --subject "user@example.com"
+  epack verify evidence.epack --issuer "https://accounts.google.com"`)
+		}
+		if len(args) > 1 {
+			return exitError("too many arguments: expected 1, got %d", len(args))
+		}
+		return nil
+	},
 	RunE: runVerify,
 }
 

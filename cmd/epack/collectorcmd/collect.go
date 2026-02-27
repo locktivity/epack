@@ -93,6 +93,12 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Determine output path: flag > config > default
+	outputPath := collectOutput
+	if outputPath == "" {
+		outputPath = cfg.Output
+	}
+
 	// Build options from flags
 	opts := collector.CollectOpts{
 		Secure: collector.SecureRunOptions{
@@ -101,7 +107,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 			Parallel: collectParallel,
 		},
 		WorkDir:    workDir,
-		OutputPath: collectOutput,
+		OutputPath: outputPath,
 	}
 
 	// Show in-progress collection status (spinner in TTY, heartbeat in CI/non-TTY).

@@ -506,9 +506,13 @@ To initialize this directory: epack init`, installComponentConfigPath),
 		out.Print("  locked %s@%s\n", r.Name, r.Version)
 	}
 
-	// Sync
+	// Sync just the newly installed components.
+	// SkipStaleEntryCheck allows syncing with a filtered config without failing
+	// when the lockfile contains entries not present in the filtered config.
 	syncer := sync.NewSyncer(workDir)
-	syncResults, err := syncer.Sync(ctx, filteredCfg, sync.SyncOpts{})
+	syncResults, err := syncer.Sync(ctx, filteredCfg, sync.SyncOpts{
+		SkipStaleEntryCheck: true,
+	})
 	if err != nil {
 		return handleComponentError(err)
 	}

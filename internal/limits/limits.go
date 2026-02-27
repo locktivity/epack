@@ -145,8 +145,8 @@ const (
 	// DefaultHTTPTimeout is the default timeout for HTTP requests (30 seconds).
 	DefaultHTTPTimeout = 30 * time.Second
 
-	// DefaultCollectorTimeout is the default timeout for collector execution (60 seconds).
-	DefaultCollectorTimeout = 60 * time.Second
+	// DefaultCollectorTimeout is the default timeout for collector execution (10 minutes).
+	DefaultCollectorTimeout = 10 * time.Minute
 
 	// DefaultToolTimeout is the default timeout for tool execution (5 minutes).
 	DefaultToolTimeout = 5 * time.Minute

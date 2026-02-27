@@ -118,6 +118,12 @@ func NewSyncerWithRegistry(registry RegistryClient, workDir string) *Syncer {
 type SyncOpts struct {
 	Secure SyncSecureOptions
 	Unsafe SyncUnsafeOverrides
+
+	// SkipStaleEntryCheck skips validation that lockfile entries exist in config.
+	// This is safe to use when installing new components with a filtered config,
+	// where the full config has all entries but we only want to sync specific ones.
+	// The forward direction (config entries must exist in lockfile) is still validated.
+	SkipStaleEntryCheck bool
 }
 
 type SyncSecureOptions struct {
@@ -170,7 +176,7 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 	// SECURITY: Validate config and lockfile alignment BEFORE proceeding.
 	// This prevents "lockfile retargeting" attacks where an attacker modifies
 	// the config to point to a different repository while reusing a valid lockfile.
-	if err := s.ValidateAlignment(cfg, lf); err != nil {
+	if err := s.validateAlignmentWithOpts(cfg, lf, opts); err != nil {
 		return nil, err
 	}
 
@@ -233,17 +239,27 @@ func syncByKind[T any](
 // preventing "lockfile retargeting" attacks where an attacker modifies the config
 // to point to a different repository while reusing a valid lockfile entry.
 func (s *Syncer) ValidateAlignment(cfg *config.JobConfig, lf *lockfile.LockFile) error {
-	if err := s.validateCollectorAlignment(cfg, lf); err != nil {
-		return err
-	}
-	return s.validateRemoteAlignment(cfg, lf)
+	return s.validateAlignmentWithOpts(cfg, lf, SyncOpts{})
 }
 
-func (s *Syncer) validateCollectorAlignment(cfg *config.JobConfig, lf *lockfile.LockFile) error {
+func (s *Syncer) validateAlignmentWithOpts(cfg *config.JobConfig, lf *lockfile.LockFile, opts SyncOpts) error {
+	if err := s.validateCollectorAlignment(cfg, lf, opts.SkipStaleEntryCheck); err != nil {
+		return err
+	}
+	return s.validateRemoteAlignment(cfg, lf, opts.SkipStaleEntryCheck)
+}
+
+func (s *Syncer) validateCollectorAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skipStaleCheck bool) error {
 	for _, name := range sortedMapNames(cfg.Collectors) {
 		if err := validateCollectorConfigEntry(name, cfg.Collectors[name], lf); err != nil {
 			return err
 		}
+	}
+
+	// Skip the reverse check (lockfile entries must exist in config) when installing
+	// specific components with a filtered config.
+	if skipStaleCheck {
+		return nil
 	}
 
 	for _, name := range sortedMapNames(lf.Collectors) {
@@ -292,11 +308,17 @@ func validateCollectorConfigEntry(name string, collector config.CollectorConfig,
 	return nil
 }
 
-func (s *Syncer) validateRemoteAlignment(cfg *config.JobConfig, lf *lockfile.LockFile) error {
+func (s *Syncer) validateRemoteAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skipStaleCheck bool) error {
 	for _, name := range sortedMapNames(cfg.Remotes) {
 		if err := validateRemoteConfigEntry(name, cfg.Remotes[name], lf); err != nil {
 			return err
 		}
+	}
+
+	// Skip the reverse check (lockfile entries must exist in config) when installing
+	// specific components with a filtered config.
+	if skipStaleCheck {
+		return nil
 	}
 
 	for _, name := range sortedMapNames(lf.Remotes) {

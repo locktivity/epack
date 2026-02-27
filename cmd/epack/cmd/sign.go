@@ -76,7 +76,22 @@ Examples:
 
   # Dry run (show what would be signed)
   epack sign --dry-run evidence.epack`,
-	Args: cobra.ExactArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return exitError(`missing pack file argument
+
+Usage: epack sign <pack>
+
+Examples:
+  epack sign evidence.epack                    # Interactive OIDC signing
+  epack sign evidence.epack --key ./key.pem    # Sign with private key
+  epack sign evidence.epack --dry-run          # Preview what would be signed`)
+		}
+		if len(args) > 1 {
+			return exitError("too many arguments: expected 1, got %d", len(args))
+		}
+		return nil
+	},
 	RunE: runSign,
 }
 

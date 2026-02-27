@@ -75,7 +75,26 @@ Examples:
 
   # Pull and overwrite existing file
   epack pull locktivity --force`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 1 {
+				return fmt.Errorf(`missing remote name argument
+
+Usage: epack pull <remote> [ref]
+
+The optional [ref] can be a version (v1.2.3), release ID (rel_xxx), or digest (sha256:xxx).
+Use --output to specify the output path.
+
+Examples:
+  epack pull locktivity                    # Pull latest
+  epack pull locktivity v1.2.3             # Pull specific version
+  epack pull locktivity -o ./evidence.epack # Specify output path
+  epack pull locktivity --dry-run`)
+			}
+			if len(args) > 2 {
+				return fmt.Errorf("too many arguments: expected 1-2, got %d", len(args))
+			}
+			return nil
+		},
 		RunE: runPull,
 	}
 

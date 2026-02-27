@@ -94,7 +94,18 @@ Examples:
 
   # Preview what would be merged (dry-run)
   epack merge combined.epack pack1.epack pack2.epack --stream myorg/combined --dry-run`,
-	Args: cobra.MinimumNArgs(2),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 2 {
+			return exitError(`missing arguments
+
+Usage: epack merge <output> <pack1> [pack2...]
+
+Examples:
+  epack merge combined.epack pack1.epack pack2.epack --stream myorg/combined
+  epack merge combined.epack pack1.epack pack2.epack --stream myorg/combined --dry-run`)
+		}
+		return nil
+	},
 	RunE: runMerge,
 }
 

@@ -44,7 +44,22 @@ Examples:
 
   # Show raw manifest.json
   epack inspect --raw evidence.epack`,
-	Args: cobra.ExactArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return exitError(`missing pack file argument
+
+Usage: epack inspect <pack>
+
+Examples:
+  epack inspect evidence.epack
+  epack inspect evidence.epack --json
+  epack inspect evidence.epack --digest`)
+		}
+		if len(args) > 1 {
+			return exitError("too many arguments: expected 1, got %d", len(args))
+		}
+		return nil
+	},
 	RunE: runInspect,
 }
 
