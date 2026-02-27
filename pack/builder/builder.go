@@ -353,7 +353,6 @@ func (b *Builder) buildManifest() ([]byte, error) {
 // Uses safefile.MkdirAll and atomic rename to prevent symlink race attacks where
 // an attacker swaps parent directory components during the write flow.
 func (b *Builder) writeZip(outputPath string, manifestBytes []byte) error {
-	// Resolve to absolute path first
 	absOutputPath, err := filepath.Abs(outputPath)
 	if err != nil {
 		return fmt.Errorf("resolving output path: %w", err)
@@ -361,41 +360,41 @@ func (b *Builder) writeZip(outputPath string, manifestBytes []byte) error {
 
 	outputDir := filepath.Dir(absOutputPath)
 	outputName := filepath.Base(absOutputPath)
+	baseDir, err := findTrustedBaseDir(outputDir)
+	if err != nil {
+		return err
+	}
+	if err := safefile.MkdirAll(baseDir, outputDir); err != nil {
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+	return b.writeZipAtomically(baseDir, outputDir, outputName, manifestBytes)
+}
 
-	// Find the deepest existing ancestor directory as our trusted base.
-	// This handles cases where multiple intermediate directories need to be created.
+func findTrustedBaseDir(outputDir string) (string, error) {
 	baseDir := outputDir
 	for {
 		info, err := os.Lstat(baseDir)
 		if err == nil {
-			// Found an existing directory - validate it's not a symlink
 			if info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("refusing to write: ancestor directory %s is a symlink", baseDir)
+				return "", fmt.Errorf("refusing to write: ancestor directory %s is a symlink", baseDir)
 			}
 			if !info.IsDir() {
-				return fmt.Errorf("refusing to write: %s exists but is not a directory", baseDir)
+				return "", fmt.Errorf("refusing to write: %s exists but is not a directory", baseDir)
 			}
-			break
+			return baseDir, nil
 		}
 		if !os.IsNotExist(err) {
-			return fmt.Errorf("checking output directory: %w", err)
+			return "", fmt.Errorf("checking output directory: %w", err)
 		}
-		// Directory doesn't exist, try parent
 		parent := filepath.Dir(baseDir)
 		if parent == baseDir {
-			// Reached filesystem root
-			break
+			return baseDir, nil
 		}
 		baseDir = parent
 	}
+}
 
-	// Create output directory using safefile (symlink-safe)
-	if err := safefile.MkdirAll(baseDir, outputDir); err != nil {
-		return fmt.Errorf("creating output directory: %w", err)
-	}
-
-	// Create temp file in the output directory
-	// We create it in a secure location under our control
+func (b *Builder) writeZipAtomically(baseDir, outputDir, outputName string, manifestBytes []byte) error {
 	tempFile, err := os.CreateTemp(outputDir, "pack-*.zip")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
@@ -417,9 +416,6 @@ func (b *Builder) writeZip(outputPath string, manifestBytes []byte) error {
 		return fmt.Errorf("closing temp file: %w", err)
 	}
 
-	// TOCTOU-safe rename: Rename keeps directory fd pinned from
-	// creation through the rename, preventing symlink swap attacks between
-	// directory creation and the final rename.
 	if err := safefile.Rename(baseDir, tempPath, filepath.Join(outputDir, outputName)); err != nil {
 		return fmt.Errorf("renaming temp file: %w", err)
 	}

@@ -91,18 +91,35 @@ func RunTool(spec ToolSpec, handler ToolHandler) {
 func runToolInternal(spec ToolSpec, handler ToolHandler) int {
 	startTime := time.Now().UTC()
 
-	// Check for --capabilities and --version flags
+	if code, handled := handleToolMetaFlags(spec); handled {
+		return code
+	}
+
+	ctx := buildToolContext(spec, startTime)
+	if err := loadToolConfigEnv(ctx); err != nil {
+		// preserve previous behavior: ignore config parse errors
+		_ = err
+	}
+	if code := setupToolPack(ctx, spec); code != 0 {
+		return code
+	}
+	return runToolHandler(ctx, handler)
+}
+
+func handleToolMetaFlags(spec ToolSpec) (int, bool) {
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--capabilities":
-			return outputToolCapabilities(spec)
+			return outputToolCapabilities(spec), true
 		case "--version":
 			fmt.Println(spec.Version)
-			return 0
+			return 0, true
 		}
 	}
+	return 0, false
+}
 
-	// Parse environment
+func buildToolContext(spec ToolSpec, startTime time.Time) *toolContext {
 	ctx := &toolContext{
 		runID:      os.Getenv("EPACK_RUN_ID"),
 		runDir:     os.Getenv("EPACK_RUN_DIR"),
@@ -114,25 +131,29 @@ func runToolInternal(spec ToolSpec, handler ToolHandler) int {
 		warnings:   []errorEntry{},
 		errors:     []errorEntry{},
 	}
-
 	if ctx.runDir == "" {
 		ctx.runDir = "."
 	}
-
-	// Generate run ID if not provided
 	if ctx.runID == "" {
 		ctx.runID = fmt.Sprintf("%s-%06d", startTime.Format("2006-01-02T15-04-05-000000Z"), 0)
 	}
+	return ctx
+}
 
-	// Parse config if provided
+func loadToolConfigEnv(ctx *toolContext) error {
 	configPath := os.Getenv("EPACK_TOOL_CONFIG")
-	if configPath != "" {
-		if cfg, err := parseJSONFile(configPath); err == nil {
-			ctx.config = cfg
-		}
+	if configPath == "" {
+		return nil
 	}
+	cfg, err := parseJSONFile(configPath)
+	if err != nil {
+		return err
+	}
+	ctx.config = cfg
+	return nil
+}
 
-	// Open pack if provided
+func setupToolPack(ctx *toolContext, spec ToolSpec) int {
 	if ctx.packPath != "" {
 		pack, err := OpenPack(ctx.packPath)
 		if err != nil {
@@ -143,19 +164,23 @@ func runToolInternal(spec ToolSpec, handler ToolHandler) int {
 			return ctx.writeResult("failure", nil)
 		}
 		ctx.pack = pack
-		defer func() { _ = pack.Close() }()
-	} else if spec.RequiresPack {
+		return 0
+	}
+	if spec.RequiresPack {
 		ctx.errors = append(ctx.errors, errorEntry{
 			Code:    "PACK_REQUIRED",
 			Message: "this tool requires a pack but none was provided",
 		})
 		return ctx.writeResult("failure", nil)
 	}
+	return 0
+}
 
-	// Run handler
+func runToolHandler(ctx *toolContext, handler ToolHandler) int {
+	if ctx.pack != nil {
+		defer func() { _ = ctx.pack.Close() }()
+	}
 	err := handler(ctx)
-
-	// Determine status and write result
 	if err != nil {
 		ctx.errors = append(ctx.errors, errorEntry{
 			Code:    "TOOL_ERROR",
@@ -163,7 +188,6 @@ func runToolInternal(spec ToolSpec, handler ToolHandler) int {
 		})
 		return ctx.writeResult("failure", err)
 	}
-
 	return ctx.writeResult("success", nil)
 }
 

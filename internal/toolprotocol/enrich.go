@@ -28,70 +28,20 @@ func enrichIdentity(r *Result) bool {
 		return false
 	}
 
-	changed := false
-
 	// Try JSON first
 	var parsed IdentityInfo
 	if err := json.Unmarshal([]byte(identityEnv), &parsed); err == nil {
-		// Valid JSON - merge non-destructively
-		if r.Identity == nil {
-			r.Identity = &IdentityInfo{}
-			changed = true
-		}
-		if r.Identity.Workspace == "" && parsed.Workspace != "" {
-			r.Identity.Workspace = parsed.Workspace
-			changed = true
-		}
-		if r.Identity.Actor == "" && parsed.Actor != "" {
-			r.Identity.Actor = parsed.Actor
-			changed = true
-		}
-		if r.Identity.ActorType == "" && parsed.ActorType != "" {
-			r.Identity.ActorType = parsed.ActorType
-			changed = true
-		}
-		if r.Identity.AuthMode == "" && parsed.AuthMode != "" {
-			r.Identity.AuthMode = parsed.AuthMode
-			changed = true
-		}
-		return changed
+		return mergeIdentityFromJSON(r, parsed)
 	}
 
-	// Not valid JSON - treat as plain actor string
-	if r.Identity == nil {
-		r.Identity = &IdentityInfo{}
-		changed = true
-	}
-	if r.Identity.Actor == "" {
-		r.Identity.Actor = identityEnv
-		changed = true
-		if r.Identity.ActorType == "" {
-			r.Identity.ActorType = "unknown"
-		}
-	}
-	return changed
+	return mergeIdentityFromPlainString(r, identityEnv)
 }
 
 // enrichRunContext populates RunContext from CI environment variables.
 // Always populates runner_os and runner_arch from runtime.
 // Returns true if any fields were modified.
 func enrichRunContext(r *Result) bool {
-	changed := false
-
-	if r.RunContext == nil {
-		r.RunContext = &RunContextInfo{}
-		changed = true
-	}
-
-	// Always populate OS/arch from runtime
-	if r.RunContext.RunnerOS == "" {
-		r.RunContext.RunnerOS = runtime.GOOS
-		changed = true
-	}
-	if r.RunContext.RunnerArch == "" {
-		r.RunContext.RunnerArch = runtime.GOARCH
-		changed = true
-	}
+	changed := ensureRunContext(r)
 
 	// Detect CI environment
 	ci := detectCI()
@@ -99,28 +49,68 @@ func enrichRunContext(r *Result) bool {
 		return changed
 	}
 
-	// Non-destructive merge
-	if !r.RunContext.CI && ci.CI {
-		r.RunContext.CI = ci.CI
-		changed = true
-	}
-	if r.RunContext.CIProvider == "" && ci.CIProvider != "" {
-		r.RunContext.CIProvider = ci.CIProvider
-		changed = true
-	}
-	if r.RunContext.Repo == "" && ci.Repo != "" {
-		r.RunContext.Repo = ci.Repo
-		changed = true
-	}
-	if r.RunContext.Commit == "" && ci.Commit != "" {
-		r.RunContext.Commit = ci.Commit
-		changed = true
-	}
-	if r.RunContext.Branch == "" && ci.Branch != "" {
-		r.RunContext.Branch = ci.Branch
-		changed = true
-	}
+	return mergeRunContext(r.RunContext, ci) || changed
+}
+
+func mergeIdentityFromJSON(r *Result, parsed IdentityInfo) bool {
+	identity, changed := ensureIdentity(r)
+	changed = mergeStringField(&identity.Workspace, parsed.Workspace) || changed
+	changed = mergeStringField(&identity.Actor, parsed.Actor) || changed
+	changed = mergeStringField(&identity.ActorType, parsed.ActorType) || changed
+	changed = mergeStringField(&identity.AuthMode, parsed.AuthMode) || changed
 	return changed
+}
+
+func mergeIdentityFromPlainString(r *Result, actor string) bool {
+	identity, changed := ensureIdentity(r)
+	if identity.Actor != "" {
+		return changed
+	}
+	identity.Actor = actor
+	if identity.ActorType == "" {
+		identity.ActorType = "unknown"
+	}
+	return true
+}
+
+func ensureIdentity(r *Result) (*IdentityInfo, bool) {
+	if r.Identity != nil {
+		return r.Identity, false
+	}
+	r.Identity = &IdentityInfo{}
+	return r.Identity, true
+}
+
+func ensureRunContext(r *Result) bool {
+	changed := false
+	if r.RunContext == nil {
+		r.RunContext = &RunContextInfo{}
+		changed = true
+	}
+	changed = mergeStringField(&r.RunContext.RunnerOS, runtime.GOOS) || changed
+	changed = mergeStringField(&r.RunContext.RunnerArch, runtime.GOARCH) || changed
+	return changed
+}
+
+func mergeRunContext(dst, src *RunContextInfo) bool {
+	changed := false
+	if !dst.CI && src.CI {
+		dst.CI = true
+		changed = true
+	}
+	changed = mergeStringField(&dst.CIProvider, src.CIProvider) || changed
+	changed = mergeStringField(&dst.Repo, src.Repo) || changed
+	changed = mergeStringField(&dst.Commit, src.Commit) || changed
+	changed = mergeStringField(&dst.Branch, src.Branch) || changed
+	return changed
+}
+
+func mergeStringField(dst *string, src string) bool {
+	if *dst != "" || src == "" {
+		return false
+	}
+	*dst = src
+	return true
 }
 
 // detectCI detects CI environment and returns context info.

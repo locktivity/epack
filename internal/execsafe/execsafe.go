@@ -102,20 +102,11 @@ func SafePATH() string {
 // This is race-free because the bytes written to the temp file ARE the bytes
 // that were hashed - there's no window for modification.
 func VerifiedBinaryFD(binaryPath, expectedDigest string) (execPath string, cleanup func(), err error) {
-	// Open with O_NOFOLLOW to prevent symlink attacks
-	fd, err := unix.Open(binaryPath, unix.O_RDONLY|unix.O_NOFOLLOW, 0)
+	srcFile, err := openVerifiedSourceFile(binaryPath)
 	if err != nil {
-		if err == unix.ELOOP {
-			return "", nil, fmt.Errorf("refusing to execute symlink: %s", binaryPath)
-		}
-		return "", nil, fmt.Errorf("opening binary: %w", err)
+		return "", nil, err
 	}
-
-	// Convert to *os.File for easier reading
-	srcFile := os.NewFile(uintptr(fd), binaryPath)
 	defer func() { _ = srcFile.Close() }()
-
-	// Create temp directory with restrictive permissions (0700 via umask)
 	tmpDir, cleanup, err := SecureTempDir("epack-exec-*")
 	if err != nil {
 		return "", nil, err
@@ -126,48 +117,61 @@ func VerifiedBinaryFD(binaryPath, expectedDigest string) (execPath string, clean
 		}
 	}()
 
-	// Create temp file in the temp dir with O_EXCL to ensure new file
 	tmpPath := filepath.Join(tmpDir, filepath.Base(binaryPath))
-	dstFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0500)
+	hasher, err := copyAndHashBinary(srcFile, tmpPath)
 	if err != nil {
-		return "", nil, fmt.Errorf("creating temp file: %w", err)
+		return "", nil, err
 	}
-
-	// SECURITY: Hash bytes AS they are copied using TeeReader.
-	// This ensures we verify exactly the bytes we will execute.
-	hasher := digest.NewHasher()
-	teeReader := io.TeeReader(srcFile, hasher)
-
-	// Copy bytes through the TeeReader to both hasher and dest file
-	if _, err := io.Copy(dstFile, teeReader); err != nil {
-		_ = dstFile.Close()
-		return "", nil, fmt.Errorf("copying binary: %w", err)
+	if err := verifyExpectedDigest(binaryPath, expectedDigest, hasher.Digest()); err != nil {
+		return "", nil, err
 	}
-
-	if err := dstFile.Close(); err != nil {
-		return "", nil, fmt.Errorf("closing temp file: %w", err)
-	}
-
-	// Verify digest AFTER copy - the hash was computed on the exact bytes written
-	// SECURITY: Uses constant-time comparison via digest.Equal to prevent timing attacks.
-	computedDigest := hasher.Digest()
-	expectedDigestParsed, err := digest.Parse(expectedDigest)
-	if err != nil {
-		return "", nil, fmt.Errorf("invalid expected digest format: %w", err)
-	}
-	if !computedDigest.Equal(expectedDigestParsed) {
-		// SECURITY: Only expose the expected digest in error messages, not the computed one.
-		// Exposing computed digests could theoretically assist attackers in understanding
-		// binary contents. The expected digest is already known to the attacker (from lockfile).
-		return "", nil, fmt.Errorf("digest mismatch for %s: binary does not match expected %s", filepath.Base(binaryPath), expectedDigest)
-	}
-
-	// Make temp directory read-only to prevent modification
 	if err := os.Chmod(tmpDir, 0500); err != nil {
 		return "", nil, fmt.Errorf("sealing temp dir: %w", err)
 	}
-
 	return tmpPath, cleanup, nil
+}
+
+func openVerifiedSourceFile(binaryPath string) (*os.File, error) {
+	fd, err := unix.Open(binaryPath, unix.O_RDONLY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if err == unix.ELOOP {
+			return nil, fmt.Errorf("refusing to execute symlink: %s", binaryPath)
+		}
+		return nil, fmt.Errorf("opening binary: %w", err)
+	}
+	return os.NewFile(uintptr(fd), binaryPath), nil
+}
+
+func copyAndHashBinary(srcFile *os.File, tmpPath string) (*digest.Hasher, error) {
+	dstFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0500)
+	if err != nil {
+		return nil, fmt.Errorf("creating temp file: %w", err)
+	}
+
+	hasher := digest.NewHasher()
+	if _, err := io.Copy(dstFile, io.TeeReader(srcFile, hasher)); err != nil {
+		_ = dstFile.Close()
+		return nil, fmt.Errorf("copying binary: %w", err)
+	}
+	if err := dstFile.Sync(); err != nil {
+		_ = dstFile.Close()
+		return nil, fmt.Errorf("syncing temp file: %w", err)
+	}
+	if err := dstFile.Close(); err != nil {
+		return nil, fmt.Errorf("closing temp file: %w", err)
+	}
+	return hasher, nil
+}
+
+func verifyExpectedDigest(binaryPath, expectedDigest string, computedDigest digest.Digest) error {
+	expectedDigestParsed, err := digest.Parse(expectedDigest)
+	if err != nil {
+		return fmt.Errorf("invalid expected digest format: %w", err)
+	}
+	if computedDigest.Equal(expectedDigestParsed) {
+		return nil
+	}
+	return fmt.Errorf("digest mismatch for %s: binary does not match expected %s", filepath.Base(binaryPath), expectedDigest)
 }
 
 // VerifyDigestFromFD verifies a file's digest by reading from an already-open fd.

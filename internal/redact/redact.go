@@ -128,57 +128,49 @@ func Sensitive(s string) string {
 		return s
 	}
 
-	// Truncate very long inputs to prevent DoS
-	truncated := false
-	if len(s) > maxInputLength {
-		s = s[:maxInputLength]
-		truncated = true
-	}
-
-	// Redact sensitive URL query parameters first (before other patterns might match)
-	s = redactURLQueryParams(s)
-
-	// Redact CI provider tokens (GitHub ghs_/gho_/ghp_, GitLab glpat-/glcbt-, etc.)
-	s = ciTokenPattern.ReplaceAllString(s, Placeholder)
-
-	// Redact JWT tokens (most specific pattern)
-	s = jwtPattern.ReplaceAllString(s, Placeholder)
-
-	// Redact bearer tokens, keeping the "Bearer " prefix
-	s = bearerPattern.ReplaceAllString(s, "${1}"+Placeholder)
-
-	// Redact API key patterns, keeping the key name
-	s = apiKeyPattern.ReplaceAllStringFunc(s, func(match string) string {
-		// Find the separator and keep the key name
-		for i, c := range match {
-			if c == '=' || c == ':' || c == ' ' {
-				prefix := match[:i+1]
-				// Handle quoted values
-				rest := match[i+1:]
-				if len(rest) > 0 && (rest[0] == '"' || rest[0] == '\'') {
-					return prefix + string(rest[0]) + Placeholder + string(rest[0])
-				}
-				return prefix + Placeholder
-			}
-		}
-		return Placeholder
-	})
-
-	// Redact long base64 strings (but check it's not a hex digest pattern)
-	s = base64SecretPattern.ReplaceAllStringFunc(s, func(match string) string {
-		// Skip if it looks like a sha256 hex digest (64 hex chars)
-		if len(match) == 64 && isHexString(match) {
-			return match
-		}
-		return Placeholder
-	})
-
-	// Append truncation marker if input was too long
+	truncatedInput, truncated := truncateForRedaction(s)
+	redacted := applySensitiveRedactions(truncatedInput)
 	if truncated {
-		s += "... [TRUNCATED - additional content not scanned for secrets]"
+		return redacted + "... [TRUNCATED - additional content not scanned for secrets]"
 	}
+	return redacted
+}
 
-	return s
+func truncateForRedaction(s string) (string, bool) {
+	if len(s) <= maxInputLength {
+		return s, false
+	}
+	return s[:maxInputLength], true
+}
+
+func applySensitiveRedactions(s string) string {
+	s = redactURLQueryParams(s)
+	s = ciTokenPattern.ReplaceAllString(s, Placeholder)
+	s = jwtPattern.ReplaceAllString(s, Placeholder)
+	s = bearerPattern.ReplaceAllString(s, "${1}"+Placeholder)
+	s = apiKeyPattern.ReplaceAllStringFunc(s, redactAPIKeyMatch)
+	return base64SecretPattern.ReplaceAllStringFunc(s, redactBase64SecretMatch)
+}
+
+func redactAPIKeyMatch(match string) string {
+	for i, c := range match {
+		if c == '=' || c == ':' || c == ' ' {
+			prefix := match[:i+1]
+			rest := match[i+1:]
+			if len(rest) > 0 && (rest[0] == '"' || rest[0] == '\'') {
+				return prefix + string(rest[0]) + Placeholder + string(rest[0])
+			}
+			return prefix + Placeholder
+		}
+	}
+	return Placeholder
+}
+
+func redactBase64SecretMatch(match string) string {
+	if len(match) == 64 && isHexString(match) {
+		return match
+	}
+	return Placeholder
 }
 
 // Error is an alias for Sensitive - scans error messages for secrets.

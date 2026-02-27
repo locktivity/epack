@@ -87,30 +87,9 @@ func ParseConstraint(s string) (*Constraint, error) {
 		return nil, fmt.Errorf("invalid version format: %q", s)
 	}
 
-	// SECURITY: Parse with error checking and enforce maximum to prevent overflow.
-	// strconv.Atoi returns int which is 32-bit on some platforms, so large numbers
-	// could overflow. We enforce a maximum that fits comfortably in 32 bits.
-	major, err := strconv.Atoi(matches[1])
-	if err != nil || major > maxVersionComponent {
-		return nil, fmt.Errorf("invalid major version in %q: exceeds maximum", s)
-	}
-
-	minor := 0
-	patch := 0
-	hasMinor := matches[2] != ""
-	hasPatch := matches[3] != ""
-
-	if hasMinor {
-		minor, err = strconv.Atoi(matches[2])
-		if err != nil || minor > maxVersionComponent {
-			return nil, fmt.Errorf("invalid minor version in %q: exceeds maximum", s)
-		}
-	}
-	if hasPatch {
-		patch, err = strconv.Atoi(matches[3])
-		if err != nil || patch > maxVersionComponent {
-			return nil, fmt.Errorf("invalid patch version in %q: exceeds maximum", s)
-		}
+	major, minor, patch, hasMinor, hasPatch, err := parseConstraintVersionParts(matches, s)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Constraint{
@@ -123,6 +102,36 @@ func ParseConstraint(s string) (*Constraint, error) {
 		HasMinor:   hasMinor,
 		HasPatch:   hasPatch,
 	}, nil
+}
+
+func parseConstraintVersionParts(matches []string, raw string) (major, minor, patch int, hasMinor, hasPatch bool, err error) {
+	// SECURITY: Parse with error checking and enforce maximum to prevent overflow.
+	// strconv.Atoi returns int which is 32-bit on some platforms, so large numbers
+	// could overflow. We enforce a maximum that fits comfortably in 32 bits.
+	major, err = strconv.Atoi(matches[1])
+	if err != nil || major > maxVersionComponent {
+		return 0, 0, 0, false, false, fmt.Errorf("invalid major version in %q: exceeds maximum", raw)
+	}
+
+	hasMinor = matches[2] != ""
+	hasPatch = matches[3] != ""
+	if !hasMinor {
+		return major, 0, 0, false, false, nil
+	}
+
+	minor, err = strconv.Atoi(matches[2])
+	if err != nil || minor > maxVersionComponent {
+		return 0, 0, 0, false, false, fmt.Errorf("invalid minor version in %q: exceeds maximum", raw)
+	}
+	if !hasPatch {
+		return major, minor, 0, true, false, nil
+	}
+
+	patch, err = strconv.Atoi(matches[3])
+	if err != nil || patch > maxVersionComponent {
+		return 0, 0, 0, false, false, fmt.Errorf("invalid patch version in %q: exceeds maximum", raw)
+	}
+	return major, minor, patch, true, true, nil
 }
 
 // ParseVersion parses a semantic version string.

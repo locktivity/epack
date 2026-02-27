@@ -113,25 +113,9 @@ type Result struct {
 // preventing attacks where an attacker modifies the binary between resolution
 // and execution.
 func Push(ctx context.Context, opts Options) (*Result, error) {
-	if opts.Remote == "" {
-		return nil, fmt.Errorf("remote is required")
-	}
-	if err := (securitypolicy.ExecutionPolicy{
-		Frozen:        opts.Secure.Frozen,
-		AllowUnpinned: opts.Unsafe.AllowUnpinned,
-	}).Enforce(); err != nil {
+	stderr, err := validateAndNormalizePushOptions(opts)
+	if err != nil {
 		return nil, err
-	}
-	if err := securitypolicy.EnforceStrictProduction("push", opts.Unsafe.AllowUnpinned); err != nil {
-		return nil, err
-	}
-	if opts.PackPath == "" {
-		return nil, fmt.Errorf("pack path is required")
-	}
-
-	stderr := opts.Stderr
-	if stderr == nil {
-		stderr = os.Stderr
 	}
 
 	step := newPushStepEmitter(opts.OnStep)
@@ -169,21 +153,60 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 		Release: &finalResp.Release,
 		Links:   finalResp.Links,
 	}
-
-	if !opts.NoRuns && remoteCfg.Runs.SyncEnabled() && caps.SupportsRunsSync() {
-		step("Syncing runs", true)
-		syncedRuns, failedRuns, syncErr := syncRuns(ctx, exec, target, packDigest, absPackPath, remoteCfg, opts.RunsPaths)
-		result.SyncedRuns = syncedRuns
-		result.FailedRuns = failedRuns
-		step("Syncing runs", false)
-		if syncErr != nil && remoteCfg.Runs.RequireSuccess {
-			return result, fmt.Errorf("run sync failed (require_success=true): %w", syncErr)
-		}
+	if err := maybeSyncPushRuns(ctx, exec, target, packDigest, absPackPath, remoteCfg, opts, caps, step, result); err != nil {
+		return result, err
 	}
 
 	result.ReceiptPath = writePushReceipt(opts.Remote, target, absPackPath, packDigest, packSize, finalResp, result, stderr)
 
 	return result, nil
+}
+
+func validateAndNormalizePushOptions(opts Options) (io.Writer, error) {
+	if opts.Remote == "" {
+		return nil, fmt.Errorf("remote is required")
+	}
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        opts.Secure.Frozen,
+		AllowUnpinned: opts.Unsafe.AllowUnpinned,
+	}).Enforce(); err != nil {
+		return nil, err
+	}
+	if err := securitypolicy.EnforceStrictProduction("push", opts.Unsafe.AllowUnpinned); err != nil {
+		return nil, err
+	}
+	if opts.PackPath == "" {
+		return nil, fmt.Errorf("pack path is required")
+	}
+	if opts.Stderr != nil {
+		return opts.Stderr, nil
+	}
+	return os.Stderr, nil
+}
+
+func maybeSyncPushRuns(
+	ctx context.Context,
+	exec *remote.Executor,
+	target remote.TargetConfig,
+	packDigest, absPackPath string,
+	remoteCfg *config.RemoteConfig,
+	opts Options,
+	caps *remote.Capabilities,
+	step StepCallback,
+	result *Result,
+) error {
+	if opts.NoRuns || !remoteCfg.Runs.SyncEnabled() || !caps.SupportsRunsSync() {
+		return nil
+	}
+	step("Syncing runs", true)
+	syncedRuns, failedRuns, syncErr := syncRuns(ctx, exec, target, packDigest, absPackPath, remoteCfg, opts.RunsPaths)
+	result.SyncedRuns = syncedRuns
+	result.FailedRuns = failedRuns
+	step("Syncing runs", false)
+	if syncErr == nil || !remoteCfg.Runs.RequireSuccess {
+		return nil
+	}
+	return fmt.Errorf("run sync failed (require_success=true): %w", syncErr)
 }
 
 func newPushStepEmitter(cb StepCallback) StepCallback {
@@ -386,66 +409,63 @@ func buildSourceInfo(src *config.RemoteReleaseSource) *remote.SourceInfo {
 // Only HTTPS URLs are allowed. HTTP to localhost requires explicit opt-in via transport config.
 // File URLs are allowed for local filesystem remotes, optionally confined to a root directory.
 func uploadPackWithProgress(ctx context.Context, packPath string, upload remote.UploadInfo, transport config.RemoteTransport, onProgress UploadProgressCallback) error {
-	// Check for file:// URL (local filesystem remote)
 	parsed, err := url.Parse(upload.URL)
 	if err != nil {
 		return fmt.Errorf("invalid upload URL: %w", err)
 	}
-
 	if parsed.Scheme == "file" {
 		return uploadPackToFile(ctx, packPath, parsed.Path, transport.FileRoot, onProgress)
 	}
-
-	// SECURITY: Validate URL from untrusted adapter response to prevent SSRF.
-	// Adapters can return arbitrary URLs; we must validate before uploading.
 	if err := validateAdapterURL(upload.URL, transport.AllowLoopbackHTTP); err != nil {
 		return fmt.Errorf("invalid upload URL from adapter: %w", err)
 	}
+	resp, err := performUploadRequest(ctx, packPath, upload, onProgress)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return ensureSuccessfulUploadResponse(resp)
+}
 
+func performUploadRequest(ctx context.Context, packPath string, upload remote.UploadInfo, onProgress UploadProgressCallback) (*http.Response, error) {
 	f, err := os.Open(packPath)
 	if err != nil {
-		return fmt.Errorf("opening pack: %w", err)
+		return nil, fmt.Errorf("opening pack: %w", err)
 	}
-	defer func() { _ = f.Close() }()
-
 	info, err := f.Stat()
 	if err != nil {
-		return fmt.Errorf("getting pack size: %w", err)
+		_ = f.Close()
+		return nil, fmt.Errorf("getting pack size: %w", err)
 	}
 
-	// Wrap file in progress reader if callback provided
 	var body io.Reader = f
 	if onProgress != nil {
 		body = progress.NewReader(f, info.Size(), progress.Callback(onProgress))
 	}
-
 	req, err := http.NewRequestWithContext(ctx, upload.Method, upload.URL, body)
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
+		_ = f.Close()
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
-
 	req.ContentLength = info.Size()
 	for k, v := range upload.Headers {
 		req.Header.Set(k, v)
 	}
-
-	client := &http.Client{
-		Transport: netpolicy.SecureTransport(),
-		Timeout:   30 * time.Minute, // Large file upload timeout
-	}
-
+	client := &http.Client{Transport: netpolicy.SecureTransport(), Timeout: 30 * time.Minute}
 	resp, err := client.Do(req)
+	_ = f.Close()
 	if err != nil {
-		return fmt.Errorf("upload request: %w", err)
+		return nil, fmt.Errorf("upload request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	return resp, nil
+}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(respBody))
+func ensureSuccessfulUploadResponse(resp *http.Response) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
 	}
-
-	return nil
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(respBody))
 }
 
 // uploadPackToFile handles file:// URLs by copying the pack to the local path.

@@ -73,48 +73,92 @@ func Spawn(opts Options) (*Result, error) {
 		return nil, fmt.Errorf("command is required")
 	}
 
-	// Resolve working directory
-	workDir := opts.WorkingDir
-	if workDir == "" {
-		projectRoot, err := project.FindRoot("")
-		if err != nil {
-			workDir, _ = os.Getwd()
-		} else {
-			workDir = projectRoot
-		}
+	workDir, err := resolveWorkDir(opts.WorkingDir)
+	if err != nil {
+		return nil, err
 	}
-
-	// Resolve jobs directory
-	jobsDir := opts.JobsDir
-	if jobsDir == "" {
-		jobsDir = filepath.Join(workDir, ".epack", "jobs")
-	}
-
-	// Create job manager
-	mgr := jobs.NewManager(jobsDir)
-
-	// Generate job ID
+	mgr := jobs.NewManager(resolveJobsDir(workDir, opts.JobsDir))
 	jobID := jobs.GenerateID()
 
-	// Create log file
 	logFile, err := mgr.CreateLogFile(jobID)
 	if err != nil {
 		return nil, fmt.Errorf("creating log file: %w", err)
 	}
-
-	// Get the current executable path
-	executable, err := os.Executable()
+	bgCmd, cmdCancel, err := buildBackgroundCommand(workDir, opts, logFile)
 	if err != nil {
 		_ = logFile.Close()
-		return nil, fmt.Errorf("getting executable path: %w", err)
+		return nil, err
+	}
+	defer cmdCancel()
+
+	if err := bgCmd.start(); err != nil {
+		_ = logFile.Close()
+		return nil, fmt.Errorf("starting background process: %w", err)
 	}
 
-	// Build command arguments
+	job, err := mgr.Create(jobID, opts.Command, opts.Args, bgCmd.pid())
+	if err != nil {
+		drainUntrackedProcess(bgCmd.wait, logFile)
+		return nil, fmt.Errorf("creating job record: %w", err)
+	}
+
+	watchJobCompletion(
+		mgr,
+		jobID,
+		bgCmd.wait,
+		logFile,
+		bgCmd.kill,
+		bgCmd.exitCode,
+	)
+
+	return &Result{
+		JobID:   jobID,
+		PID:     bgCmd.pid(),
+		LogPath: job.LogPath,
+		Job:     job,
+	}, nil
+}
+
+func resolveWorkDir(workingDir string) (string, error) {
+	if workingDir != "" {
+		return workingDir, nil
+	}
+	projectRoot, err := project.FindRoot("")
+	if err == nil {
+		return projectRoot, nil
+	}
+	wd, wdErr := os.Getwd()
+	if wdErr != nil {
+		return "", fmt.Errorf("resolving working directory: %w", wdErr)
+	}
+	return wd, nil
+}
+
+func resolveJobsDir(workDir, jobsDir string) string {
+	if jobsDir != "" {
+		return jobsDir
+	}
+	return filepath.Join(workDir, ".epack", "jobs")
+}
+
+type backgroundCommand struct {
+	start    func() error
+	wait     func() error
+	kill     func() error
+	exitCode func() int
+	pid      func() int
+}
+
+func buildBackgroundCommand(workDir string, opts Options, logFile *os.File) (*backgroundCommand, context.CancelFunc, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting executable path: %w", err)
+	}
+
 	execArgs := []string{opts.Command}
 	execArgs = append(execArgs, opts.Args...)
 	execArgs = append(execArgs, opts.Flags...)
 
-	// Create the background command
 	bgCmd, cmdCancel, err := procexec.CommandChecked(context.Background(), procexec.Spec{
 		Path:             executable,
 		Args:             execArgs,
@@ -125,65 +169,76 @@ func Spawn(opts Options) (*Result, error) {
 		AllowedDirRoots:  []string{workDir},
 	})
 	if err != nil {
+		return nil, nil, fmt.Errorf("building background process command: %w", err)
+	}
+	return &backgroundCommand{
+		start: bgCmd.Start,
+		wait:  bgCmd.Wait,
+		kill: func() error {
+			if bgCmd.Process == nil {
+				return nil
+			}
+			return bgCmd.Process.Kill()
+		},
+		exitCode: func() int { return exitCodeFromProcessState(bgCmd.ProcessState) },
+		pid: func() int {
+			if bgCmd.Process == nil {
+				return 0
+			}
+			return bgCmd.Process.Pid
+		},
+	}, cmdCancel, nil
+}
+
+func drainUntrackedProcess(wait func() error, logFile *os.File) {
+	go func() {
+		_ = wait()
 		_ = logFile.Close()
-		return nil, fmt.Errorf("building background process command: %w", err)
-	}
-	defer cmdCancel()
+	}()
+}
 
-	// Start the background process
-	if err := bgCmd.Start(); err != nil {
-		_ = logFile.Close()
-		return nil, fmt.Errorf("starting background process: %w", err)
-	}
-
-	// Create job record
-	job, err := mgr.Create(jobID, opts.Command, opts.Args, bgCmd.Process.Pid)
-	if err != nil {
-		// Process started but we couldn't track it
-		// Log file will be closed by goroutine
-		go func() {
-			_ = bgCmd.Wait()
-			_ = logFile.Close()
-		}()
-		return nil, fmt.Errorf("creating job record: %w", err)
-	}
-
-	// Start goroutine to update job status when process exits.
+func watchJobCompletion(
+	mgr *jobs.Manager,
+	jobID string,
+	wait func() error,
+	logFile *os.File,
+	kill func() error,
+	exitCode func() int,
+) {
 	// Uses a timeout to prevent goroutine leaks if the process hangs.
 	go func() {
 		defer func() { _ = logFile.Close() }()
 
-		// Wait for process in a separate goroutine so we can apply a timeout
 		done := make(chan error, 1)
 		go func() {
-			done <- bgCmd.Wait()
+			done <- wait()
 		}()
 
 		select {
 		case err := <-done:
-			// Process completed normally
-			exitCode := 0
-			if err != nil {
-				exitCode = 1
-				if bgCmd.ProcessState != nil {
-					exitCode = bgCmd.ProcessState.ExitCode()
-				}
-			}
-			_ = mgr.Complete(jobID, exitCode, nil)
-
+			_ = mgr.Complete(jobID, exitCodeFromWait(err, exitCode), nil)
 		case <-time.After(DefaultJobTimeout):
-			// Job timed out - kill the process and mark as failed
-			_ = bgCmd.Process.Kill()
+			_ = kill()
 			_ = mgr.Fail(jobID, fmt.Sprintf("job timed out after %v", DefaultJobTimeout))
 		}
 	}()
+}
 
-	return &Result{
-		JobID:   jobID,
-		PID:     bgCmd.Process.Pid,
-		LogPath: job.LogPath,
-		Job:     job,
-	}, nil
+func exitCodeFromWait(err error, exitCode func() int) int {
+	if err == nil {
+		return 0
+	}
+	if code := exitCode(); code >= 0 {
+		return code
+	}
+	return 1
+}
+
+func exitCodeFromProcessState(state *os.ProcessState) int {
+	if state == nil {
+		return -1
+	}
+	return state.ExitCode()
 }
 
 // BuildPushFlags builds the flag list for a detached push command.

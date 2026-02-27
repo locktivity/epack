@@ -65,41 +65,42 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = p2.Close() }()
 
-	// If comparing a specific artifact
 	if diffArtifact != "" {
 		return diffSingleArtifact(out, p1, p2, diffArtifact)
 	}
-
-	// Compare packs
 	result := diff.Packs(p1, p2)
-
-	// JSON output
 	if out.IsJSON() {
-		return out.JSON(diffOutput{
-			Pack1: diffPackInfo{
-				Path:       pack1Path,
-				Stream:     result.Pack1.Stream,
-				PackDigest: result.Pack1.PackDigest,
-			},
-			Pack2: diffPackInfo{
-				Path:       pack2Path,
-				Stream:     result.Pack2.Stream,
-				PackDigest: result.Pack2.PackDigest,
-			},
-			Added:     result.Added,
-			Removed:   result.Removed,
-			Changed:   result.Changed,
-			Unchanged: result.Unchanged,
-			Summary: diffSummary{
-				AddedCount:     len(result.Added),
-				RemovedCount:   len(result.Removed),
-				ChangedCount:   len(result.Changed),
-				UnchangedCount: len(result.Unchanged),
-			},
-		})
+		return out.JSON(buildDiffJSONOutput(pack1Path, pack2Path, result))
 	}
+	return renderDiffHumanOutput(out, pack1Path, pack2Path, result)
+}
 
-	// Human-readable output
+func buildDiffJSONOutput(pack1Path, pack2Path string, result *diff.Result) diffOutput {
+	return diffOutput{
+		Pack1: diffPackInfo{
+			Path:       pack1Path,
+			Stream:     result.Pack1.Stream,
+			PackDigest: result.Pack1.PackDigest,
+		},
+		Pack2: diffPackInfo{
+			Path:       pack2Path,
+			Stream:     result.Pack2.Stream,
+			PackDigest: result.Pack2.PackDigest,
+		},
+		Added:     result.Added,
+		Removed:   result.Removed,
+		Changed:   result.Changed,
+		Unchanged: result.Unchanged,
+		Summary: diffSummary{
+			AddedCount:     len(result.Added),
+			RemovedCount:   len(result.Removed),
+			ChangedCount:   len(result.Changed),
+			UnchangedCount: len(result.Unchanged),
+		},
+	}
+}
+
+func renderDiffHumanOutput(out *output.Writer, pack1Path, pack2Path string, result *diff.Result) error {
 	palette := out.Palette()
 
 	out.Print("Comparing evidence packs\n")
@@ -113,42 +114,39 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	out.Print("           %s %s\n", palette.Dim("Stream:"), result.Pack2.Stream)
 	out.Print("           %s %s\n", palette.Dim("Digest:"), output.FormatDigest(result.Pack2.PackDigest))
 
-	// Check if packs are identical
 	if result.IsIdentical() {
 		out.Print("\n%s\n", palette.Green("Packs are identical"))
 		return nil
 	}
 
-	// Show differences
-	if len(result.Added) > 0 {
-		out.Section(fmt.Sprintf("Added (%d)", len(result.Added)))
-		for _, path := range result.Added {
-			out.Print("  %s %s\n", palette.Green("+"), path)
-		}
-	}
+	printDiffSection(out, palette, "Added", palette.Green("+"), result.Added)
+	printDiffSection(out, palette, "Removed", palette.Red("-"), result.Removed)
+	printChangedSection(out, palette, result.Changed)
 
-	if len(result.Removed) > 0 {
-		out.Section(fmt.Sprintf("Removed (%d)", len(result.Removed)))
-		for _, path := range result.Removed {
-			out.Print("  %s %s\n", palette.Red("-"), path)
-		}
-	}
-
-	if len(result.Changed) > 0 {
-		out.Section(fmt.Sprintf("Changed (%d)", len(result.Changed)))
-		for _, path := range result.Changed {
-			out.Print("  %s %s\n", palette.Yellow("~"), path)
-		}
-		out.Print("\n  %s\n", palette.Dim("Use --artifact <path> to see content differences"))
-	}
-
-	// Summary
 	summary := result.Summary()
 	out.Print("\n%s %d added, %d removed, %d changed, %d unchanged\n",
 		palette.Dim("Summary:"),
 		summary.Added, summary.Removed, summary.Changed, summary.Unchanged)
 
 	return nil
+}
+
+func printDiffSection(out *output.Writer, palette *output.Palette, name, marker string, paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	out.Section(fmt.Sprintf("%s (%d)", name, len(paths)))
+	for _, path := range paths {
+		out.Print("  %s %s\n", marker, path)
+	}
+}
+
+func printChangedSection(out *output.Writer, palette *output.Palette, changed []string) {
+	if len(changed) == 0 {
+		return
+	}
+	printDiffSection(out, palette, "Changed", palette.Yellow("~"), changed)
+	out.Print("\n  %s\n", palette.Dim("Use --artifact <path> to see content differences"))
 }
 
 func diffSingleArtifact(out *output.Writer, p1, p2 *pack.Pack, artifactPath string) error {

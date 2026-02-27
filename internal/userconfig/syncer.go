@@ -56,21 +56,8 @@ type InstallResult struct {
 // Install downloads and installs a utility from a source.
 // Source format: owner/repo@version (e.g., "locktivity/epack-tools-viewer@v1.0.0")
 func (s *UtilitySyncer) Install(ctx context.Context, name, source string, opts InstallOpts) (*InstallResult, error) {
-	hasUnsafeOverrides := opts.Unsafe.SkipVerify || opts.Unsafe.TrustOnFirst
-	if err := securitypolicy.EnforceStrictProduction("utility_install", hasUnsafeOverrides); err != nil {
+	if err := enforceUtilityInstallPolicy(name, opts); err != nil {
 		return nil, err
-	}
-	if hasUnsafeOverrides {
-		securityaudit.Emit(securityaudit.Event{
-			Type:        securityaudit.EventInsecureBypass,
-			Component:   string(componenttypes.KindUtility),
-			Name:        name,
-			Description: "utility install running with insecure verification override",
-			Attrs: map[string]string{
-				"skip_verify":    fmt.Sprintf("%t", opts.Unsafe.SkipVerify),
-				"trust_on_first": fmt.Sprintf("%t", opts.Unsafe.TrustOnFirst),
-			},
-		})
 	}
 
 	owner, repo, version, err := s.resolveInstallSource(ctx, source)
@@ -89,30 +76,11 @@ func (s *UtilitySyncer) Install(ctx context.Context, name, source string, opts I
 	if err != nil {
 		return nil, err
 	}
-	cleanupTmp := func() { _ = os.Remove(tmpPath) }
-
 	if err := ensureUtilityInstallDir(installDir); err != nil {
 		return nil, err
 	}
-
-	digest, err := s.downloadAndDigestUtility(ctx, asset, tmpPath)
+	verified, err := s.installAndRecordUtility(ctx, name, source, owner, repo, version, platform, release, asset, tmpPath, installPath, installDir, opts)
 	if err != nil {
-		cleanupTmp()
-		return nil, err
-	}
-
-	sigResult, verified, err := s.maybeVerifyUtilitySigstore(ctx, name, release, asset, tmpPath, installDir, owner, repo, version, opts)
-	if err != nil {
-		cleanupTmp()
-		return nil, err
-	}
-
-	if err := installUtilityBinary(tmpPath, installPath); err != nil {
-		cleanupTmp()
-		return nil, err
-	}
-
-	if err := s.updateUtilitiesLock(name, source, owner, repo, version, platform, digest, asset, sigResult, opts); err != nil {
 		return nil, err
 	}
 
@@ -124,6 +92,56 @@ func (s *UtilitySyncer) Install(ctx context.Context, name, source string, opts I
 		Verified:  verified,
 		Path:      installPath,
 	}, nil
+}
+
+func enforceUtilityInstallPolicy(name string, opts InstallOpts) error {
+	hasUnsafeOverrides := opts.Unsafe.SkipVerify || opts.Unsafe.TrustOnFirst
+	if err := securitypolicy.EnforceStrictProduction("utility_install", hasUnsafeOverrides); err != nil {
+		return err
+	}
+	if !hasUnsafeOverrides {
+		return nil
+	}
+	securityaudit.Emit(securityaudit.Event{
+		Type:        securityaudit.EventInsecureBypass,
+		Component:   string(componenttypes.KindUtility),
+		Name:        name,
+		Description: "utility install running with insecure verification override",
+		Attrs: map[string]string{
+			"skip_verify":    fmt.Sprintf("%t", opts.Unsafe.SkipVerify),
+			"trust_on_first": fmt.Sprintf("%t", opts.Unsafe.TrustOnFirst),
+		},
+	})
+	return nil
+}
+
+func (s *UtilitySyncer) installAndRecordUtility(
+	ctx context.Context,
+	name, source, owner, repo, version, platform string,
+	release *sync.ReleaseInfo,
+	asset *sync.AssetInfo,
+	tmpPath, installPath, installDir string,
+	opts InstallOpts,
+) (bool, error) {
+	cleanupTmp := func() { _ = os.Remove(tmpPath) }
+	digest, err := s.downloadAndDigestUtility(ctx, asset, tmpPath)
+	if err != nil {
+		cleanupTmp()
+		return false, err
+	}
+	sigResult, verified, err := s.maybeVerifyUtilitySigstore(ctx, name, release, asset, tmpPath, installDir, owner, repo, version, opts)
+	if err != nil {
+		cleanupTmp()
+		return false, err
+	}
+	if err := installUtilityBinary(tmpPath, installPath); err != nil {
+		cleanupTmp()
+		return false, err
+	}
+	if err := s.updateUtilitiesLock(name, source, owner, repo, version, platform, digest, asset, sigResult, opts); err != nil {
+		return false, err
+	}
+	return verified, nil
 }
 
 func (s *UtilitySyncer) resolveInstallSource(ctx context.Context, source string) (owner, repo, version string, err error) {

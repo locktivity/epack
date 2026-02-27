@@ -62,55 +62,64 @@ func ResolveAdapterPathWithInstall(
 	step StepCallback,
 	stderr io.Writer,
 ) (string, error) {
-	// First attempt to resolve
 	path, err := ResolveAdapterPath(projectRoot, remoteName, remoteCfg)
 	if err == nil {
 		return path, nil
 	}
-
-	// Check if this is an installable situation
-	adapterName := remoteCfg.EffectiveAdapter()
-	if adapterName == "" {
+	if remoteCfg.EffectiveAdapter() == "" {
 		return "", fmt.Errorf("remote %q has no adapter configured", remoteName)
 	}
-
-	// If it has a source, it can be installed via sync
-	if remoteCfg.Source != "" && promptInstall != nil && promptInstall(remoteName, adapterName) {
-		// Install the adapter
-		if step != nil {
-			step("Resolving adapter", false) // Complete the current step
-			step("Installing adapter", true)
-		}
-
-		lockfilePath := filepath.Join(projectRoot, lockfile.FileName)
-		lf, err := lockfile.Load(lockfilePath)
-		if err != nil {
-			return "", fmt.Errorf("loading lockfile: %w", err)
-		}
-
-		syncer := sync.NewSyncer(filepath.Join(projectRoot, ".epack"))
-		platform := runtime.GOOS + "/" + runtime.GOARCH
-
-		result, err := syncer.SyncRemote(ctx, remoteName, *remoteCfg, lf, platform, sync.SyncOpts{})
-		if err != nil {
-			return "", fmt.Errorf("installing adapter: %w", err)
-		}
-
-		if step != nil {
-			if result != nil && result.Installed {
-				step(fmt.Sprintf("Installed %s %s", adapterName, result.Version), false)
-			} else {
-				step("Installing adapter", false)
-			}
-			step("Resolving adapter", true) // Restart the resolving step
-		}
-
-		// Retry resolution
-		return ResolveAdapterPath(projectRoot, remoteName, remoteCfg)
+	adapterName, canInstall, canPrompt := classifyAdapterInstallability(remoteName, remoteCfg, promptInstall)
+	if !canInstall || !canPrompt {
+		return "", err
 	}
+	if installErr := installRemoteAdapter(ctx, projectRoot, remoteName, adapterName, remoteCfg, step); installErr != nil {
+		return "", installErr
+	}
+	return ResolveAdapterPath(projectRoot, remoteName, remoteCfg)
+}
 
-	// Return the original error
-	return "", err
+func classifyAdapterInstallability(remoteName string, remoteCfg *config.RemoteConfig, promptInstall PromptInstallFunc) (adapterName string, canInstall bool, canPrompt bool) {
+	adapterName = remoteCfg.EffectiveAdapter()
+	if adapterName == "" {
+		return "", false, false
+	}
+	if remoteCfg.Source == "" || promptInstall == nil {
+		return adapterName, false, false
+	}
+	return adapterName, true, promptInstall(remoteName, adapterName)
+}
+
+func installRemoteAdapter(
+	ctx context.Context,
+	projectRoot, remoteName, adapterName string,
+	remoteCfg *config.RemoteConfig,
+	step StepCallback,
+) error {
+	if step != nil {
+		step("Resolving adapter", false)
+		step("Installing adapter", true)
+	}
+	lockfilePath := filepath.Join(projectRoot, lockfile.FileName)
+	lf, err := lockfile.Load(lockfilePath)
+	if err != nil {
+		return fmt.Errorf("loading lockfile: %w", err)
+	}
+	syncer := sync.NewSyncer(filepath.Join(projectRoot, ".epack"))
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	result, err := syncer.SyncRemote(ctx, remoteName, *remoteCfg, lf, platform, sync.SyncOpts{})
+	if err != nil {
+		return fmt.Errorf("installing adapter: %w", err)
+	}
+	if step != nil {
+		if result != nil && result.Installed {
+			step(fmt.Sprintf("Installed %s %s", adapterName, result.Version), false)
+		} else {
+			step("Installing adapter", false)
+		}
+		step("Resolving adapter", true)
+	}
+	return nil
 }
 
 // PrepareAdapterExecutor resolves, verifies, and probes a remote adapter.
@@ -249,23 +258,41 @@ func ResolveRemoteConfig(cfg *config.JobConfig, remoteName, envName string) (*co
 		return &baseCfg, nil
 	}
 
-	// Apply environment overrides
+	envRemoteCfg, err := resolveEnvRemoteOverride(cfg, remoteName, envName)
+	if err != nil || envRemoteCfg == nil {
+		if err != nil {
+			return nil, err
+		}
+		return &baseCfg, nil
+	}
+	merged := mergeRemoteConfig(baseCfg, *envRemoteCfg)
+	return &merged, nil
+}
+
+func resolveEnvRemoteOverride(cfg *config.JobConfig, remoteName, envName string) (*config.RemoteConfig, error) {
 	envCfg, ok := cfg.Environments[envName]
 	if !ok {
 		return nil, fmt.Errorf("environment %q not found in config", envName)
 	}
-
 	envRemoteCfg, ok := envCfg.Remotes[remoteName]
 	if !ok {
-		// Environment doesn't override this remote
-		return &baseCfg, nil
+		return nil, nil
 	}
+	return &envRemoteCfg, nil
+}
 
-	// Merge environment overrides into base config
+func mergeRemoteConfig(baseCfg, envRemoteCfg config.RemoteConfig) config.RemoteConfig {
 	merged := baseCfg
 	if envRemoteCfg.Adapter != "" {
 		merged.Adapter = envRemoteCfg.Adapter
 	}
+	mergeRemoteTargetOverrides(&merged, envRemoteCfg)
+	mergeRemoteReleaseOverrides(&merged, envRemoteCfg)
+	mergeRemoteRunOverrides(&merged, envRemoteCfg)
+	return merged
+}
+
+func mergeRemoteTargetOverrides(merged *config.RemoteConfig, envRemoteCfg config.RemoteConfig) {
 	if envRemoteCfg.Target.Workspace != "" {
 		merged.Target.Workspace = envRemoteCfg.Target.Workspace
 	}
@@ -275,20 +302,24 @@ func ResolveRemoteConfig(cfg *config.JobConfig, remoteName, envName string) (*co
 	if envRemoteCfg.Endpoint != "" {
 		merged.Endpoint = envRemoteCfg.Endpoint
 	}
+}
+
+func mergeRemoteReleaseOverrides(merged *config.RemoteConfig, envRemoteCfg config.RemoteConfig) {
 	if len(envRemoteCfg.Release.Labels) > 0 {
 		merged.Release.Labels = envRemoteCfg.Release.Labels
 	}
 	if envRemoteCfg.Release.Notes != "" {
 		merged.Release.Notes = envRemoteCfg.Release.Notes
 	}
+}
+
+func mergeRemoteRunOverrides(merged *config.RemoteConfig, envRemoteCfg config.RemoteConfig) {
 	if envRemoteCfg.Runs.Sync != nil {
 		merged.Runs.Sync = envRemoteCfg.Runs.Sync
 	}
 	if envRemoteCfg.Runs.RequireSuccess {
 		merged.Runs.RequireSuccess = true
 	}
-
-	return &merged, nil
 }
 
 // AdapterDigestInfo contains information about an adapter's digest and verification state.
@@ -408,86 +439,106 @@ func DefaultVerificationOptions() VerificationOptions {
 //
 // Returns nil if execution is allowed, or an error describing the security violation.
 func CheckAdapterSecurity(remoteName, binaryPath string, digestInfo AdapterDigestInfo, opts VerificationOptions) error {
+	if err := enforceAdapterExecutionPolicy(opts); err != nil {
+		return err
+	}
+	if err := sync.CheckInsecureMarkerAllowed(remoteName, componenttypes.KindRemote, binaryPath, opts.Secure.Frozen, opts.Unsafe.AllowUnverifiedInstall); err != nil {
+		return err
+	}
+	if err := checkSourceAdapterDigest(remoteName, digestInfo, opts); err != nil {
+		return err
+	}
+	if err := checkExternalAdapterDigest(remoteName, digestInfo, opts); err != nil {
+		return err
+	}
+	if err := checkFrozenAdapterPinning(remoteName, digestInfo, opts); err != nil {
+		return err
+	}
+	maybeAuditUnverifiedAdapter(remoteName, digestInfo, opts)
+	return nil
+}
+
+func enforceAdapterExecutionPolicy(opts VerificationOptions) error {
 	if err := (securitypolicy.ExecutionPolicy{
 		Frozen:        opts.Secure.Frozen,
 		AllowUnpinned: opts.Unsafe.AllowUnverifiedSource,
 	}).Enforce(); err != nil {
 		return err
 	}
-	if err := securitypolicy.EnforceStrictProduction("remote_adapter",
+	return securitypolicy.EnforceStrictProduction("remote_adapter",
 		opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnverifiedSource,
-	); err != nil {
-		return err
-	}
+	)
+}
 
-	// Check for insecure install marker
-	if err := sync.CheckInsecureMarkerAllowed(remoteName, componenttypes.KindRemote, binaryPath, opts.Secure.Frozen, opts.Unsafe.AllowUnverifiedInstall); err != nil {
-		return err
+func checkSourceAdapterDigest(remoteName string, digestInfo AdapterDigestInfo, opts VerificationOptions) error {
+	if !digestInfo.IsSourceAdapter || !digestInfo.MissingDigest {
+		return nil
 	}
-
-	// Source-based adapter checks
-	if digestInfo.IsSourceAdapter {
-		if digestInfo.MissingDigest {
-			if opts.Secure.Frozen {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("remote %q missing digest in lockfile (required in --frozen mode)", remoteName),
-					"Run 'epack lock' to compute and pin digests", nil)
-			}
-			if !opts.Unsafe.AllowUnverifiedSource {
-				return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-					fmt.Sprintf("remote %q missing digest in lockfile", remoteName),
-					"Run 'epack lock' to compute and pin digests, or use --insecure-allow-unpinned", nil)
-			}
-			securityaudit.Emit(securityaudit.Event{
-				Type:        securityaudit.EventInsecureBypass,
-				Component:   string(componenttypes.KindRemote),
-				Name:        remoteName,
-				Description: "allowing source adapter execution without lockfile digest",
-				Attrs: map[string]string{
-					"reason": "allow_unverified_source",
-				},
-			})
-		}
-	}
-
-	// External adapter checks (binary path in config)
-	if digestInfo.IsExternalBinary && digestInfo.MissingDigest {
-		if opts.Secure.Frozen {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("external remote %q is not pinned in lockfile (required in --frozen mode)", remoteName),
-				"Run 'epack lock' to pin external remotes", nil)
-		}
-		if !opts.Unsafe.AllowUnverifiedSource {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("external remote %q is not pinned in lockfile", remoteName),
-				"Run 'epack lock' to pin external remotes, or use --insecure-allow-unpinned", nil)
-		}
-		securityaudit.Emit(securityaudit.Event{
-			Type:        securityaudit.EventUnpinnedExecution,
-			Component:   string(componenttypes.KindRemote),
-			Name:        remoteName,
-			Description: "executing external adapter without lockfile pin",
-			Attrs: map[string]string{
-				"reason": "allow_unverified_source",
-			},
-		})
-	}
-
-	// Frozen mode: all adapters must be verifiable
-	if opts.Secure.Frozen && digestInfo.NeedsVerification && digestInfo.Digest == "" {
+	if opts.Secure.Frozen {
 		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-			fmt.Sprintf("remote %q not pinned in lockfile (required in --frozen mode)", remoteName),
-			"Run 'epack lock' to pin all remotes", nil)
+			fmt.Sprintf("remote %q missing digest in lockfile (required in --frozen mode)", remoteName),
+			"Run 'epack lock' to compute and pin digests", nil)
 	}
-
-	if digestInfo.Digest == "" && opts.Unsafe.AllowUnverifiedSource {
-		securityaudit.Emit(securityaudit.Event{
-			Type:        securityaudit.EventInsecureBypass,
-			Component:   string(componenttypes.KindRemote),
-			Name:        remoteName,
-			Description: "adapter execution proceeds without digest verification",
-		})
+	if !opts.Unsafe.AllowUnverifiedSource {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("remote %q missing digest in lockfile", remoteName),
+			"Run 'epack lock' to compute and pin digests, or use --insecure-allow-unpinned", nil)
 	}
-
+	securityaudit.Emit(securityaudit.Event{
+		Type:        securityaudit.EventInsecureBypass,
+		Component:   string(componenttypes.KindRemote),
+		Name:        remoteName,
+		Description: "allowing source adapter execution without lockfile digest",
+		Attrs: map[string]string{
+			"reason": "allow_unverified_source",
+		},
+	})
 	return nil
+}
+
+func checkExternalAdapterDigest(remoteName string, digestInfo AdapterDigestInfo, opts VerificationOptions) error {
+	if !digestInfo.IsExternalBinary || !digestInfo.MissingDigest {
+		return nil
+	}
+	if opts.Secure.Frozen {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("external remote %q is not pinned in lockfile (required in --frozen mode)", remoteName),
+			"Run 'epack lock' to pin external remotes", nil)
+	}
+	if !opts.Unsafe.AllowUnverifiedSource {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("external remote %q is not pinned in lockfile", remoteName),
+			"Run 'epack lock' to pin external remotes, or use --insecure-allow-unpinned", nil)
+	}
+	securityaudit.Emit(securityaudit.Event{
+		Type:        securityaudit.EventUnpinnedExecution,
+		Component:   string(componenttypes.KindRemote),
+		Name:        remoteName,
+		Description: "executing external adapter without lockfile pin",
+		Attrs: map[string]string{
+			"reason": "allow_unverified_source",
+		},
+	})
+	return nil
+}
+
+func checkFrozenAdapterPinning(remoteName string, digestInfo AdapterDigestInfo, opts VerificationOptions) error {
+	if !opts.Secure.Frozen || !digestInfo.NeedsVerification || digestInfo.Digest != "" {
+		return nil
+	}
+	return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		fmt.Sprintf("remote %q not pinned in lockfile (required in --frozen mode)", remoteName),
+		"Run 'epack lock' to pin all remotes", nil)
+}
+
+func maybeAuditUnverifiedAdapter(remoteName string, digestInfo AdapterDigestInfo, opts VerificationOptions) {
+	if digestInfo.Digest != "" || !opts.Unsafe.AllowUnverifiedSource {
+		return
+	}
+	securityaudit.Emit(securityaudit.Event{
+		Type:        securityaudit.EventInsecureBypass,
+		Component:   string(componenttypes.KindRemote),
+		Name:        remoteName,
+		Description: "adapter execution proceeds without digest verification",
+	})
 }

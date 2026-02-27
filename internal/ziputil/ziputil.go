@@ -131,17 +131,18 @@ func ValidatePath(name string) error {
 }
 
 func validatePathGlobalRules(name string) error {
+	if err := validatePathBasicShape(name); err != nil {
+		return err
+	}
+	if err := validatePathControlChars(name); err != nil {
+		return err
+	}
+	return validatePathCharsetAndLength(name)
+}
+
+func validatePathBasicShape(name string) error {
 	if name == "" {
 		return errors.E(errors.InvalidPath, "empty path", nil)
-	}
-	for i, r := range name {
-		if unicode.IsControl(r) {
-			return errors.E(errors.InvalidPath,
-				fmt.Sprintf("path contains control character at position %d: %q", i, name), nil)
-		}
-	}
-	if strings.Contains(name, "\\") {
-		return errors.E(errors.InvalidPath, fmt.Sprintf("path contains backslash (must use forward slashes): %q", name), nil)
 	}
 	if strings.HasSuffix(name, "/") {
 		return errors.E(errors.InvalidPath, fmt.Sprintf("path must not end with slash: %q", name), nil)
@@ -151,6 +152,23 @@ func validatePathGlobalRules(name string) error {
 	}
 	if strings.HasPrefix(name, "//") {
 		return errors.E(errors.InvalidPath, fmt.Sprintf("UNC path not allowed: %q", name), nil)
+	}
+	return nil
+}
+
+func validatePathControlChars(name string) error {
+	for i, r := range name {
+		if unicode.IsControl(r) {
+			return errors.E(errors.InvalidPath,
+				fmt.Sprintf("path contains control character at position %d: %q", i, name), nil)
+		}
+	}
+	return nil
+}
+
+func validatePathCharsetAndLength(name string) error {
+	if strings.Contains(name, "\\") {
+		return errors.E(errors.InvalidPath, fmt.Sprintf("path contains backslash (must use forward slashes): %q", name), nil)
 	}
 	if isWindowsAbsolutePath(name) {
 		return errors.E(errors.InvalidPath, fmt.Sprintf("Windows absolute path not allowed: %q", name), nil)

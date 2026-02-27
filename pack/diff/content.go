@@ -135,72 +135,73 @@ func Content(p1, p2 *pack.Pack, artifactPath string) (*ContentResult, error) {
 	data1, err1 := p1.ReadArtifact(artifactPath)
 	data2, err2 := p2.ReadArtifact(artifactPath)
 
-	// SECURITY: Check for integrity errors FIRST before treating as "missing".
-	// Integrity errors (digest_mismatch, size_mismatch) indicate potential tampering
-	// and must NOT be masked as "not found" or "only in other pack".
-	if err1 != nil && isIntegrityError(err1) {
-		return &ContentResult{
-			Status: ContentIntegrityError,
-			IntegrityError: &IntegrityErrorInfo{
-				Pack:    "pack1",
-				Code:    string(errors.CodeOf(err1)),
-				Message: err1.Error(),
-			},
-		}, nil
+	if result, handled := handleContentReadErrors(err1, err2); handled {
+		return result, nil
 	}
-	if err2 != nil && isIntegrityError(err2) {
-		return &ContentResult{
-			Status: ContentIntegrityError,
-			IntegrityError: &IntegrityErrorInfo{
-				Pack:    "pack2",
-				Code:    string(errors.CodeOf(err2)),
-				Message: err2.Error(),
-			},
-		}, nil
-	}
-
-	// Handle cases where artifact doesn't exist (non-integrity errors)
-	if err1 != nil && err2 != nil {
-		return &ContentResult{Status: ContentNotFound}, nil
-	}
-	if err1 != nil {
-		return &ContentResult{Status: ContentOnlyInPack2}, nil
-	}
-	if err2 != nil {
-		return &ContentResult{Status: ContentOnlyInPack1}, nil
-	}
-
-	// Check if contents are identical
 	if bytes.Equal(data1.Bytes(), data2.Bytes()) {
 		return &ContentResult{Status: ContentIdentical}, nil
 	}
-
-	// Try to parse as JSON for structured diff
-	// SECURITY: Use strict JSON decoding with duplicate key validation
-	// to prevent ambiguous content comparisons.
-	var json1, json2 interface{}
-	isJSON1 := strictJSONUnmarshal(data1.Bytes(), &json1)
-	isJSON2 := strictJSONUnmarshal(data2.Bytes(), &json2)
-
-	if isJSON1 && isJSON2 {
-		changes := computeJSONDiff(json1, json2, "")
-		return &ContentResult{
-			Status:      ContentDifferent,
-			IsJSON:      true,
-			JSONChanges: changes,
-		}, nil
+	if result, handled := tryStructuredJSONDiff(data1.Bytes(), data2.Bytes()); handled {
+		return result, nil
 	}
+	return buildTextContentDiff(data1.Bytes(), data2.Bytes()), nil
+}
 
-	// Text diff
-	lines1 := splitLines(string(data1.Bytes()))
-	lines2 := splitLines(string(data2.Bytes()))
-	textDiff := ComputeLineDiff(lines1, lines2)
+func handleContentReadErrors(err1, err2 error) (*ContentResult, bool) {
+	if result, handled := integrityErrorResult("pack1", err1); handled {
+		return result, true
+	}
+	if result, handled := integrityErrorResult("pack2", err2); handled {
+		return result, true
+	}
+	if err1 != nil && err2 != nil {
+		return &ContentResult{Status: ContentNotFound}, true
+	}
+	if err1 != nil {
+		return &ContentResult{Status: ContentOnlyInPack2}, true
+	}
+	if err2 != nil {
+		return &ContentResult{Status: ContentOnlyInPack1}, true
+	}
+	return nil, false
+}
 
+func integrityErrorResult(packName string, err error) (*ContentResult, bool) {
+	if err == nil || !isIntegrityError(err) {
+		return nil, false
+	}
+	return &ContentResult{
+		Status: ContentIntegrityError,
+		IntegrityError: &IntegrityErrorInfo{
+			Pack:    packName,
+			Code:    string(errors.CodeOf(err)),
+			Message: err.Error(),
+		},
+	}, true
+}
+
+func tryStructuredJSONDiff(b1, b2 []byte) (*ContentResult, bool) {
+	var json1, json2 interface{}
+	isJSON1 := strictJSONUnmarshal(b1, &json1)
+	isJSON2 := strictJSONUnmarshal(b2, &json2)
+	if !isJSON1 || !isJSON2 {
+		return nil, false
+	}
+	return &ContentResult{
+		Status:      ContentDifferent,
+		IsJSON:      true,
+		JSONChanges: computeJSONDiff(json1, json2, ""),
+	}, true
+}
+
+func buildTextContentDiff(b1, b2 []byte) *ContentResult {
+	lines1 := splitLines(string(b1))
+	lines2 := splitLines(string(b2))
 	return &ContentResult{
 		Status:   ContentDifferent,
 		IsJSON:   false,
-		TextDiff: textDiff,
-	}, nil
+		TextDiff: ComputeLineDiff(lines1, lines2),
+	}
 }
 
 // computeJSONDiff recursively computes differences between two JSON values.

@@ -214,27 +214,13 @@ func (o *InsecureOptions) String() string {
 		return "(none)"
 	}
 	var parts []string
-	if o.SkipVerify {
-		parts = append(parts, "skip-verify")
-	}
-	if o.SkipIdentityCheck {
-		parts = append(parts, "skip-identity-check")
-	}
-	if o.SkipEmbeddedVerify {
-		parts = append(parts, "skip-embedded-verify")
-	}
-	if o.AllowUnverified {
-		parts = append(parts, "allow-unverified")
-	}
-	if o.AllowCustomEndpoints {
-		parts = append(parts, "allow-custom-endpoints")
-	}
-	if o.AllowHTTP {
-		parts = append(parts, "allow-http")
-	}
-	if o.InheritPath {
-		parts = append(parts, "inherit-path")
-	}
+	parts = appendIfEnabled(parts, o.SkipVerify, "skip-verify")
+	parts = appendIfEnabled(parts, o.SkipIdentityCheck, "skip-identity-check")
+	parts = appendIfEnabled(parts, o.SkipEmbeddedVerify, "skip-embedded-verify")
+	parts = appendIfEnabled(parts, o.AllowUnverified, "allow-unverified")
+	parts = appendIfEnabled(parts, o.AllowCustomEndpoints, "allow-custom-endpoints")
+	parts = appendIfEnabled(parts, o.AllowHTTP, "allow-http")
+	parts = appendIfEnabled(parts, o.InheritPath, "inherit-path")
 	result := ""
 	for i, p := range parts {
 		if i > 0 {
@@ -243,4 +229,11 @@ func (o *InsecureOptions) String() string {
 		result += p
 	}
 	return result
+}
+
+func appendIfEnabled(parts []string, enabled bool, value string) []string {
+	if enabled {
+		return append(parts, value)
+	}
+	return parts
 }

@@ -79,47 +79,12 @@ type ExtractResult struct {
 // where an attacker injects extra artifacts not in the original manifest.
 // Set SkipPreVerification=true only if you've already verified the pack.
 func (p *Pack) Extract(opts ExtractOptions) (*ExtractResult, error) {
-	// SECURITY: Verify pack integrity before extraction by default.
-	// This catches injected artifacts not in the canonical list.
-	if !opts.SkipPreVerification {
-		if err := p.VerifyIntegrity(); err != nil {
-			return nil, fmt.Errorf("integrity verification failed: %w", err)
-		}
+	if err := maybeVerifyBeforeExtract(p, opts.SkipPreVerification); err != nil {
+		return nil, err
 	}
-
-	if opts.OutputDir == "" {
-		opts.OutputDir = "."
-	}
-
-	// Resolve to absolute path FIRST, before any file operations
-	// This ensures we're working with a canonical path
-	absOutputDir, err := filepath.Abs(opts.OutputDir)
+	absOutputDir, err := prepareOutputDir(opts.OutputDir)
 	if err != nil {
-		return nil, fmt.Errorf("resolving output directory: %w", err)
-	}
-
-	// Validate and create output directory using symlink-safe operations
-	// We use the parent of absOutputDir as the trusted base, and create
-	// the output directory (last component) using safefile.MkdirAll.
-	// This prevents symlink-based attacks where an attacker swaps a
-	// parent directory component to redirect writes.
-	parentDir := filepath.Dir(absOutputDir)
-	if parentDir == "" {
-		parentDir = "/"
-	}
-
-	// Validate the parent directory exists and is not a symlink
-	parentInfo, err := os.Lstat(parentDir)
-	if err != nil {
-		return nil, fmt.Errorf("output parent directory does not exist: %w", err)
-	}
-	if parentInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("refusing to extract: parent directory %s is a symlink", parentDir)
-	}
-
-	// Create output directory using safefile (symlink-safe)
-	if err := safefile.MkdirAll(parentDir, absOutputDir); err != nil {
-		return nil, fmt.Errorf("creating output directory: %w", err)
+		return nil, err
 	}
 
 	// Determine which artifacts to extract
@@ -156,6 +121,42 @@ func (p *Pack) Extract(opts ExtractOptions) (*ExtractResult, error) {
 	return &ExtractResult{Extracted: extracted}, nil
 }
 
+func maybeVerifyBeforeExtract(p *Pack, skipPreVerification bool) error {
+	if skipPreVerification {
+		return nil
+	}
+	if err := p.VerifyIntegrity(); err != nil {
+		return fmt.Errorf("integrity verification failed: %w", err)
+	}
+	return nil
+}
+
+func prepareOutputDir(outputDir string) (string, error) {
+	if outputDir == "" {
+		outputDir = "."
+	}
+	absOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving output directory: %w", err)
+	}
+
+	parentDir := filepath.Dir(absOutputDir)
+	if parentDir == "" {
+		parentDir = "/"
+	}
+	parentInfo, err := os.Lstat(parentDir)
+	if err != nil {
+		return "", fmt.Errorf("output parent directory does not exist: %w", err)
+	}
+	if parentInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("refusing to extract: parent directory %s is a symlink", parentDir)
+	}
+	if err := safefile.MkdirAll(parentDir, absOutputDir); err != nil {
+		return "", fmt.Errorf("creating output directory: %w", err)
+	}
+	return absOutputDir, nil
+}
+
 // selectArtifacts determines which artifacts to extract based on options.
 func (p *Pack) selectArtifacts(opts ExtractOptions) ([]Artifact, error) {
 	manifest := p.Manifest()
@@ -166,46 +167,46 @@ func (p *Pack) selectArtifacts(opts ExtractOptions) ([]Artifact, error) {
 	}
 
 	if opts.Filter != "" {
-		var matched []Artifact
-		for _, a := range manifest.Artifacts {
-			if matchPath(a.Path, opts.Filter) {
-				matched = append(matched, a)
-			}
-		}
-		return matched, nil
+		return filterArtifactsByPattern(manifest.Artifacts, opts.Filter), nil
 	}
 
 	if len(opts.Paths) > 0 {
-		pathSet := make(map[string]bool)
-		for _, p := range opts.Paths {
-			pathSet[p] = true
-		}
-
-		var selected []Artifact
-		for _, a := range manifest.Artifacts {
-			if pathSet[a.Path] {
-				selected = append(selected, a)
-			}
-		}
-
-		// Check for paths not found
-		for _, reqPath := range opts.Paths {
-			found := false
-			for _, a := range manifest.Artifacts {
-				if a.Path == reqPath {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("artifact not found: %s", reqPath)
-			}
-		}
-
-		return selected, nil
+		return selectArtifactsByPaths(manifest.Artifacts, opts.Paths)
 	}
 
 	return nil, fmt.Errorf("specify artifact paths, All=true, or Filter pattern")
+}
+
+func filterArtifactsByPattern(artifacts []Artifact, pattern string) []Artifact {
+	var matched []Artifact
+	for _, a := range artifacts {
+		if matchPath(a.Path, pattern) {
+			matched = append(matched, a)
+		}
+	}
+	return matched
+}
+
+func selectArtifactsByPaths(artifacts []Artifact, paths []string) ([]Artifact, error) {
+	pathSet := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		pathSet[p] = true
+	}
+
+	var selected []Artifact
+	foundPaths := make(map[string]bool, len(paths))
+	for _, a := range artifacts {
+		if pathSet[a.Path] {
+			selected = append(selected, a)
+			foundPaths[a.Path] = true
+		}
+	}
+	for _, reqPath := range paths {
+		if !foundPaths[reqPath] {
+			return nil, fmt.Errorf("artifact not found: %s", reqPath)
+		}
+	}
+	return selected, nil
 }
 
 // extractArtifactWithBudget extracts a single artifact with budget tracking.

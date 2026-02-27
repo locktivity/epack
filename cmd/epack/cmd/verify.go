@@ -184,61 +184,57 @@ func printVerifyResults(out *output.Writer, packPath string, result *verify.Pack
 	palette := out.Palette()
 
 	if result.HasErrors() {
-		out.PrintAlways("%s %s\n\n", palette.Failure("Verification failed:"), packPath)
-
-		if len(result.ArtifactErrors) > 0 {
-			out.PrintAlways("Artifact errors:\n")
-			for _, e := range result.ArtifactErrors {
-				out.PrintAlways("  %s %s\n", palette.Red("✗"), e)
-			}
-			out.PrintAlways("\n")
-		}
-
-		if result.PackDigestError != "" {
-			out.PrintAlways("Pack digest error:\n")
-			out.PrintAlways("  %s %s\n\n", palette.Red("✗"), result.PackDigestError)
-		}
-
-		if len(result.AttestationErrors) > 0 {
-			out.PrintAlways("Attestation errors:\n")
-			for _, e := range result.AttestationErrors {
-				out.PrintAlways("  %s %s\n", palette.Red("✗"), e)
-			}
-			out.PrintAlways("\n")
-		}
-
-		if len(result.EmbeddedErrors) > 0 {
-			out.PrintAlways("Embedded attestation errors:\n")
-			for _, e := range result.EmbeddedErrors {
-				out.PrintAlways("  %s %s\n", palette.Red("✗"), e)
-			}
-			out.PrintAlways("\n")
-		}
-
-		// Print hint
-		if len(result.ArtifactErrors) > 0 || result.PackDigestError != "" {
-			out.PrintAlways("Hint: The pack may have been modified after creation.\n")
-			out.PrintAlways("      Rebuild the pack with the current artifacts.\n")
-		}
-
-		return fmt.Errorf("verification failed")
+		return printVerifyFailure(out, palette, packPath, result)
 	}
 
-	// Success
 	out.Print("%s %s\n", palette.Success("Verification passed:"), packPath)
 	out.Println()
 	out.KeyValue("Stream", result.Stream)
 	out.KeyValue("Pack Digest", output.FormatDigest(result.PackDigest))
 	out.KeyValue("Artifacts", fmt.Sprintf("%d verified", result.ArtifactCount))
-
-	if verifyIntegrityOnly {
-		out.KeyValue("Attestations", palette.Dim("skipped (--integrity-only)"))
-	} else if result.AttestationCount == 0 {
-		out.KeyValue("Attestations", palette.Dim("none"))
-	} else {
-		out.KeyValue("Attestations", fmt.Sprintf("%d verified", result.AttestationCount))
-	}
-
+	out.KeyValue("Attestations", formatVerifyAttestationStatus(palette, result.AttestationCount))
 	out.Println()
 	return nil
+}
+
+func printVerifyFailure(out *output.Writer, palette *output.Palette, packPath string, result *verify.PackResult) error {
+	out.PrintAlways("%s %s\n\n", palette.Failure("Verification failed:"), packPath)
+	printVerifyErrorSection(out, palette, "Artifact errors", result.ArtifactErrors)
+	printVerifyDigestError(out, palette, result.PackDigestError)
+	printVerifyErrorSection(out, palette, "Attestation errors", result.AttestationErrors)
+	printVerifyErrorSection(out, palette, "Embedded attestation errors", result.EmbeddedErrors)
+	if len(result.ArtifactErrors) > 0 || result.PackDigestError != "" {
+		out.PrintAlways("Hint: The pack may have been modified after creation.\n")
+		out.PrintAlways("      Rebuild the pack with the current artifacts.\n")
+	}
+	return fmt.Errorf("verification failed")
+}
+
+func printVerifyErrorSection(out *output.Writer, palette *output.Palette, title string, errs []string) {
+	if len(errs) == 0 {
+		return
+	}
+	out.PrintAlways("%s:\n", title)
+	for _, e := range errs {
+		out.PrintAlways("  %s %s\n", palette.Red("✗"), e)
+	}
+	out.PrintAlways("\n")
+}
+
+func printVerifyDigestError(out *output.Writer, palette *output.Palette, digestError string) {
+	if digestError == "" {
+		return
+	}
+	out.PrintAlways("Pack digest error:\n")
+	out.PrintAlways("  %s %s\n\n", palette.Red("✗"), digestError)
+}
+
+func formatVerifyAttestationStatus(palette *output.Palette, attestationCount int) string {
+	if verifyIntegrityOnly {
+		return palette.Dim("skipped (--integrity-only)")
+	}
+	if attestationCount == 0 {
+		return palette.Dim("none")
+	}
+	return fmt.Sprintf("%d verified", attestationCount)
 }

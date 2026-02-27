@@ -76,46 +76,11 @@ func hasComponent(configPath, section, name string) (bool, error) {
 
 // addComponent adds a component to the specified section of the config file.
 func addComponent(configPath, section, name string, cfg any) error {
-	// Read existing file
-	data, err := os.ReadFile(configPath)
+	root, docContent, err := readConfigDocument(configPath)
 	if err != nil {
-		return fmt.Errorf("reading config: %w", err)
+		return err
 	}
-
-	// Parse into node tree to preserve formatting
-	root, err := safeyaml.DecodeNode(data, limits.ConfigFile)
-	if err != nil {
-		return fmt.Errorf("parsing config: %w", err)
-	}
-
-	// Get the document content node
-	if root.Kind != safeyaml.DocumentNode || len(root.Content) == 0 {
-		return fmt.Errorf("invalid config file: expected document node")
-	}
-	docContent := root.Content[0]
-	if docContent.Kind != safeyaml.MappingNode {
-		return fmt.Errorf("invalid config file: expected mapping at top level")
-	}
-
-	// Find or create the section (tools, collectors, or remotes)
-	sectionNode := findMappingKey(docContent, section)
-	if sectionNode == nil {
-		// Create the section
-		sectionNode = &safeyaml.Node{
-			Kind: safeyaml.MappingNode,
-		}
-		docContent.Content = append(docContent.Content,
-			&safeyaml.Node{Kind: safeyaml.ScalarNode, Value: section},
-			sectionNode,
-		)
-	} else if sectionNode.Kind != safeyaml.MappingNode {
-		// Section exists but is null/scalar (e.g., "collectors:" with only comments)
-		// Convert to an empty mapping so we can add entries
-		sectionNode.Kind = safeyaml.MappingNode
-		sectionNode.Tag = ""
-		sectionNode.Value = ""
-		sectionNode.Content = nil
-	}
+	sectionNode := ensureSectionNode(docContent, section)
 
 	// Check if component already exists
 	if findMappingKey(sectionNode, name) != nil {
@@ -128,34 +93,82 @@ func addComponent(configPath, section, name string, cfg any) error {
 		return fmt.Errorf("creating component node: %w", err)
 	}
 
-	// Add to section
 	sectionNode.Content = append(sectionNode.Content,
 		&safeyaml.Node{Kind: safeyaml.ScalarNode, Value: name},
 		componentNode,
 	)
 
-	// Encode back to YAML
+	encoded, err := encodeConfigNode(root)
+	if err != nil {
+		return err
+	}
+	return writeConfigFile(configPath, encoded)
+}
+
+func readConfigDocument(configPath string) (*safeyaml.Node, *safeyaml.Node, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading config: %w", err)
+	}
+
+	root, err := safeyaml.DecodeNode(data, limits.ConfigFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if root.Kind != safeyaml.DocumentNode || len(root.Content) == 0 {
+		return nil, nil, fmt.Errorf("invalid config file: expected document node")
+	}
+
+	docContent := root.Content[0]
+	if docContent.Kind != safeyaml.MappingNode {
+		return nil, nil, fmt.Errorf("invalid config file: expected mapping at top level")
+	}
+	return root, docContent, nil
+}
+
+func ensureSectionNode(docContent *safeyaml.Node, section string) *safeyaml.Node {
+	sectionNode := findMappingKey(docContent, section)
+	if sectionNode == nil {
+		sectionNode = &safeyaml.Node{Kind: safeyaml.MappingNode}
+		docContent.Content = append(docContent.Content,
+			&safeyaml.Node{Kind: safeyaml.ScalarNode, Value: section},
+			sectionNode,
+		)
+		return sectionNode
+	}
+
+	if sectionNode.Kind != safeyaml.MappingNode {
+		sectionNode.Kind = safeyaml.MappingNode
+		sectionNode.Tag = ""
+		sectionNode.Value = ""
+		sectionNode.Content = nil
+	}
+	return sectionNode
+}
+
+func encodeConfigNode(root *safeyaml.Node) ([]byte, error) {
 	var buf bytes.Buffer
 	encoder := safeyaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(root); err != nil {
-		return fmt.Errorf("encoding config: %w", err)
+		return nil, fmt.Errorf("encoding config: %w", err)
 	}
 	if err := encoder.Close(); err != nil {
-		return fmt.Errorf("closing encoder: %w", err)
+		return nil, fmt.Errorf("closing encoder: %w", err)
 	}
+	return buf.Bytes(), nil
+}
 
-	// Write back to file atomically
+func writeConfigFile(configPath string, data []byte) error {
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
 		return fmt.Errorf("resolving config path: %w", err)
 	}
 	baseDir := filepath.Dir(absPath)
 	fileName := filepath.Base(absPath)
-	if err := safefile.WriteFile(baseDir, fileName, buf.Bytes()); err != nil {
+	if err := safefile.WriteFile(baseDir, fileName, data); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
-
 	return nil
 }
 

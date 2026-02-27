@@ -147,50 +147,57 @@ func verifyArtifactIntegrity(p *pack.Pack, manifest *pack.Manifest) []string {
 func buildVerifierOptions(opts PackOpts) ([]verify.Option, error) {
 	var vopts []verify.Option
 
-	// Load trust root from explicit path
-	if opts.TrustRootPath != "" {
-		data, err := os.ReadFile(opts.TrustRootPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read trust root %s: %w", opts.TrustRootPath, err)
-		}
-		tr, err := verify.LoadTrustedRoot(data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse trust root %s: %w", opts.TrustRootPath, err)
-		}
-		vopts = append(vopts, verify.WithTrustedRoot(tr))
+	if err := appendTrustRootOption(&vopts, opts.TrustRootPath); err != nil {
+		return nil, err
 	}
-
-	// Identity policy
 	if opts.Issuer != "" {
 		vopts = append(vopts, verify.WithIssuer(opts.Issuer))
 	}
-	if opts.IssuerRegexp != "" {
-		re, err := regexp.Compile(opts.IssuerRegexp)
-		if err != nil {
-			return nil, fmt.Errorf("invalid issuer-regexp: %w", err)
-		}
-		vopts = append(vopts, verify.WithIssuerRegexp(re))
+	if err := appendVerifierRegexpOption(&vopts, opts.IssuerRegexp, "issuer-regexp", verify.WithIssuerRegexp); err != nil {
+		return nil, err
 	}
 	if opts.Subject != "" {
 		vopts = append(vopts, verify.WithSubject(opts.Subject))
 	}
-	if opts.SubjectRegexp != "" {
-		re, err := regexp.Compile(opts.SubjectRegexp)
-		if err != nil {
-			return nil, fmt.Errorf("invalid subject-regexp: %w", err)
-		}
-		vopts = append(vopts, verify.WithSubjectRegexp(re))
+	if err := appendVerifierRegexpOption(&vopts, opts.SubjectRegexp, "subject-regexp", verify.WithSubjectRegexp); err != nil {
+		return nil, err
 	}
-
 	if opts.Offline {
 		vopts = append(vopts, verify.WithOffline())
 	}
-
 	if opts.InsecureSkipIdentityCheck {
 		vopts = append(vopts, verify.WithInsecureSkipIdentityCheckForTesting())
 	}
 
 	return vopts, nil
+}
+
+func appendTrustRootOption(vopts *[]verify.Option, trustRootPath string) error {
+	if trustRootPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(trustRootPath)
+	if err != nil {
+		return fmt.Errorf("failed to read trust root %s: %w", trustRootPath, err)
+	}
+	tr, err := verify.LoadTrustedRoot(data)
+	if err != nil {
+		return fmt.Errorf("failed to parse trust root %s: %w", trustRootPath, err)
+	}
+	*vopts = append(*vopts, verify.WithTrustedRoot(tr))
+	return nil
+}
+
+func appendVerifierRegexpOption(vopts *[]verify.Option, pattern, field string, fn func(*regexp.Regexp) verify.Option) error {
+	if pattern == "" {
+		return nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", field, err)
+	}
+	*vopts = append(*vopts, fn(re))
+	return nil
 }
 
 // hasIdentityPolicy returns true if any identity constraint is specified.

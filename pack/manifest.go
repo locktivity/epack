@@ -137,69 +137,17 @@ func validateArtifacts(artifacts []Artifact) error {
 	seenPaths := make(map[string]int) // Windows-canonical path -> first index seen
 
 	for i, artifact := range artifacts {
-		if _, ok := validArtifactTypes[artifact.Type]; !ok {
-			return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid artifact type at index %d: %s", i, artifact.Type), nil)
+		if err := validateArtifactCoreFields(i, artifact); err != nil {
+			return err
 		}
-
-		if err := digest.Validate(artifact.Digest); err != nil {
-			return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid digest format for artifact at index %d: %s", i, artifact.Digest), err)
+		if err := validateArtifactEmbeddedPath(i, artifact, seenPaths); err != nil {
+			return err
 		}
-
-		if artifact.Path == "" {
-			return errors.E(errors.MissingRequiredField, fmt.Sprintf("path is required for artifact at index %d", i), nil)
+		if err := validateArtifactSize(i, artifact); err != nil {
+			return err
 		}
-
-		// SECURITY: For embedded artifacts, use packpath.ValidateArtifactPathAndCollisionKey
-		// which validates path safety AND returns the Windows collision key.
-		// This ensures consistent validation between builder and manifest parsing.
-		if artifact.Type == "embedded" {
-			collisionKey, err := packpath.ValidateArtifactPathAndCollisionKey(artifact.Path)
-			if err != nil {
-				return errors.E(errors.InvalidPath,
-					fmt.Sprintf("invalid artifact path at index %d: %v", i, err), nil)
-			}
-
-			// SECURITY: Check for duplicate paths using Windows-canonical form.
-			// This catches not just case differences, but also Windows path normalization:
-			// - "report." and "report" map to same file (trailing dot stripped)
-			// - "file " and "file" map to same file (trailing space stripped)
-			// Without this check, two artifact paths could target the same filesystem path,
-			// causing integrity ambiguity during extraction.
-			if firstIdx, exists := seenPaths[collisionKey]; exists {
-				return errors.E(errors.DuplicatePath,
-					fmt.Sprintf("duplicate artifact path %q at index %d (collides with path at index %d on Windows)", artifact.Path, i, firstIdx), nil)
-			}
-			seenPaths[collisionKey] = i
-		}
-
-		if artifact.Size == nil {
-			return errors.E(errors.MissingRequiredField, fmt.Sprintf("size is required for artifact at index %d", i), nil)
-		}
-
-		// SECURITY: Validate artifact size is within safe bounds.
-		// - Must be non-negative (reject negative numbers that could wrap)
-		// - Must be within JSON-safe integer range (2^53-1) to prevent precision loss
-		// - Must be within MaxArtifactSizeBytes to prevent DoS
-		sizeInt, err := artifact.Size.Int64()
-		if err != nil {
-			return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid size for artifact at index %d: cannot parse as integer", i), err)
-		}
-		if sizeInt < 0 {
-			return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid size for artifact at index %d: size cannot be negative", i), nil)
-		}
-		// JSON numbers can represent up to 2^53-1 exactly; beyond that, precision loss can occur
-		const maxSafeJSONInt int64 = (1 << 53) - 1
-		if sizeInt > maxSafeJSONInt {
-			return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid size for artifact at index %d: exceeds JSON safe integer range", i), nil)
-		}
-		if sizeInt > limits.Artifact.Bytes() {
-			return errors.E(errors.ArtifactTooLarge, fmt.Sprintf("artifact at index %d size %d exceeds maximum %d bytes", i, sizeInt, limits.Artifact.Bytes()), nil)
-		}
-
-		if artifact.CollectedAt != "" {
-			if err := validateStrictTimestamp(artifact.CollectedAt, fmt.Sprintf("collected_at for artifact at index %d", i)); err != nil {
-				return err
-			}
+		if err := validateArtifactCollectedAt(i, artifact); err != nil {
+			return err
 		}
 	}
 
@@ -223,52 +171,109 @@ func validateProvenance(provenance Provenance) error {
 
 	switch provenance.Type {
 	case "merged":
-		// R-043: merged_at is required for merged type
-		if provenance.MergedAt == "" {
-			return errors.E(errors.MissingRequiredField, "merged_at is required for merged provenance type", nil)
-		}
-		if err := validateStrictTimestamp(provenance.MergedAt, "merged_at"); err != nil {
-			return err
-		}
-
-		// R-043: source_packs is required and must be non-empty
-		if len(provenance.SourcePacks) == 0 {
-			return errors.E(errors.MissingRequiredField, "source_packs is required and must be non-empty for merged provenance type", nil)
-		}
-
-		for i, sp := range provenance.SourcePacks {
-			// R-044: stream, pack_digest, artifacts all required
-			if sp.Stream == "" {
-				return errors.E(errors.MissingRequiredField, fmt.Sprintf("stream is required for source pack at index %d", i), nil)
-			}
-
-			if sp.PackDigest == "" {
-				return errors.E(errors.MissingRequiredField, fmt.Sprintf("pack_digest is required for source pack at index %d", i), nil)
-			}
-
-			if err := validateDigest(sp.PackDigest); err != nil {
-				return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid pack_digest format for source pack at index %d", i), err)
-			}
-
-			// R-044: artifacts count is required
-			if sp.Artifacts == "" {
-				return errors.E(errors.MissingRequiredField, fmt.Sprintf("artifacts is required for source pack at index %d", i), nil)
-			}
-
-			// R-045: If attestations are embedded, each must be a complete Sigstore bundle
-			for j, att := range sp.EmbeddedAttestations {
-				if err := validateEmbeddedAttestation(att); err != nil {
-					return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid embedded attestation %d for source pack at index %d", j, i), err)
-				}
-			}
-		}
-
-		return nil
+		return validateMergedProvenance(provenance)
 	case "single":
 		return nil
 	default:
 		return errors.E(errors.InvalidManifest, fmt.Sprintf("unsupported provenance type: %s", provenance.Type), nil)
 	}
+}
+
+func validateArtifactCoreFields(i int, artifact Artifact) error {
+	if _, ok := validArtifactTypes[artifact.Type]; !ok {
+		return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid artifact type at index %d: %s", i, artifact.Type), nil)
+	}
+	if err := digest.Validate(artifact.Digest); err != nil {
+		return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid digest format for artifact at index %d: %s", i, artifact.Digest), err)
+	}
+	if artifact.Path == "" {
+		return errors.E(errors.MissingRequiredField, fmt.Sprintf("path is required for artifact at index %d", i), nil)
+	}
+	return nil
+}
+
+func validateArtifactEmbeddedPath(i int, artifact Artifact, seenPaths map[string]int) error {
+	if artifact.Type != "embedded" {
+		return nil
+	}
+	collisionKey, err := packpath.ValidateArtifactPathAndCollisionKey(artifact.Path)
+	if err != nil {
+		return errors.E(errors.InvalidPath, fmt.Sprintf("invalid artifact path at index %d: %v", i, err), nil)
+	}
+	if firstIdx, exists := seenPaths[collisionKey]; exists {
+		return errors.E(errors.DuplicatePath,
+			fmt.Sprintf("duplicate artifact path %q at index %d (collides with path at index %d on Windows)", artifact.Path, i, firstIdx), nil)
+	}
+	seenPaths[collisionKey] = i
+	return nil
+}
+
+func validateArtifactSize(i int, artifact Artifact) error {
+	if artifact.Size == nil {
+		return errors.E(errors.MissingRequiredField, fmt.Sprintf("size is required for artifact at index %d", i), nil)
+	}
+
+	sizeInt, err := artifact.Size.Int64()
+	if err != nil {
+		return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid size for artifact at index %d: cannot parse as integer", i), err)
+	}
+	if sizeInt < 0 {
+		return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid size for artifact at index %d: size cannot be negative", i), nil)
+	}
+	const maxSafeJSONInt int64 = (1 << 53) - 1
+	if sizeInt > maxSafeJSONInt {
+		return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid size for artifact at index %d: exceeds JSON safe integer range", i), nil)
+	}
+	if sizeInt > limits.Artifact.Bytes() {
+		return errors.E(errors.ArtifactTooLarge, fmt.Sprintf("artifact at index %d size %d exceeds maximum %d bytes", i, sizeInt, limits.Artifact.Bytes()), nil)
+	}
+	return nil
+}
+
+func validateArtifactCollectedAt(i int, artifact Artifact) error {
+	if artifact.CollectedAt == "" {
+		return nil
+	}
+	return validateStrictTimestamp(artifact.CollectedAt, fmt.Sprintf("collected_at for artifact at index %d", i))
+}
+
+func validateMergedProvenance(provenance Provenance) error {
+	if provenance.MergedAt == "" {
+		return errors.E(errors.MissingRequiredField, "merged_at is required for merged provenance type", nil)
+	}
+	if err := validateStrictTimestamp(provenance.MergedAt, "merged_at"); err != nil {
+		return err
+	}
+	if len(provenance.SourcePacks) == 0 {
+		return errors.E(errors.MissingRequiredField, "source_packs is required and must be non-empty for merged provenance type", nil)
+	}
+	for i, sp := range provenance.SourcePacks {
+		if err := validateSourcePack(i, sp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSourcePack(i int, sp SourcePack) error {
+	if sp.Stream == "" {
+		return errors.E(errors.MissingRequiredField, fmt.Sprintf("stream is required for source pack at index %d", i), nil)
+	}
+	if sp.PackDigest == "" {
+		return errors.E(errors.MissingRequiredField, fmt.Sprintf("pack_digest is required for source pack at index %d", i), nil)
+	}
+	if err := validateDigest(sp.PackDigest); err != nil {
+		return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid pack_digest format for source pack at index %d", i), err)
+	}
+	if sp.Artifacts == "" {
+		return errors.E(errors.MissingRequiredField, fmt.Sprintf("artifacts is required for source pack at index %d", i), nil)
+	}
+	for j, att := range sp.EmbeddedAttestations {
+		if err := validateEmbeddedAttestation(att); err != nil {
+			return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid embedded attestation %d for source pack at index %d", j, i), err)
+		}
+	}
+	return nil
 }
 
 func validateEmbeddedAttestation(att EmbeddedAttestation) error {

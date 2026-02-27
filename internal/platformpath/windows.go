@@ -9,19 +9,15 @@ package platformpath
 //
 // Safe to call on any platform - checks path string format without filesystem access.
 func IsLocalWindowsPath(path string) bool {
-	if len(path) < 2 {
-		return false
-	}
-	// Check for UNC paths: \\server\share or //server/share
-	if (path[0] == '\\' && path[1] == '\\') || (path[0] == '/' && path[1] == '/') {
-		return false
-	}
-	// Check for drive letter: C:\ or C:/
-	if len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
-		drive := path[0]
-		return (drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')
-	}
-	return false
+	return hasMinWindowsPathLength(path) && !IsUNCPath(path) && hasDrivePrefixWithSeparator(path)
+}
+
+func hasMinWindowsPathLength(path string) bool {
+	return len(path) >= 2
+}
+
+func hasDrivePrefixWithSeparator(path string) bool {
+	return len(path) >= 3 && HasDriveLetter(path) && (path[2] == '\\' || path[2] == '/')
 }
 
 // IsUNCPath returns true if the path is a UNC path (\\server\share or //server/share).

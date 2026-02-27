@@ -305,70 +305,36 @@ func processRemoteRequest(data []byte, spec RemoteSpec, handler RemoteHandler) m
 		})
 	}
 
-	// Dispatch based on type
 	switch base.Type {
 	case "push.prepare":
-		var req PushPrepareRequest
-		if err := json.Unmarshal(data, &req); err != nil {
-			return errorResponse(base.RequestID, RemoteError{
-				Code:    "invalid_request",
-				Message: "failed to parse push.prepare request",
-			})
-		}
-		resp, err := handler.PushPrepare(req)
-		if err != nil {
-			return errorResponse(base.RequestID, toRemoteError(err))
-		}
-		return successResponse(base.RequestID, "push.prepare", resp)
-
+		return handleTypedRemoteRequest(data, base.RequestID, "push.prepare request", "push.prepare", handler.PushPrepare)
 	case "push.finalize":
-		var req PushFinalizeRequest
-		if err := json.Unmarshal(data, &req); err != nil {
-			return errorResponse(base.RequestID, RemoteError{
-				Code:    "invalid_request",
-				Message: "failed to parse push.finalize request",
-			})
-		}
-		resp, err := handler.PushFinalize(req)
-		if err != nil {
-			return errorResponse(base.RequestID, toRemoteError(err))
-		}
-		return successResponse(base.RequestID, "push.finalize", resp)
-
+		return handleTypedRemoteRequest(data, base.RequestID, "push.finalize request", "push.finalize", handler.PushFinalize)
 	case "pull.prepare":
-		var req PullPrepareRequest
-		if err := json.Unmarshal(data, &req); err != nil {
-			return errorResponse(base.RequestID, RemoteError{
-				Code:    "invalid_request",
-				Message: "failed to parse pull.prepare request",
-			})
-		}
-		resp, err := handler.PullPrepare(req)
-		if err != nil {
-			return errorResponse(base.RequestID, toRemoteError(err))
-		}
-		return successResponse(base.RequestID, "pull.prepare", resp)
-
+		return handleTypedRemoteRequest(data, base.RequestID, "pull.prepare request", "pull.prepare", handler.PullPrepare)
 	case "pull.finalize":
-		var req PullFinalizeRequest
-		if err := json.Unmarshal(data, &req); err != nil {
-			return errorResponse(base.RequestID, RemoteError{
-				Code:    "invalid_request",
-				Message: "failed to parse pull.finalize request",
-			})
-		}
-		resp, err := handler.PullFinalize(req)
-		if err != nil {
-			return errorResponse(base.RequestID, toRemoteError(err))
-		}
-		return successResponse(base.RequestID, "pull.finalize", resp)
-
+		return handleTypedRemoteRequest(data, base.RequestID, "pull.finalize request", "pull.finalize", handler.PullFinalize)
 	default:
 		return errorResponse(base.RequestID, RemoteError{
 			Code:    "unsupported_protocol",
 			Message: fmt.Sprintf("unknown request type: %s", base.Type),
 		})
 	}
+}
+
+func handleTypedRemoteRequest[T any, R any](data []byte, requestID, parseTarget, responseType string, fn func(T) (R, error)) map[string]any {
+	var req T
+	if err := json.Unmarshal(data, &req); err != nil {
+		return errorResponse(requestID, RemoteError{
+			Code:    "invalid_request",
+			Message: "failed to parse " + parseTarget,
+		})
+	}
+	resp, err := fn(req)
+	if err != nil {
+		return errorResponse(requestID, toRemoteError(err))
+	}
+	return successResponse(requestID, responseType, resp)
 }
 
 func successResponse(requestID, responseType string, data any) map[string]any {

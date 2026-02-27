@@ -92,77 +92,95 @@ func RunCollector(spec CollectorSpec, handler CollectorHandler) {
 }
 
 func runCollectorInternal(spec CollectorSpec, handler CollectorHandler) int {
-	// Check for --capabilities and --version flags
+	if code, handled := handleCollectorMetaFlags(spec); handled {
+		return code
+	}
+	collectorCtx, cancel, errCode := buildCollectorContext(spec)
+	if errCode != 0 {
+		return errCode
+	}
+	defer cancel()
+	if err := handler(collectorCtx); err != nil {
+		return mapCollectorError(err)
+	}
+	return finalizeCollectorRun(collectorCtx)
+}
+
+func handleCollectorMetaFlags(spec CollectorSpec) (int, bool) {
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--capabilities":
-			return outputCollectorCapabilities(spec)
+			return outputCollectorCapabilities(spec), true
 		case "--version":
 			fmt.Println(spec.Version)
-			return 0
+			return 0, true
 		}
 	}
+	return 0, false
+}
 
-	// Set default timeout
+func buildCollectorContext(spec CollectorSpec) (*collectorContext, context.CancelFunc, int) {
 	timeout := spec.Timeout
 	if timeout == 0 {
 		timeout = 60 * time.Second
 	}
-
-	// Create context with timeout and signal handling
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	handleCollectorSignals(cancel)
+	collectorCtx := &collectorContext{
+		ctx:  ctx,
+		name: os.Getenv("EPACK_COLLECTOR_NAME"),
+		spec: spec,
+	}
+	if err := loadCollectorConfig(collectorCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "error parsing config: %v\n", err)
+		cancel()
+		return nil, nil, componenttypes.ExitConfigError
+	}
+	return collectorCtx, cancel, 0
+}
 
-	// Handle SIGTERM gracefully (COL-031)
+func handleCollectorSignals(cancel context.CancelFunc) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		<-sigChan
 		cancel()
 	}()
+}
 
-	// Parse environment
-	collectorCtx := &collectorContext{
-		ctx:  ctx,
-		name: os.Getenv("EPACK_COLLECTOR_NAME"),
-		spec: spec,
-	}
-
-	// Parse config if provided (COL-020)
+func loadCollectorConfig(ctx *collectorContext) error {
 	configPath := os.Getenv("EPACK_COLLECTOR_CONFIG")
-	if configPath != "" {
-		cfg, err := parseJSONFile(configPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error parsing config: %v\n", err)
-			return componenttypes.ExitConfigError
-		}
-		collectorCtx.config = cfg
+	if configPath == "" {
+		return nil
 	}
-
-	// Run handler
-	if err := handler(collectorCtx); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-
-		// Map error types to exit codes (COL-041 through COL-044)
-		switch err.(type) {
-		case ConfigError:
-			return componenttypes.ExitConfigError
-		case AuthError:
-			return componenttypes.ExitAuthError
-		case NetworkError:
-			return componenttypes.ExitNetworkError
-		default:
-			return 1
-		}
+	cfg, err := parseJSONFile(configPath)
+	if err != nil {
+		return err
 	}
+	ctx.config = cfg
+	return nil
+}
 
-	// Check if data was emitted
-	if !collectorCtx.emitted {
-		fmt.Fprintf(os.Stderr, "error: collector did not emit any data\n")
+func mapCollectorError(err error) int {
+	fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	switch err.(type) {
+	case ConfigError:
+		return componenttypes.ExitConfigError
+	case AuthError:
+		return componenttypes.ExitAuthError
+	case NetworkError:
+		return componenttypes.ExitNetworkError
+	default:
 		return 1
 	}
+}
 
-	return 0
+func finalizeCollectorRun(ctx *collectorContext) int {
+	if ctx.emitted {
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "error: collector did not emit any data\n")
+	return 1
 }
 
 // collectorContext implements CollectorContext

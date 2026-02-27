@@ -107,28 +107,10 @@ type Result struct {
 // preventing attacks where an attacker modifies the binary between resolution
 // and execution.
 func Pull(ctx context.Context, opts Options) (*Result, error) {
-	if opts.Remote == "" {
-		return nil, fmt.Errorf("remote is required")
-	}
-	if err := (securitypolicy.ExecutionPolicy{
-		Frozen:        opts.Secure.Frozen,
-		AllowUnpinned: opts.Unsafe.AllowUnpinned,
-	}).Enforce(); err != nil {
+	stderr, err := validateAndNormalizePullOptions(&opts)
+	if err != nil {
 		return nil, err
 	}
-	if err := securitypolicy.EnforceStrictProduction("pull", opts.Unsafe.AllowUnpinned); err != nil {
-		return nil, err
-	}
-	if opts.Ref.Digest == "" && !opts.Ref.Latest && opts.Ref.ReleaseID == "" && opts.Ref.Version == "" {
-		// None set - default to latest
-		opts.Ref.Latest = true
-	}
-
-	stderr := opts.Stderr
-	if stderr == nil {
-		stderr = os.Stderr
-	}
-
 	step := newPullStepEmitter(opts.OnStep)
 	projectRoot, cfg, remoteCfg, err := loadPullRemoteConfig(opts, step)
 	if err != nil {
@@ -144,22 +126,8 @@ func Pull(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("adapter does not support pull operations")
 	}
 	target := buildPullTarget(remoteCfg, opts)
-	prepResp, err := runPullPrepare(ctx, exec, opts, target, step)
+	prepResp, absOutputPath, err := executePullTransfer(ctx, exec, opts, target, remoteCfg.Transport, step)
 	if err != nil {
-		return nil, err
-	}
-	absOutputPath, err := resolvePullOutputPath(opts, prepResp.Pack.Stream)
-	if err != nil {
-		return nil, err
-	}
-	if err := ensurePullOutputWritable(absOutputPath, opts.OutputPath, opts.Force); err != nil {
-		return nil, err
-	}
-	downloadedDigest, err := runPullDownload(ctx, absOutputPath, prepResp, remoteCfg.Transport, opts.OnDownloadProgress, step)
-	if err != nil {
-		return nil, err
-	}
-	if err := verifyPullDigest(prepResp.Pack.Digest, downloadedDigest, absOutputPath); err != nil {
 		return nil, err
 	}
 
@@ -175,6 +143,57 @@ func Pull(ctx context.Context, opts Options) (*Result, error) {
 	result.ReceiptPath = writePullReceipt(opts.Remote, target, absOutputPath, &prepResp.Pack, result.Verified, stderr)
 
 	return result, nil
+}
+
+func executePullTransfer(
+	ctx context.Context,
+	exec *remote.Executor,
+	opts Options,
+	target remote.TargetConfig,
+	transport config.RemoteTransport,
+	step StepCallback,
+) (*remote.PullPrepareResponse, string, error) {
+	prepResp, err := runPullPrepare(ctx, exec, opts, target, step)
+	if err != nil {
+		return nil, "", err
+	}
+	absOutputPath, err := resolvePullOutputPath(opts, prepResp.Pack.Stream)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := ensurePullOutputWritable(absOutputPath, opts.OutputPath, opts.Force); err != nil {
+		return nil, "", err
+	}
+	downloadedDigest, err := runPullDownload(ctx, absOutputPath, prepResp, transport, opts.OnDownloadProgress, step)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := verifyPullDigest(prepResp.Pack.Digest, downloadedDigest, absOutputPath); err != nil {
+		return nil, "", err
+	}
+	return prepResp, absOutputPath, nil
+}
+
+func validateAndNormalizePullOptions(opts *Options) (io.Writer, error) {
+	if opts.Remote == "" {
+		return nil, fmt.Errorf("remote is required")
+	}
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        opts.Secure.Frozen,
+		AllowUnpinned: opts.Unsafe.AllowUnpinned,
+	}).Enforce(); err != nil {
+		return nil, err
+	}
+	if err := securitypolicy.EnforceStrictProduction("pull", opts.Unsafe.AllowUnpinned); err != nil {
+		return nil, err
+	}
+	if opts.Ref.Digest == "" && !opts.Ref.Latest && opts.Ref.ReleaseID == "" && opts.Ref.Version == "" {
+		opts.Ref.Latest = true
+	}
+	if opts.Stderr != nil {
+		return opts.Stderr, nil
+	}
+	return os.Stderr, nil
 }
 
 func newPullStepEmitter(cb StepCallback) StepCallback {
@@ -350,7 +369,6 @@ func writePullReceipt(remoteName string, target remote.TargetConfig, absOutputPa
 // Only HTTPS URLs are allowed. HTTP to localhost requires explicit opt-in via transport config.
 // File URLs are allowed for local filesystem remotes, optionally confined to a root directory.
 func downloadPackWithProgress(ctx context.Context, outputPath string, download remote.DownloadInfo, expectedSize int64, transport config.RemoteTransport, onProgress DownloadProgressCallback) (string, error) {
-	// Check for file:// URL (local filesystem remote)
 	parsed, err := url.Parse(download.URL)
 	if err != nil {
 		return "", fmt.Errorf("invalid download URL: %w", err)
@@ -360,70 +378,29 @@ func downloadPackWithProgress(ctx context.Context, outputPath string, download r
 		return downloadPackFromFile(ctx, outputPath, parsed.Path, expectedSize, transport.FileRoot, onProgress)
 	}
 
-	// SECURITY: Validate URL from untrusted adapter response to prevent SSRF.
-	// Adapters can return arbitrary URLs; we must validate before fetching.
 	if err := validateAdapterURL(download.URL, transport.AllowLoopbackHTTP); err != nil {
 		return "", fmt.Errorf("invalid download URL from adapter: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, download.Method, download.URL, nil)
+	resp, err := executeDownloadRequest(ctx, download)
 	if err != nil {
-		return "", fmt.Errorf("creating request: %w", err)
-	}
-
-	for k, v := range download.Headers {
-		req.Header.Set(k, v)
-	}
-
-	client := &http.Client{
-		Transport: netpolicy.SecureTransport(),
-		Timeout:   30 * time.Minute, // Large file download timeout
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("download request: %w", err)
+		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(respBody))
+	if err := ensureSuccessfulDownloadResponse(resp); err != nil {
+		return "", err
 	}
 
-	// SECURITY: Use safefile.OpenForWrite to refuse symlinks atomically.
-	f, err := safefile.OpenForWrite(outputPath)
-	if err != nil {
-		return "", fmt.Errorf("creating output file: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	// Use Content-Length if available, otherwise use expected size from metadata
 	totalSize := resp.ContentLength
 	if totalSize <= 0 {
 		totalSize = expectedSize
 	}
 
-	// Create hash writer for digest computation
-	hasher := sha256.New()
-
-	// Wrap response body in progress reader if callback provided
 	var reader io.Reader = resp.Body
 	if onProgress != nil && totalSize > 0 {
 		reader = progress.NewReader(resp.Body, totalSize, progress.Callback(onProgress))
 	}
-
-	// Defense-in-depth: enforce size limit at read time, not just Content-Length check.
-	// A malicious server could lie about Content-Length or stream indefinitely.
-	reader = io.LimitReader(reader, limits.MaxPackSizeBytes)
-
-	// Copy to file and hasher simultaneously
-	multiWriter := io.MultiWriter(f, hasher)
-	if _, err := io.Copy(multiWriter, reader); err != nil {
-		return "", fmt.Errorf("writing file: %w", err)
-	}
-
-	return fmt.Sprintf("sha256:%x", hasher.Sum(nil)), nil
+	return writeOutputAndDigest(outputPath, reader, "writing file")
 }
 
 // downloadPackFromFile handles file:// URLs by copying from the local path.
@@ -461,31 +438,52 @@ func downloadPackFromFile(ctx context.Context, outputPath, srcPath string, expec
 		totalSize = expectedSize
 	}
 
-	// SECURITY: Use safefile.OpenForWrite to refuse symlinks atomically.
-	dst, err := safefile.OpenForWrite(outputPath)
-	if err != nil {
-		return "", fmt.Errorf("creating output file: %w", err)
-	}
-	defer func() { _ = dst.Close() }()
-
-	// Create hash writer for digest computation
-	hasher := sha256.New()
-
-	// Wrap source in progress reader if callback provided
 	var reader io.Reader = src
 	if onProgress != nil && totalSize > 0 {
 		reader = progress.NewReader(src, totalSize, progress.Callback(onProgress))
 	}
+	return writeOutputAndDigest(outputPath, reader, "copying file")
+}
 
-	// Defense-in-depth: enforce size limit
-	reader = io.LimitReader(reader, limits.MaxPackSizeBytes)
-
-	// Copy to file and hasher simultaneously
-	multiWriter := io.MultiWriter(dst, hasher)
-	if _, err := io.Copy(multiWriter, reader); err != nil {
-		return "", fmt.Errorf("copying file: %w", err)
+func executeDownloadRequest(ctx context.Context, download remote.DownloadInfo) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, download.Method, download.URL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
+	for k, v := range download.Headers {
+		req.Header.Set(k, v)
+	}
+	client := &http.Client{
+		Transport: netpolicy.SecureTransport(),
+		Timeout:   30 * time.Minute,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download request: %w", err)
+	}
+	return resp, nil
+}
 
+func ensureSuccessfulDownloadResponse(resp *http.Response) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(respBody))
+}
+
+func writeOutputAndDigest(outputPath string, reader io.Reader, copyErrPrefix string) (string, error) {
+	f, err := safefile.OpenForWrite(outputPath)
+	if err != nil {
+		return "", fmt.Errorf("creating output file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	hasher := sha256.New()
+	reader = io.LimitReader(reader, limits.MaxPackSizeBytes)
+	if _, err := io.Copy(io.MultiWriter(f, hasher), reader); err != nil {
+		return "", fmt.Errorf("%s: %w", copyErrPrefix, err)
+	}
 	return fmt.Sprintf("sha256:%x", hasher.Sum(nil)), nil
 }
 

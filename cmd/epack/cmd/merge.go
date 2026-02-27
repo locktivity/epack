@@ -180,70 +180,97 @@ type packSummary struct {
 }
 
 func runMergeDryRun(sources []merge.SourcePack, outputPath string, out *output.Writer) error {
-	var summaries []packSummary
-	var totalArtifacts int
-	var totalSize int64
-	var totalAttestations int
-
-	for _, src := range sources {
-		p, err := pack.Open(src.Path)
-		if err != nil {
-			return exitError("failed to open pack %s: %v", src.Path, err)
-		}
-
-		manifest := p.Manifest()
-		var packSize int64
-		artifactCount := 0
-		for _, artifact := range manifest.Artifacts {
-			if artifact.Type == "embedded" {
-				artifactCount++
-				if artifact.Size != nil {
-					size, _ := artifact.Size.Int64()
-					packSize += size
-				}
-			}
-		}
-
-		attestationCount := len(p.ListAttestations())
-		_ = p.Close() // Error intentionally ignored in dry-run preview
-
-		summaries = append(summaries, packSummary{
-			Path:         src.Path,
-			Stream:       manifest.Stream,
-			Artifacts:    artifactCount,
-			TotalSize:    packSize,
-			Attestations: attestationCount,
-		})
-
-		totalArtifacts += artifactCount
-		totalSize += packSize
-		totalAttestations += attestationCount
+	summaries, totals, err := collectMergeDryRunSummaries(sources)
+	if err != nil {
+		return err
 	}
-
-	// Output result
 	if out.IsJSON() {
-		sourceList := make([]map[string]interface{}, len(summaries))
-		for i, s := range summaries {
-			sourceList[i] = map[string]interface{}{
-				"path":         s.Path,
-				"stream":       s.Stream,
-				"artifacts":    s.Artifacts,
-				"size":         s.TotalSize,
-				"attestations": s.Attestations,
-			}
-		}
-		return out.JSON(map[string]interface{}{
-			"dry_run":              true,
-			"output":               outputPath,
-			"stream":               mergeStream,
-			"source_packs":         sourceList,
-			"total_artifacts":      totalArtifacts,
-			"total_size":           totalSize,
-			"total_attestations":   totalAttestations,
-			"include_attestations": mergeIncludeAttestations,
-		})
+		return outputMergeDryRunJSON(out, outputPath, summaries, totals)
 	}
+	outputMergeDryRunHuman(out, sources, outputPath, summaries, totals)
+	return nil
+}
 
+type mergeDryRunTotals struct {
+	Artifacts    int
+	Size         int64
+	Attestations int
+}
+
+func collectMergeDryRunSummaries(sources []merge.SourcePack) ([]packSummary, mergeDryRunTotals, error) {
+	summaries := make([]packSummary, 0, len(sources))
+	var totals mergeDryRunTotals
+	for _, src := range sources {
+		summary, err := summarizeSourcePack(src)
+		if err != nil {
+			return nil, mergeDryRunTotals{}, err
+		}
+		summaries = append(summaries, summary)
+		totals.Artifacts += summary.Artifacts
+		totals.Size += summary.TotalSize
+		totals.Attestations += summary.Attestations
+	}
+	return summaries, totals, nil
+}
+
+func summarizeSourcePack(src merge.SourcePack) (packSummary, error) {
+	p, err := pack.Open(src.Path)
+	if err != nil {
+		return packSummary{}, exitError("failed to open pack %s: %v", src.Path, err)
+	}
+	defer func() { _ = p.Close() }() // Error intentionally ignored in dry-run preview
+
+	manifest := p.Manifest()
+	artifactCount, packSize := summarizeEmbeddedArtifacts(manifest.Artifacts)
+	return packSummary{
+		Path:         src.Path,
+		Stream:       manifest.Stream,
+		Artifacts:    artifactCount,
+		TotalSize:    packSize,
+		Attestations: len(p.ListAttestations()),
+	}, nil
+}
+
+func summarizeEmbeddedArtifacts(artifacts []pack.Artifact) (int, int64) {
+	count := 0
+	var total int64
+	for _, artifact := range artifacts {
+		if artifact.Type != "embedded" {
+			continue
+		}
+		count++
+		if artifact.Size != nil {
+			size, _ := artifact.Size.Int64()
+			total += size
+		}
+	}
+	return count, total
+}
+
+func outputMergeDryRunJSON(out *output.Writer, outputPath string, summaries []packSummary, totals mergeDryRunTotals) error {
+	sourceList := make([]map[string]interface{}, len(summaries))
+	for i, s := range summaries {
+		sourceList[i] = map[string]interface{}{
+			"path":         s.Path,
+			"stream":       s.Stream,
+			"artifacts":    s.Artifacts,
+			"size":         s.TotalSize,
+			"attestations": s.Attestations,
+		}
+	}
+	return out.JSON(map[string]interface{}{
+		"dry_run":              true,
+		"output":               outputPath,
+		"stream":               mergeStream,
+		"source_packs":         sourceList,
+		"total_artifacts":      totals.Artifacts,
+		"total_size":           totals.Size,
+		"total_attestations":   totals.Attestations,
+		"include_attestations": mergeIncludeAttestations,
+	})
+}
+
+func outputMergeDryRunHuman(out *output.Writer, sources []merge.SourcePack, outputPath string, summaries []packSummary, totals mergeDryRunTotals) {
 	palette := out.Palette()
 	out.Print("Would merge %d pack(s) into %s\n\n", len(sources), outputPath)
 	out.Print("  Stream: %s\n", mergeStream)
@@ -257,24 +284,27 @@ func runMergeDryRun(sources []merge.SourcePack, outputPath string, out *output.W
 		out.Print("  %s\n", s.Path)
 		out.Print("    Stream: %s\n", palette.Dim(s.Stream))
 		out.Print("    Artifacts: %d (%s)\n", s.Artifacts, output.FormatBytes(s.TotalSize))
-		if s.Attestations > 0 {
-			if mergeIncludeAttestations {
-				out.Print("    Attestations: %d (will be embedded)\n", s.Attestations)
-			} else {
-				out.Print("    Attestations: %d (will NOT be embedded, use --include-attestations)\n", s.Attestations)
-			}
-		}
+		printDryRunAttestationSummary(out, s.Attestations)
 	}
 
 	out.Print("\n")
 	out.Print("%s\n", palette.Bold("Result:"))
-	out.Print("  Total artifacts: %d\n", totalArtifacts)
-	out.Print("  Total size: %s\n", output.FormatBytes(totalSize))
+	out.Print("  Total artifacts: %d\n", totals.Artifacts)
+	out.Print("  Total size: %s\n", output.FormatBytes(totals.Size))
 	if mergeIncludeAttestations {
-		out.Print("  Attestations: %d (will be embedded)\n", totalAttestations)
+		out.Print("  Attestations: %d (will be embedded)\n", totals.Attestations)
 	}
+}
 
-	return nil
+func printDryRunAttestationSummary(out *output.Writer, count int) {
+	if count == 0 {
+		return
+	}
+	if mergeIncludeAttestations {
+		out.Print("    Attestations: %d (will be embedded)\n", count)
+		return
+	}
+	out.Print("    Attestations: %d (will NOT be embedded, use --include-attestations)\n", count)
 }
 
 func resolveMergeStream(out *output.Writer) (string, error) {

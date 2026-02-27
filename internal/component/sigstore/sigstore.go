@@ -113,107 +113,96 @@ type LockedSigner struct {
 // identity binding. The caller MUST validate the returned claims themselves.
 // This mode should only be used when initially locking a component.
 func VerifyBundle(bundlePath, artifactPath string, expected *ExpectedIdentity) (*Result, error) {
-	// Load the bundle
 	b, err := bundle.LoadJSONFromPath(bundlePath)
 	if err != nil {
 		return nil, fmt.Errorf("loading sigstore bundle: %w", err)
 	}
-
-	// Get trusted root from TUF (Sigstore public good instance)
-	trustedRoot, err := root.FetchTrustedRoot()
+	sev, err := buildSigstoreVerifier()
 	if err != nil {
-		return nil, fmt.Errorf("fetching trusted root: %w", err)
+		return nil, err
 	}
-
-	// Create verifier
-	// For SLSA attestations, use transparency log verification instead of SCTs
-	// The SLSA builder records attestations in Rekor (transparency log)
-	sev, err := verify.NewVerifier(
-		trustedRoot,
-		verify.WithTransparencyLog(1),      // Require inclusion in Rekor
-		verify.WithIntegratedTimestamps(1), // Use log entry timestamps
-	)
-	if err != nil {
-		return nil, fmt.Errorf("creating verifier: %w", err)
-	}
-
-	// Open artifact for verification
 	artifact, err := os.Open(artifactPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening artifact: %w", err)
 	}
 	defer func() { _ = artifact.Close() }()
 
-	// Build verification policy
-	var policy verify.PolicyBuilder
-	if expected != nil {
-		// SECURE: Enforce identity binding - signature MUST come from expected source
-		// Use first trusted builder (currently only one supported)
-		if len(TrustedSLSABuilders) == 0 {
-			return nil, fmt.Errorf("no trusted SLSA builders configured")
-		}
-		sanMatcher, err := verify.NewSANMatcher("", TrustedSLSABuilders[0])
-		if err != nil {
-			return nil, fmt.Errorf("creating SAN matcher: %w", err)
-		}
-
-		// Match GitHub Actions OIDC issuer
-		issuerMatcher, err := verify.NewIssuerMatcher(GitHubActionsIssuer, "")
-		if err != nil {
-			return nil, fmt.Errorf("creating issuer matcher: %w", err)
-		}
-
-		// Also enforce certificate extensions for defense in depth
-		extensions := certificate.Extensions{
-			SourceRepositoryURI: expected.SourceRepositoryURI,
-			SourceRepositoryRef: expected.SourceRepositoryRef,
-		}
-		certID, err := verify.NewCertificateIdentity(sanMatcher, issuerMatcher, extensions)
-		if err != nil {
-			return nil, fmt.Errorf("creating certificate identity: %w", err)
-		}
-		policy = verify.NewPolicy(
-			verify.WithArtifact(artifact),
-			verify.WithCertificateIdentity(certID),
-		)
-	} else {
-		// INSECURE: No identity enforcement - only use for initial locking
-		// Caller MUST validate returned claims themselves
-		policy = verify.NewPolicy(
-			verify.WithArtifact(artifact),
-			verify.WithoutIdentitiesUnsafe(),
-		)
+	policy, err := buildVerificationPolicy(artifact, expected)
+	if err != nil {
+		return nil, err
 	}
-
-	// Verify the bundle
 	result, err := sev.Verify(b, policy)
 	if err != nil {
 		return nil, fmt.Errorf("sigstore verification failed: %w", err)
 	}
+	return extractVerificationResult(result)
+}
 
-	// Extract identity claims from certificate
+func buildSigstoreVerifier() (*verify.Verifier, error) {
+	trustedRoot, err := root.FetchTrustedRoot()
+	if err != nil {
+		return nil, fmt.Errorf("fetching trusted root: %w", err)
+	}
+	sev, err := verify.NewVerifier(
+		trustedRoot,
+		verify.WithTransparencyLog(1),
+		verify.WithIntegratedTimestamps(1),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("creating verifier: %w", err)
+	}
+	return sev, nil
+}
+
+func buildVerificationPolicy(artifact *os.File, expected *ExpectedIdentity) (verify.PolicyBuilder, error) {
+	var policy verify.PolicyBuilder
+	if expected == nil {
+		policy = verify.NewPolicy(
+			verify.WithArtifact(artifact),
+			verify.WithoutIdentitiesUnsafe(),
+		)
+		return policy, nil
+	}
+
+	if len(TrustedSLSABuilders) == 0 {
+		return policy, fmt.Errorf("no trusted SLSA builders configured")
+	}
+	sanMatcher, err := verify.NewSANMatcher("", TrustedSLSABuilders[0])
+	if err != nil {
+		return policy, fmt.Errorf("creating SAN matcher: %w", err)
+	}
+	issuerMatcher, err := verify.NewIssuerMatcher(GitHubActionsIssuer, "")
+	if err != nil {
+		return policy, fmt.Errorf("creating issuer matcher: %w", err)
+	}
+	extensions := certificate.Extensions{
+		SourceRepositoryURI: expected.SourceRepositoryURI,
+		SourceRepositoryRef: expected.SourceRepositoryRef,
+	}
+	certID, err := verify.NewCertificateIdentity(sanMatcher, issuerMatcher, extensions)
+	if err != nil {
+		return policy, fmt.Errorf("creating certificate identity: %w", err)
+	}
+
+	policy = verify.NewPolicy(
+		verify.WithArtifact(artifact),
+		verify.WithCertificateIdentity(certID),
+	)
+	return policy, nil
+}
+
+func extractVerificationResult(result *verify.VerificationResult) (*Result, error) {
 	cert := result.Signature.Certificate
 	if cert == nil {
 		return nil, fmt.Errorf("no certificate in verification result")
 	}
-
-	// Extract OIDC claims from certificate extensions
-	issuer := cert.Issuer
-	sourceRepoURI := cert.SourceRepositoryURI
-	sourceRepoRef := cert.SourceRepositoryRef
-
-	if issuer == "" {
+	if cert.Issuer == "" {
 		return nil, fmt.Errorf("certificate missing issuer claim")
 	}
-
-	// Note: When expected is non-nil, both SourceRepositoryURI and SourceRepositoryRef
-	// are enforced by the certificate identity policy above. The sigstore-go library
-	// validates that the certificate extensions match the expected values.
-
 	return &Result{
-		Issuer:              issuer,
-		SourceRepositoryURI: sourceRepoURI,
-		SourceRepositoryRef: sourceRepoRef,
+		Issuer:              cert.Issuer,
+		SourceRepositoryURI: cert.SourceRepositoryURI,
+		SourceRepositoryRef: cert.SourceRepositoryRef,
 	}, nil
 }
 

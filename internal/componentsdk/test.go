@@ -41,47 +41,9 @@ type TestResult struct {
 // Test runs conformance tests against a component binary.
 // If binaryPath is a directory, it builds the Go project first.
 func Test(ctx context.Context, opts TestOptions) (*TestResult, error) {
-	binaryPath := opts.BinaryPath
-
-	// Check if it's a directory (needs building)
-	info, err := os.Stat(binaryPath)
+	binaryPath, err := resolveTestBinary(ctx, opts)
 	if err != nil {
-		return nil, fmt.Errorf("checking path: %w", err)
-	}
-
-	if info.IsDir() {
-		projectDir := binaryPath
-		binaryPath = filepath.Join(projectDir, filepath.Base(projectDir))
-
-		// Check for go.mod
-		if !IsGoProject(projectDir) {
-			return nil, fmt.Errorf("directory mode requires a Go project (go.mod not found in %s)", projectDir)
-		}
-
-		if opts.OnBuildStart != nil {
-			opts.OnBuildStart()
-		}
-
-		buildCmd := exec.CommandContext(ctx, "go", "build", "-o", binaryPath, ".")
-		buildCmd.Dir = projectDir
-		buildCmd.Stdout = os.Stdout
-		buildCmd.Stderr = os.Stderr
-
-		if err := buildCmd.Run(); err != nil {
-			if opts.OnBuildFailed != nil {
-				opts.OnBuildFailed(err)
-			}
-			return nil, fmt.Errorf("build failed: %w", err)
-		}
-
-		if opts.OnBuildSuccess != nil {
-			opts.OnBuildSuccess()
-		}
-	} else {
-		// Check it's executable
-		if info.Mode()&0111 == 0 {
-			return nil, fmt.Errorf("binary is not executable: %s", binaryPath)
-		}
+		return nil, err
 	}
 
 	// Get component capabilities to determine type
@@ -94,20 +56,10 @@ func Test(ctx context.Context, opts TestOptions) (*TestResult, error) {
 		opts.OnTestStart(caps)
 	}
 
-	// Check if epack-conformance is installed
-	conformancePath, err := exec.LookPath("epack-conformance")
+	conformanceCmd, err := buildConformanceCommand(ctx, caps.Kind, binaryPath, opts.Verbose)
 	if err != nil {
-		return nil, fmt.Errorf("epack-conformance not found in PATH\n\nInstall with: go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest")
+		return nil, err
 	}
-
-	// Build conformance command args
-	conformanceArgs := []string{caps.Kind, binaryPath}
-	if opts.Verbose {
-		conformanceArgs = append([]string{"-v"}, conformanceArgs...)
-	}
-
-	// Run conformance tests
-	conformanceCmd := exec.CommandContext(ctx, conformancePath, conformanceArgs...)
 	conformanceCmd.Stdout = os.Stdout
 	conformanceCmd.Stderr = os.Stderr
 
@@ -123,4 +75,58 @@ func Test(ctx context.Context, opts TestOptions) (*TestResult, error) {
 	}
 
 	return result, nil
+}
+
+func resolveTestBinary(ctx context.Context, opts TestOptions) (string, error) {
+	info, err := os.Stat(opts.BinaryPath)
+	if err != nil {
+		return "", fmt.Errorf("checking path: %w", err)
+	}
+	if !info.IsDir() {
+		if info.Mode()&0111 == 0 {
+			return "", fmt.Errorf("binary is not executable: %s", opts.BinaryPath)
+		}
+		return opts.BinaryPath, nil
+	}
+	return buildProjectBinary(ctx, opts)
+}
+
+func buildProjectBinary(ctx context.Context, opts TestOptions) (string, error) {
+	projectDir := opts.BinaryPath
+	if !IsGoProject(projectDir) {
+		return "", fmt.Errorf("directory mode requires a Go project (go.mod not found in %s)", projectDir)
+	}
+	binaryPath := filepath.Join(projectDir, filepath.Base(projectDir))
+	if opts.OnBuildStart != nil {
+		opts.OnBuildStart()
+	}
+
+	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", binaryPath, ".")
+	buildCmd.Dir = projectDir
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+
+	if err := buildCmd.Run(); err != nil {
+		if opts.OnBuildFailed != nil {
+			opts.OnBuildFailed(err)
+		}
+		return "", fmt.Errorf("build failed: %w", err)
+	}
+	if opts.OnBuildSuccess != nil {
+		opts.OnBuildSuccess()
+	}
+	return binaryPath, nil
+}
+
+func buildConformanceCommand(ctx context.Context, kind, binaryPath string, verbose bool) (*exec.Cmd, error) {
+	conformancePath, err := exec.LookPath("epack-conformance")
+	if err != nil {
+		return nil, fmt.Errorf("epack-conformance not found in PATH\n\nInstall with: go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest")
+	}
+
+	args := []string{kind, binaryPath}
+	if verbose {
+		args = append([]string{"-v"}, args...)
+	}
+	return exec.CommandContext(ctx, conformancePath, args...), nil
 }

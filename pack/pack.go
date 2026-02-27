@@ -567,53 +567,57 @@ func validateStructure(zipReader *zip.Reader) error {
 	hasArtifacts := false
 
 	for _, f := range zipReader.File {
-		if f.Name == packpath.ArtifactsDir || strings.HasPrefix(f.Name, packpath.ArtifactsDir) {
+		if isArtifactEntry(f.Name) {
 			hasArtifacts = true
 		}
-
-		if f.Mode().IsDir() {
-			// Allow artifacts/ and attestations/ directory entries
-			if f.Name == packpath.ArtifactsDir || f.Name == packpath.Attestations {
-				continue
-			}
-			// Reject other directory entries at top level
-			if !strings.HasPrefix(f.Name, packpath.ArtifactsDir) && !strings.HasPrefix(f.Name, packpath.Attestations) {
-				return errors.E(errors.InvalidPath,
-					fmt.Sprintf("unexpected directory %q in pack", f.Name), nil)
-			}
-			continue
+		if err := validateStructureEntry(f); err != nil {
+			return err
 		}
-
-		if f.Name == packpath.Manifest {
-			continue
-		}
-
-		if strings.HasPrefix(f.Name, packpath.ArtifactsDir) {
-			continue
-		}
-
-		if remainder, ok := strings.CutPrefix(f.Name, packpath.Attestations); ok {
-			// Attestations must be direct children (no subdirectories)
-			if strings.Contains(remainder, "/") {
-				return errors.E(errors.InvalidPath,
-					fmt.Sprintf("invalid attestation file path %q: must be directly under attestations/", f.Name), nil)
-			}
-
-			if !strings.HasSuffix(remainder, packpath.SigstoreExt) {
-				return errors.E(errors.InvalidPath,
-					fmt.Sprintf("invalid attestation file name %q: must end with %s", f.Name, packpath.SigstoreExt), nil)
-			}
-			continue
-		}
-
-		return errors.E(errors.InvalidPath,
-			fmt.Sprintf("unexpected file %q in pack", f.Name), nil)
 	}
 
 	if !hasArtifacts {
 		return errors.E(errors.MissingRequiredField, "artifacts/ directory not found", nil)
 	}
 
+	return nil
+}
+
+func isArtifactEntry(name string) bool {
+	return name == packpath.ArtifactsDir || strings.HasPrefix(name, packpath.ArtifactsDir)
+}
+
+func validateStructureEntry(f *zip.File) error {
+	if f.Mode().IsDir() {
+		return validatePackDirectoryEntry(f.Name)
+	}
+	if f.Name == packpath.Manifest || strings.HasPrefix(f.Name, packpath.ArtifactsDir) {
+		return nil
+	}
+	if remainder, ok := strings.CutPrefix(f.Name, packpath.Attestations); ok {
+		return validateAttestationPath(f.Name, remainder)
+	}
+	return errors.E(errors.InvalidPath, fmt.Sprintf("unexpected file %q in pack", f.Name), nil)
+}
+
+func validatePackDirectoryEntry(name string) error {
+	if name == packpath.ArtifactsDir || name == packpath.Attestations {
+		return nil
+	}
+	if strings.HasPrefix(name, packpath.ArtifactsDir) || strings.HasPrefix(name, packpath.Attestations) {
+		return nil
+	}
+	return errors.E(errors.InvalidPath, fmt.Sprintf("unexpected directory %q in pack", name), nil)
+}
+
+func validateAttestationPath(name, remainder string) error {
+	if strings.Contains(remainder, "/") {
+		return errors.E(errors.InvalidPath,
+			fmt.Sprintf("invalid attestation file path %q: must be directly under attestations/", name), nil)
+	}
+	if !strings.HasSuffix(remainder, packpath.SigstoreExt) {
+		return errors.E(errors.InvalidPath,
+			fmt.Sprintf("invalid attestation file name %q: must end with %s", name, packpath.SigstoreExt), nil)
+	}
 	return nil
 }
 

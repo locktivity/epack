@@ -346,46 +346,45 @@ func ComputeFileDigest(path string) (string, error) {
 //   - No symlinks exist in the path from runDir to the file
 //   - The final path is a regular file (not dir, symlink, device, etc.)
 func ValidateOutputPath(runDir, outputPath string) error {
-	// 1. Must be relative
+	cleanPath, err := validateOutputPathBasics(outputPath)
+	if err != nil {
+		return err
+	}
+	return validateOutputRegularFile(runDir, cleanPath, outputPath)
+}
+
+func validateOutputPathBasics(outputPath string) (string, error) {
 	if filepath.IsAbs(outputPath) {
-		return fmt.Errorf("output path must be relative: %s", outputPath)
+		return "", fmt.Errorf("output path must be relative: %s", outputPath)
 	}
-
-	// 2. No Windows drive letters (e.g., "C:foo")
 	if filepath.VolumeName(outputPath) != "" {
-		return fmt.Errorf("output path must not have volume name: %s", outputPath)
+		return "", fmt.Errorf("output path must not have volume name: %s", outputPath)
 	}
-
-	// 3. Clean and check for traversal
 	cleanPath := filepath.Clean(outputPath)
 	if cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("output path escapes run directory: %s", outputPath)
+		return "", fmt.Errorf("output path escapes run directory: %s", outputPath)
 	}
+	return cleanPath, nil
+}
 
-	// 4. Use safefile for symlink-aware containment validation
-	// This validates:
-	//   - Path resolves within runDir
-	//   - No symlinks in path from runDir to file
-	//   - Final path is a regular file
+func validateOutputRegularFile(runDir, cleanPath, outputPath string) error {
 	_, err := safefile.ValidateRegularFile(runDir, cleanPath)
-	if err != nil {
-		// Translate error messages to match existing API contract
-		if os.IsNotExist(err) || strings.Contains(err.Error(), "does not exist") {
-			return fmt.Errorf("output file does not exist: %s", outputPath)
-		}
-		if strings.Contains(err.Error(), "symlink") {
-			return fmt.Errorf("output path contains symlink (not allowed): %s", outputPath)
-		}
-		if strings.Contains(err.Error(), "not a regular file") {
-			return fmt.Errorf("output path is not a regular file: %s", outputPath)
-		}
-		if strings.Contains(err.Error(), "escapes") || strings.Contains(err.Error(), "traversal") {
-			return fmt.Errorf("output path escapes run directory: %s", outputPath)
-		}
+	if err == nil {
+		return nil
+	}
+	errMsg := err.Error()
+	switch {
+	case os.IsNotExist(err) || strings.Contains(errMsg, "does not exist"):
+		return fmt.Errorf("output file does not exist: %s", outputPath)
+	case strings.Contains(errMsg, "symlink"):
+		return fmt.Errorf("output path contains symlink (not allowed): %s", outputPath)
+	case strings.Contains(errMsg, "not a regular file"):
+		return fmt.Errorf("output path is not a regular file: %s", outputPath)
+	case strings.Contains(errMsg, "escapes") || strings.Contains(errMsg, "traversal"):
+		return fmt.Errorf("output path escapes run directory: %s", outputPath)
+	default:
 		return fmt.Errorf("invalid output path %s: %w", outputPath, err)
 	}
-
-	return nil
 }
 
 // ComputeStatus determines the status based on errors, warnings, and exit code.

@@ -373,32 +373,14 @@ func (l *Locker) lockSourceComponent(
 	getExisting func() (version string, platforms map[string]componenttypes.LockedPlatform, exists bool),
 	updateEntry func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform),
 ) (*LockResult, error) {
-	owner, repo, versionConstraint, err := github.ParseSource(sourceRef)
+	resolved, err := l.resolveSourceComponentVersion(ctx, sourceRef, binaryLookupName, opts)
 	if err != nil {
 		return nil, err
 	}
-
-	source := fmt.Sprintf("%s/%s", owner, repo)
-	selectedTag, err := l.Registry.ResolveVersion(ctx, source, versionConstraint)
-	if err != nil {
-		return nil, fmt.Errorf("resolving version: %w", err)
-	}
-
-	release, err := l.Registry.FetchRelease(ctx, source, selectedTag)
-	if err != nil {
-		return nil, fmt.Errorf("fetching release %s: %w", selectedTag, err)
-	}
-
-	platforms := l.resolvePlatforms(opts, release, binaryLookupName)
-	if len(platforms) == 0 {
-		return nil, fmt.Errorf("no platforms to lock")
-	}
-
 	existingVersion, existingPlatforms, exists := getExisting()
-	isNew := !exists
-	updated := exists && existingVersion != selectedTag
-
-	lockedPlatforms, signer, err := l.lockSourcePlatforms(ctx, name, binaryLookupName, owner, repo, selectedTag, release, platforms, opts)
+	lockedPlatforms, signer, err := l.lockSourcePlatforms(
+		ctx, name, binaryLookupName, resolved.owner, resolved.repo, resolved.selectedTag, resolved.release, resolved.platforms, opts,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -406,30 +388,75 @@ func (l *Locker) lockSourceComponent(
 		return nil, fmt.Errorf("no platforms could be locked")
 	}
 
-	if exists && !opts.AllPlatforms {
-		for p, entry := range existingPlatforms {
-			if _, alreadyLocked := lockedPlatforms[p]; !alreadyLocked {
-				lockedPlatforms[p] = entry
-			}
+	mergeExistingPlatforms(lockedPlatforms, existingPlatforms, exists, opts.AllPlatforms)
+	updateEntry(BuildSourceURI(resolved.owner, resolved.repo), resolved.selectedTag, signer, lockedPlatforms)
+	return buildSourceLockResult(name, kind, resolved.selectedTag, lockedPlatforms, exists, existingVersion), nil
+}
+
+type resolvedSourceComponent struct {
+	owner       string
+	repo        string
+	selectedTag string
+	release     *ReleaseInfo
+	platforms   []string
+}
+
+func (l *Locker) resolveSourceComponentVersion(
+	ctx context.Context,
+	sourceRef, binaryLookupName string,
+	opts LockOpts,
+) (*resolvedSourceComponent, error) {
+	owner, repo, versionConstraint, err := github.ParseSource(sourceRef)
+	if err != nil {
+		return nil, err
+	}
+	source := fmt.Sprintf("%s/%s", owner, repo)
+	selectedTag, err := l.Registry.ResolveVersion(ctx, source, versionConstraint)
+	if err != nil {
+		return nil, fmt.Errorf("resolving version: %w", err)
+	}
+	release, err := l.Registry.FetchRelease(ctx, source, selectedTag)
+	if err != nil {
+		return nil, fmt.Errorf("fetching release %s: %w", selectedTag, err)
+	}
+	platforms := l.resolvePlatforms(opts, release, binaryLookupName)
+	if len(platforms) == 0 {
+		return nil, fmt.Errorf("no platforms to lock")
+	}
+	return &resolvedSourceComponent{
+		owner:       owner,
+		repo:        repo,
+		selectedTag: selectedTag,
+		release:     release,
+		platforms:   platforms,
+	}, nil
+}
+
+func mergeExistingPlatforms(lockedPlatforms, existingPlatforms map[string]componenttypes.LockedPlatform, exists, allPlatforms bool) {
+	if !exists || allPlatforms {
+		return
+	}
+	for p, entry := range existingPlatforms {
+		if _, alreadyLocked := lockedPlatforms[p]; !alreadyLocked {
+			lockedPlatforms[p] = entry
 		}
 	}
+}
 
-	updateEntry(BuildSourceURI(owner, repo), selectedTag, signer, lockedPlatforms)
-
+func buildSourceLockResult(name, kind, selectedTag string, lockedPlatforms map[string]componenttypes.LockedPlatform, exists bool, existingVersion string) *LockResult {
 	lockedPlatformNames := make([]string, 0, len(lockedPlatforms))
 	for p := range lockedPlatforms {
 		lockedPlatformNames = append(lockedPlatformNames, p)
 	}
 	sort.Strings(lockedPlatformNames)
-
 	return &LockResult{
 		Name:      name,
 		Kind:      kind,
 		Version:   selectedTag,
 		Platforms: lockedPlatformNames,
-		IsNew:     isNew,
-		Updated:   updated,
-	}, nil
+		IsNew:     !exists,
+		Updated:   exists && existingVersion != selectedTag,
+	}
 }
 
 func (l *Locker) lockSourcePlatforms(

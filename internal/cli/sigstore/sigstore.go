@@ -43,7 +43,6 @@ type VerifierConfig struct {
 func BuildVerifierOptions(cfg VerifierConfig) ([]verify.Option, error) {
 	var opts []verify.Option
 
-	// Load trust root from explicit path only (no env var fallback for security)
 	trOpt, err := LoadTrustRootOption(cfg.TrustRootPath)
 	if err != nil {
 		return nil, err
@@ -51,42 +50,41 @@ func BuildVerifierOptions(cfg VerifierConfig) ([]verify.Option, error) {
 	if trOpt != nil {
 		opts = append(opts, trOpt)
 	}
-
-	// Identity policy
-	if cfg.Identity.Issuer != "" {
-		opts = append(opts, verify.WithIssuer(cfg.Identity.Issuer))
+	if err := appendIdentityOptions(&opts, cfg.Identity); err != nil {
+		return nil, err
 	}
-	if cfg.Identity.IssuerRegexp != "" {
-		re, err := regexp.Compile(cfg.Identity.IssuerRegexp)
-		if err != nil {
-			return nil, fmt.Errorf("invalid issuer-regexp: %w", err)
-		}
-		opts = append(opts, verify.WithIssuerRegexp(re))
-	}
-	if cfg.Identity.Subject != "" {
-		opts = append(opts, verify.WithSubject(cfg.Identity.Subject))
-	}
-	if cfg.Identity.SubjectRegexp != "" {
-		re, err := regexp.Compile(cfg.Identity.SubjectRegexp)
-		if err != nil {
-			return nil, fmt.Errorf("invalid subject-regexp: %w", err)
-		}
-		opts = append(opts, verify.WithSubjectRegexp(re))
-	}
-
 	if cfg.Offline {
 		opts = append(opts, verify.WithOffline())
 	}
-
-	// Handle identity policy enforcement
-	if !cfg.Identity.HasPolicy() {
-		if cfg.InsecureSkipIdentityCheck {
-			opts = append(opts, verify.WithInsecureSkipIdentityCheckForTesting())
-		}
-		// If no policy and no skip flag, caller decides how to handle
+	if !cfg.Identity.HasPolicy() && cfg.InsecureSkipIdentityCheck {
+		opts = append(opts, verify.WithInsecureSkipIdentityCheckForTesting())
 	}
-
 	return opts, nil
+}
+
+func appendIdentityOptions(opts *[]verify.Option, identity IdentityPolicy) error {
+	if identity.Issuer != "" {
+		*opts = append(*opts, verify.WithIssuer(identity.Issuer))
+	}
+	if err := appendIdentityRegexpOption(opts, identity.IssuerRegexp, "issuer-regexp", verify.WithIssuerRegexp); err != nil {
+		return err
+	}
+	if identity.Subject != "" {
+		*opts = append(*opts, verify.WithSubject(identity.Subject))
+	}
+	return appendIdentityRegexpOption(opts, identity.SubjectRegexp, "subject-regexp", verify.WithSubjectRegexp)
+}
+
+func appendIdentityRegexpOption(opts *[]verify.Option, pattern, field string, fn func(*regexp.Regexp) verify.Option) error {
+	if pattern == "" {
+		return nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", field, err)
+	}
+	*opts = append(*opts, fn(re))
+	return nil
 }
 
 // LoadTrustRootOption loads a trust root from file and returns the option.

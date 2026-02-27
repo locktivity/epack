@@ -324,99 +324,95 @@ func (e *Executor) AuthWhoami(ctx context.Context) (*AuthWhoamiResponse, error) 
 
 // execute runs an adapter command with JSON stdin/stdout.
 func (e *Executor) execute(ctx context.Context, command string, req any, resp any) error {
-	// Rate limit adapter calls to prevent runaway invocations
-	if err := globalAdapterRateLimiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limit wait cancelled: %w", err)
+	ctx, cancel, reqJSON, err := prepareExecuteRequest(ctx, e, req)
+	if err != nil {
+		return err
 	}
+	defer cancel()
+	stdout, stderr, runErr := runAdapterCommand(ctx, e, command, reqJSON)
+	if runErr != nil {
+		return handleAdapterExecutionError(e.AdapterName, command, stdout, stderr, runErr)
+	}
+	if err := safejson.Unmarshal(stdout.Bytes(), limits.JSONResponse, resp); err != nil {
+		return fmt.Errorf("parsing adapter response: %w", err)
+	}
+	return parseAdapterErrorResponse(e.AdapterName, stdout.Bytes())
+}
 
+func prepareExecuteRequest(ctx context.Context, e *Executor, req any) (context.Context, context.CancelFunc, []byte, error) {
+	if err := globalAdapterRateLimiter.Wait(ctx); err != nil {
+		return nil, nil, nil, fmt.Errorf("rate limit wait cancelled: %w", err)
+	}
 	timeout := e.Timeout
 	if timeout == 0 {
 		timeout = DefaultTimeout
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// Marshal request to JSON
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("marshaling request: %w", err)
+		cancel()
+		return nil, nil, nil, fmt.Errorf("marshaling request: %w", err)
 	}
+	return timeoutCtx, cancel, reqJSON, nil
+}
 
-	// SECURITY: Use restricted environment to prevent credential exfiltration.
-	// Remote adapters are verified binaries but should only receive explicitly
-	// allowed environment variables, consistent with collector/tool execution.
-	// inheritPath=true because adapters may need to invoke system tools (git, etc.)
+func runAdapterCommand(ctx context.Context, e *Executor, command string, reqJSON []byte) (*bytes.Buffer, *bytes.Buffer, error) {
+	var stdout, stderr bytes.Buffer
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), true)
 	env = append(env, "EPACK_REMOTE_PROTOCOL_VERSION=1")
-
-	// Pass through configured secrets (e.g., LOCKTIVITY_OIDC_TOKEN).
-	// This enforces reserved-name filtering (EPACK_*, LD_*, etc.).
 	env = execsafe.AppendAllowedSecrets(env, e.Secrets, os.Getenv)
 
-	// Execute command
-	var stdout, stderr bytes.Buffer
 	stderrWriter := io.Writer(&stderr)
 	if e.Stderr != nil {
-		// SECURITY: Wrap user-facing stderr writer with redaction to prevent
-		// malicious adapters from emitting secrets in their stderr output.
 		stderrWriter = io.MultiWriter(&stderr, &redactingWriter{w: e.Stderr})
 	}
-
-	if err := procexec.Run(ctx, procexec.Spec{
+	err := procexec.Run(ctx, procexec.Spec{
 		Path:   e.BinaryPath,
 		Args:   []string{command},
 		Env:    env,
 		Stdin:  bytes.NewReader(reqJSON),
 		Stdout: &stdout,
 		Stderr: stderrWriter,
-	}); err != nil {
-		// Check for error response in stdout first
-		if stdout.Len() > 0 {
-			var errResp ErrorResponse
-			// SECURITY: Use safejson with size limits for error response parsing
-			if jsonErr := safejson.Unmarshal(stdout.Bytes(), limits.JSONResponse, &errResp); jsonErr == nil && !errResp.OK {
-				return &AdapterError{
-					AdapterName: e.AdapterName,
-					Code:        errResp.Error.Code,
-					Message:     errResp.Error.Message,
-					Retryable:   errResp.Error.Retryable,
-					Action:      errResp.Error.Action,
-				}
+	})
+	return &stdout, &stderr, err
+}
+
+func handleAdapterExecutionError(adapterName, command string, stdout, stderr *bytes.Buffer, runErr error) error {
+	if len(stdout.Bytes()) > 0 {
+		var errResp ErrorResponse
+		if err := safejson.Unmarshal(stdout.Bytes(), limits.JSONResponse, &errResp); err == nil && !errResp.OK {
+			return &AdapterError{
+				AdapterName: adapterName,
+				Code:        errResp.Error.Code,
+				Message:     errResp.Error.Message,
+				Retryable:   errResp.Error.Retryable,
+				Action:      errResp.Error.Action,
 			}
 		}
-		// SECURITY: Redact stderr in error messages to prevent secret leakage
-		return fmt.Errorf("adapter %q command %q failed: %w (stderr: %s)",
-			e.AdapterName, command, err, redact.Sensitive(stderr.String()))
 	}
+	return fmt.Errorf("adapter %q command %q failed: %w (stderr: %s)",
+		adapterName, command, runErr, redact.Sensitive(stderr.String()))
+}
 
-	// SECURITY: Use safejson with size limits to prevent memory exhaustion.
-	// Adapter output is untrusted - malicious adapters could emit huge JSON responses.
-	if err := safejson.Unmarshal(stdout.Bytes(), limits.JSONResponse, resp); err != nil {
-		return fmt.Errorf("parsing adapter response: %w", err)
-	}
-
-	// Check for error response
-	// We need to check if this is an error response by checking the "ok" field
+func parseAdapterErrorResponse(adapterName string, data []byte) error {
 	var rawResp struct {
 		OK    bool       `json:"ok"`
 		Type  string     `json:"type"`
 		Error *ErrorInfo `json:"error,omitempty"`
 	}
-	if err := safejson.Unmarshal(stdout.Bytes(), limits.JSONResponse, &rawResp); err == nil && !rawResp.OK {
-		if rawResp.Error != nil {
-			return &AdapterError{
-				AdapterName: e.AdapterName,
-				Code:        rawResp.Error.Code,
-				Message:     rawResp.Error.Message,
-				Retryable:   rawResp.Error.Retryable,
-				Action:      rawResp.Error.Action,
-			}
-		}
-		return fmt.Errorf("adapter %q returned error response", e.AdapterName)
+	if err := safejson.Unmarshal(data, limits.JSONResponse, &rawResp); err != nil || rawResp.OK {
+		return nil
 	}
-
-	return nil
+	if rawResp.Error == nil {
+		return fmt.Errorf("adapter %q returned error response", adapterName)
+	}
+	return &AdapterError{
+		AdapterName: adapterName,
+		Code:        rawResp.Error.Code,
+		Message:     rawResp.Error.Message,
+		Retryable:   rawResp.Error.Retryable,
+		Action:      rawResp.Error.Action,
+	}
 }
 
 // AdapterError represents a structured error from a remote adapter.

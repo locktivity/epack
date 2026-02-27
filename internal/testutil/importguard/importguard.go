@@ -149,36 +149,52 @@ func AssertRequiresImport(t *testing.T, triggerImport, requiredImport, reason st
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
-			continue
-		}
-		// Skip test files
-		if strings.HasSuffix(entry.Name(), "_test.go") {
+		if !isNonTestGoEntry(entry) {
 			continue
 		}
 
 		filePath := filepath.Join(wd, entry.Name())
-		file, err := parser.ParseFile(fset, filePath, nil, parser.ImportsOnly)
+		importPaths, err := parseFileImportsOnly(fset, filePath)
 		if err != nil {
 			t.Fatalf("parsing %s: %v", entry.Name(), err)
 		}
-
-		var hasTrigger, hasRequired bool
-		for _, imp := range file.Imports {
-			importPath := strings.Trim(imp.Path.Value, `"`)
-			if importPath == triggerImport {
-				hasTrigger = true
-			}
-			if strings.HasSuffix(importPath, requiredImport) {
-				hasRequired = true
-			}
-		}
-
+		hasTrigger, hasRequired := hasRequiredCompanionImport(importPaths, triggerImport, requiredImport)
 		if hasTrigger && !hasRequired {
 			t.Errorf("SECURITY: %s imports %s but not %s\n%s",
 				entry.Name(), triggerImport, requiredImport, reason)
 		}
 	}
+}
+
+func isNonTestGoEntry(entry os.DirEntry) bool {
+	name := entry.Name()
+	return !entry.IsDir() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+}
+
+func parseFileImportsOnly(fset *token.FileSet, filePath string) ([]string, error) {
+	file, err := parser.ParseFile(fset, filePath, nil, parser.ImportsOnly)
+	if err != nil {
+		return nil, err
+	}
+	importPaths := make([]string, 0, len(file.Imports))
+	for _, imp := range file.Imports {
+		importPaths = append(importPaths, strings.Trim(imp.Path.Value, `"`))
+	}
+	return importPaths, nil
+}
+
+func hasRequiredCompanionImport(importPaths []string, triggerImport, requiredImport string) (bool, bool) {
+	hasTrigger := false
+	hasRequired := false
+	for _, importPath := range importPaths {
+		if importPath == triggerImport {
+			hasTrigger = true
+		}
+		if strings.HasSuffix(importPath, requiredImport) {
+			hasRequired = true
+		}
+	}
+	return hasTrigger, hasRequired
 }
 
 // RepoRoot finds the repository root by looking for go.mod.
@@ -241,42 +257,7 @@ func AssertNoImportRepoWide(t *testing.T, forbiddenImport string, opts RepoWideO
 	var violations []string
 
 	err := filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			// Files/directories can disappear during traversal when tests create and
-			// clean up temp paths under the repo. Treat ENOENT as a benign race.
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-
-		if strings.Contains(path, "/vendor/") || !shouldScanFile(info, opts.IncludeTests, false) {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(repoRoot, path)
-		if err != nil {
-			return err
-		}
-
-		pkgPath := filepath.Dir(relPath)
-
-		// Check OnlyPackages filter
-		if len(onlyPkgs) > 0 && !onlyPkgs[pkgPath] {
-			return nil
-		}
-
-		// Check allowed packages
-		if allowed[pkgPath] {
-			return nil
-		}
-
-		matched, err := fileImportsMatch(fset, path, forbiddenImport, opts.ExactMatch)
-		if err == nil && matched {
-			violations = append(violations, relPath)
-		}
-
-		return nil
+		return scanRepoWideImportFile(path, info, err, repoRoot, forbiddenImport, opts, allowed, onlyPkgs, fset, &violations)
 	})
 
 	if err != nil {
@@ -296,6 +277,44 @@ func AssertNoImportRepoWide(t *testing.T, forbiddenImport string, opts RepoWideO
 			t.Error(msg)
 		}
 	}
+}
+
+func scanRepoWideImportFile(
+	path string,
+	info os.FileInfo,
+	err error,
+	repoRoot string,
+	forbiddenImport string,
+	opts RepoWideOptions,
+	allowed, onlyPkgs map[string]bool,
+	fset *token.FileSet,
+	violations *[]string,
+) error {
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if strings.Contains(path, "/vendor/") || !shouldScanFile(info, opts.IncludeTests, false) {
+		return nil
+	}
+	relPath, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		return err
+	}
+	pkgPath := filepath.Dir(relPath)
+	if len(onlyPkgs) > 0 && !onlyPkgs[pkgPath] {
+		return nil
+	}
+	if allowed[pkgPath] {
+		return nil
+	}
+	matched, err := fileImportsMatch(fset, path, forbiddenImport, opts.ExactMatch)
+	if err == nil && matched {
+		*violations = append(*violations, relPath)
+	}
+	return nil
 }
 
 // PackageScanOptions configures package-specific scanning.
@@ -326,65 +345,20 @@ func AssertNoImportsInPackages(t *testing.T, packages []string, forbiddenImports
 
 	fset := token.NewFileSet()
 
-	for _, pkg := range packages {
-		pkgPath := filepath.Join(repoRoot, pkg)
-		if _, err := os.Stat(pkgPath); os.IsNotExist(err) {
-			continue
+	scanPackageFiles(repoRoot, packages, opts, func(path, relPath string, info os.FileInfo) {
+		if isExemptPath(relPath, exemptFiles, exemptPkgs) {
+			return
 		}
-
-		walkFn := func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				if os.IsNotExist(err) {
-					return nil
-				}
-				return err
-			}
-
-			if !shouldScanFile(info, false, true) {
-				return nil
-			}
-
-			relPath, err := filepath.Rel(repoRoot, path)
-			if err != nil {
-				return err
-			}
-
-			if isExemptPath(relPath, exemptFiles, exemptPkgs) {
-				return nil
-			}
-
-			importPaths, err := parseImportPaths(fset, path)
-			if err != nil {
-				return nil
-			}
-			for _, importPath := range importPaths {
-				if containsAny(importPath, forbiddenImports) {
-					t.Errorf("SECURITY VIOLATION: %s imports %s\n%s", relPath, importPath, reason)
-				}
-			}
-
-			return nil
+		importPaths, err := parseImportPaths(fset, path)
+		if err != nil {
+			return
 		}
-
-		if opts.Recursive {
-			_ = filepath.Walk(pkgPath, walkFn)
-		} else {
-			entries, err := os.ReadDir(pkgPath)
-			if err != nil {
-				continue
-			}
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				info, err := entry.Info()
-				if err != nil {
-					continue
-				}
-				_ = walkFn(filepath.Join(pkgPath, entry.Name()), info, nil)
+		for _, importPath := range importPaths {
+			if containsAny(importPath, forbiddenImports) {
+				t.Errorf("SECURITY VIOLATION: %s imports %s\n%s", relPath, importPath, reason)
 			}
 		}
-	}
+	})
 }
 
 // AssertNoRiskyCallsInPackages scans specific packages for risky function calls.
@@ -404,64 +378,18 @@ func AssertNoRiskyCallsInPackages(t *testing.T, packages []string, riskyCalls []
 
 	fset := token.NewFileSet()
 
-	for _, pkg := range packages {
-		pkgPath := filepath.Join(repoRoot, pkg)
-		if _, err := os.Stat(pkgPath); os.IsNotExist(err) {
-			continue
+	scanPackageFiles(repoRoot, packages, opts, func(path, relPath string, info os.FileInfo) {
+		if isExemptPath(relPath, exemptFiles, exemptPkgs) {
+			return
 		}
-
-		walkFn := func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				if os.IsNotExist(err) {
-					return nil
-				}
-				return err
-			}
-
-			if !shouldScanFile(info, false, true) {
-				return nil
-			}
-
-			relPath, err := filepath.Rel(repoRoot, path)
-			if err != nil {
-				return err
-			}
-
-			if isExemptPath(relPath, exemptFiles, exemptPkgs) {
-				return nil
-			}
-
-			file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
-			if err != nil {
-				return nil
-			}
-
-			inspectRiskyCalls(file, fset, riskyMap, riskyImportMap, func(line int, pkgName, fn, reason string) {
-				t.Errorf("SECURITY: %s:%d uses %s.%s\n%s", relPath, line, pkgName, fn, reason)
-			})
-
-			return nil
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			return
 		}
-
-		if opts.Recursive {
-			_ = filepath.Walk(pkgPath, walkFn)
-		} else {
-			entries, err := os.ReadDir(pkgPath)
-			if err != nil {
-				continue
-			}
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				info, err := entry.Info()
-				if err != nil {
-					continue
-				}
-				_ = walkFn(filepath.Join(pkgPath, entry.Name()), info, nil)
-			}
-		}
-	}
+		inspectRiskyCalls(file, fset, riskyMap, riskyImportMap, func(line int, pkgName, fn, reason string) {
+			t.Errorf("SECURITY: %s:%d uses %s.%s\n%s", relPath, line, pkgName, fn, reason)
+		})
+	})
 }
 
 func makeSet(values []string) map[string]bool {
@@ -640,91 +568,84 @@ func AssertNoSelectorCallsInPackages(t *testing.T, packages []string, rules []Se
 	exemptPkgs := makeSet(opts.ExemptPackages)
 	fset := token.NewFileSet()
 
+	scanPackageFiles(repoRoot, packages, opts, func(path, relPath string, info os.FileInfo) {
+		if isExemptPath(relPath, exemptFiles, exemptPkgs) {
+			return
+		}
+		reportSelectorViolations(t, fset, path, relPath, rules)
+	})
+}
+
+func scanPackageFiles(repoRoot string, packages []string, opts PackageScanOptions, visit func(path, relPath string, info os.FileInfo)) {
 	for _, pkg := range packages {
 		pkgPath := filepath.Join(repoRoot, pkg)
 		if _, err := os.Stat(pkgPath); os.IsNotExist(err) {
 			continue
 		}
-
-		walkFn := func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				if os.IsNotExist(err) {
-					return nil
-				}
-				return err
+		_ = filepath.Walk(pkgPath, func(path string, info os.FileInfo, err error) error {
+			if !opts.Recursive && info != nil && info.IsDir() && path != pkgPath {
+				return filepath.SkipDir
 			}
+			return walkPackageFile(repoRoot, path, info, err, visit)
+		})
+	}
+}
 
-			if !shouldScanFile(info, false, true) {
-				return nil
-			}
-
-			relPath, err := filepath.Rel(repoRoot, path)
-			if err != nil {
-				return err
-			}
-			if isExemptPath(relPath, exemptFiles, exemptPkgs) {
-				return nil
-			}
-
-			file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly|parser.ParseComments)
-			if err != nil {
-				return nil
-			}
-			importPaths := make(map[string]bool, len(file.Imports))
-			for _, imp := range file.Imports {
-				importPaths[strings.Trim(imp.Path.Value, `"`)] = true
-			}
-
-			file, err = parser.ParseFile(fset, path, nil, parser.ParseComments)
-			if err != nil {
-				return nil
-			}
-
-			ast.Inspect(file, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-
-				for _, rule := range rules {
-					if !selectorAllowedByImports(rule.RequiredImports, importPaths) {
-						continue
-					}
-					if containsName(rule.SelectorNames, sel.Sel.Name) {
-						t.Errorf("SECURITY: %s:%d calls %s\n%s",
-							relPath, fset.Position(call.Pos()).Line, sel.Sel.Name, rule.Reason)
-					}
-				}
-
-				return true
-			})
-
+func walkPackageFile(repoRoot, path string, info os.FileInfo, err error, visit func(path, relPath string, info os.FileInfo)) error {
+	if err != nil {
+		if os.IsNotExist(err) {
 			return nil
 		}
+		return err
+	}
+	if !shouldScanFile(info, false, true) {
+		return nil
+	}
+	relPath, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		return err
+	}
+	visit(path, relPath, info)
+	return nil
+}
 
-		if opts.Recursive {
-			_ = filepath.Walk(pkgPath, walkFn)
-		} else {
-			entries, err := os.ReadDir(pkgPath)
-			if err != nil {
-				continue
-			}
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				info, err := entry.Info()
-				if err != nil {
-					continue
-				}
-				_ = walkFn(filepath.Join(pkgPath, entry.Name()), info, nil)
+func reportSelectorViolations(t *testing.T, fset *token.FileSet, path, relPath string, rules []SelectorCallRule) {
+	importPaths, err := parseFileImportSet(fset, path)
+	if err != nil {
+		return
+	}
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		for _, rule := range rules {
+			if selectorAllowedByImports(rule.RequiredImports, importPaths) && containsName(rule.SelectorNames, sel.Sel.Name) {
+				t.Errorf("SECURITY: %s:%d calls %s\n%s", relPath, fset.Position(call.Pos()).Line, sel.Sel.Name, rule.Reason)
 			}
 		}
+		return true
+	})
+}
+
+func parseFileImportSet(fset *token.FileSet, path string) (map[string]bool, error) {
+	file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly|parser.ParseComments)
+	if err != nil {
+		return nil, err
 	}
+	importPaths := make(map[string]bool, len(file.Imports))
+	for _, imp := range file.Imports {
+		importPaths[strings.Trim(imp.Path.Value, `"`)] = true
+	}
+	return importPaths, nil
 }
 
 func selectorAllowedByImports(requiredImports []string, imports map[string]bool) bool {

@@ -159,86 +159,86 @@ type CollectResult struct {
 
 // Run executes all collectors and returns their outputs.
 func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions) (*CollectResult, error) {
-	if err := (securitypolicy.ExecutionPolicy{
-		Frozen:        opts.Secure.Frozen,
-		AllowUnpinned: opts.Unsafe.AllowUnpinned,
-	}).Enforce(); err != nil {
+	if err := validateRunPolicy(cfg, opts); err != nil {
 		return nil, err
 	}
-	if err := securitypolicy.EnforceStrictProduction("collector",
-		opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnpinned || opts.Unsafe.AllowUnverifiedSourceCollectors || opts.Unsafe.InheritPath,
-	); err != nil {
-		return nil, err
-	}
-
-	// SECURITY: Defense-in-depth validation of config structure.
-	// Config should already be validated by LoadConfig/ParseConfig, but we
-	// validate again in case the config was constructed programmatically.
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
-	}
-
-	// Load lockfile
 	lf, err := r.loadLockfile(cfg, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	platform := platform.Key(runtime.GOOS, runtime.GOARCH)
-
-	// Validate in frozen mode
-	if opts.Secure.Frozen {
-		if err := r.validateFrozen(cfg, lf, platform); err != nil {
-			return nil, err
-		}
+	if err := r.validateFrozenIfNeeded(cfg, lf, platform, opts.Secure.Frozen); err != nil {
+		return nil, err
 	}
 
-	// Determine which collectors to run
 	collectors := r.selectCollectors(cfg, opts)
-
-	// Sort collector names for deterministic execution order.
-	// This ensures consistent behavior when aggregate budget limits are reached.
-	collectorNames := make([]string, 0, len(collectors))
-	for name := range collectors {
-		collectorNames = append(collectorNames, name)
-	}
-	sort.Strings(collectorNames)
-
-	// SECURITY: Enforce aggregate output budget to prevent memory exhaustion.
-	// Without this, N collectors each producing limits.MaxCollectorOutputBytes could
-	// cause OOM with N * 64 MB of retained output data.
-	aggregateBudget := opts.Secure.MaxAggregateBudget
-	if aggregateBudget == 0 {
-		aggregateBudget = limits.MaxAggregateOutputBytes
-	}
-	var aggregateUsed int64
-
+	collectorNames := sortedCollectorNames(collectors)
+	aggregateBudget := maxAggregateBudget(opts)
 	result := &CollectResult{
 		Stream:  cfg.Stream,
 		Results: make([]RunResult, 0, len(collectors)),
 	}
+	r.runCollectors(ctx, collectorNames, collectors, lf, platform, opts, aggregateBudget, result)
+	return result, nil
+}
 
+func validateRunPolicy(cfg *config.JobConfig, opts RunOptions) error {
+	if err := (securitypolicy.ExecutionPolicy{
+		Frozen:        opts.Secure.Frozen,
+		AllowUnpinned: opts.Unsafe.AllowUnpinned,
+	}).Enforce(); err != nil {
+		return err
+	}
+	if err := securitypolicy.EnforceStrictProduction("collector",
+		opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnpinned || opts.Unsafe.AllowUnverifiedSourceCollectors || opts.Unsafe.InheritPath,
+	); err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) validateFrozenIfNeeded(cfg *config.JobConfig, lf *lockfile.LockFile, platformKey string, frozen bool) error {
+	if !frozen {
+		return nil
+	}
+	return r.validateFrozen(cfg, lf, platformKey)
+}
+
+func sortedCollectorNames(collectors map[string]config.CollectorConfig) []string {
+	names := make([]string, 0, len(collectors))
+	for name := range collectors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func maxAggregateBudget(opts RunOptions) int64 {
+	if opts.Secure.MaxAggregateBudget != 0 {
+		return opts.Secure.MaxAggregateBudget
+	}
+	return limits.MaxAggregateOutputBytes
+}
+
+func (r *Runner) runCollectors(
+	ctx context.Context,
+	collectorNames []string,
+	collectors map[string]config.CollectorConfig,
+	lf *lockfile.LockFile,
+	platformKey string,
+	opts RunOptions,
+	aggregateBudget int64,
+	result *CollectResult,
+) {
+	var aggregateUsed int64
 	for _, name := range collectorNames {
 		idx := len(result.Results) + 1
 		collectorCfg := collectors[name]
-		// Check aggregate budget before running next collector
-		if aggregateUsed >= aggregateBudget {
-			runResult := RunResult{
-				Collector: name,
-				Success:   false,
-				Error: fmt.Errorf("aggregate output budget exceeded (%d bytes); skipping remaining collectors",
-					aggregateBudget),
-			}
-			result.Results = append(result.Results, runResult)
-			emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
-				Type:      CollectorEventFinish,
-				Collector: name,
-				Index:     idx,
-				Total:     len(collectorNames),
-				Success:   false,
-				Error:     runResult.Error,
-			})
-			result.Failures++
+		if r.skipCollectorForBudget(name, idx, len(collectorNames), aggregateUsed, aggregateBudget, opts.Progress.OnCollectorEvent, result) {
 			continue
 		}
 
@@ -249,23 +249,8 @@ func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions
 			Total:     len(collectorNames),
 		})
 		started := time.Now()
-		runResult := r.runOne(ctx, name, collectorCfg, lf, platform, opts)
-
-		// SECURITY: Enforce aggregate budget as a hard cap.
-		// If this collector's output would push us over budget, discard it.
-		if runResult.Success {
-			outputSize := int64(len(runResult.Output))
-			if aggregateUsed+outputSize > aggregateBudget {
-				// Discard output and mark as failed
-				runResult.Success = false
-				runResult.Output = nil
-				runResult.Error = fmt.Errorf("collector output (%d bytes) would exceed aggregate budget (%d/%d bytes used)",
-					outputSize, aggregateUsed, aggregateBudget)
-			} else {
-				aggregateUsed += outputSize
-			}
-		}
-
+		runResult := r.runOne(ctx, name, collectorCfg, lf, platformKey, opts)
+		aggregateUsed = enforceCollectorBudget(&runResult, aggregateUsed, aggregateBudget)
 		result.Results = append(result.Results, runResult)
 		emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
 			Type:      CollectorEventFinish,
@@ -280,8 +265,50 @@ func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions
 			result.Failures++
 		}
 	}
+}
 
-	return result, nil
+func (r *Runner) skipCollectorForBudget(
+	name string,
+	idx, total int,
+	aggregateUsed, aggregateBudget int64,
+	onEvent func(CollectorEvent),
+	result *CollectResult,
+) bool {
+	if aggregateUsed < aggregateBudget {
+		return false
+	}
+	runResult := RunResult{
+		Collector: name,
+		Success:   false,
+		Error: fmt.Errorf("aggregate output budget exceeded (%d bytes); skipping remaining collectors",
+			aggregateBudget),
+	}
+	result.Results = append(result.Results, runResult)
+	emitCollectorEvent(onEvent, CollectorEvent{
+		Type:      CollectorEventFinish,
+		Collector: name,
+		Index:     idx,
+		Total:     total,
+		Success:   false,
+		Error:     runResult.Error,
+	})
+	result.Failures++
+	return true
+}
+
+func enforceCollectorBudget(runResult *RunResult, aggregateUsed, aggregateBudget int64) int64 {
+	if !runResult.Success {
+		return aggregateUsed
+	}
+	outputSize := int64(len(runResult.Output))
+	if aggregateUsed+outputSize <= aggregateBudget {
+		return aggregateUsed + outputSize
+	}
+	runResult.Success = false
+	runResult.Output = nil
+	runResult.Error = fmt.Errorf("collector output (%d bytes) would exceed aggregate budget (%d/%d bytes used)",
+		outputSize, aggregateUsed, aggregateBudget)
+	return aggregateUsed
 }
 
 func emitCollectorEvent(fn func(CollectorEvent), evt CollectorEvent) {

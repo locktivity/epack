@@ -369,41 +369,25 @@ func validateRenameInputs(baseDir, srcPath, dstPath string) (string, string, err
 }
 
 func openContainedDir(baseDir, targetDir string, perm os.FileMode) (int, error) {
-	if _, err := validateContained(baseDir, targetDir); err != nil {
+	components, err := containedRelativeComponents(baseDir, targetDir)
+	if err != nil {
 		return -1, err
 	}
-	rel, err := filepath.Rel(baseDir, targetDir)
-	if err != nil {
-		return -1, fmt.Errorf("cannot make %s relative to %s: %w", targetDir, baseDir, err)
-	}
-
-	dirFd, err := unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	dirFd, err := openBaseDirectoryFD(baseDir)
 	if err != nil {
 		return -1, fmt.Errorf("opening base directory: %w", err)
 	}
-
-	if rel == "." {
+	if len(components) == 0 {
 		return dirFd, nil
 	}
-
-	for _, component := range strings.Split(rel, string(filepath.Separator)) {
-		if component == "" || component == "." {
-			continue
-		}
-		if err := unix.Mkdirat(dirFd, component, uint32(perm)); err != nil && err != unix.EEXIST {
-			_ = unix.Close(dirFd)
-			return -1, fmt.Errorf("creating directory %s: %w", component, err)
-		}
-		newFd, err := unix.Openat(dirFd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	for _, component := range components {
+		nextFD, err := ensureAndOpenChildDir(dirFd, component, perm)
 		if err != nil {
 			_ = unix.Close(dirFd)
-			if err == unix.ELOOP || err == unix.ENOTDIR {
-				return -1, errors.E(errors.SymlinkNotAllowed, fmt.Sprintf("symlink detected: %s", component), nil)
-			}
-			return -1, fmt.Errorf("opening directory %s: %w", component, err)
+			return -1, err
 		}
 		_ = unix.Close(dirFd)
-		dirFd = newFd
+		dirFd = nextFD
 	}
 	return dirFd, nil
 }
@@ -443,51 +427,73 @@ func writeAndSyncFD(fileFd int, data []byte, what string) error {
 }
 
 func mkdirAllInternal(baseDir, targetDir string, perm os.FileMode) error {
-	if _, err := validateContained(baseDir, targetDir); err != nil {
+	components, err := containedRelativeComponents(baseDir, targetDir)
+	if err != nil {
 		return err
 	}
-
-	rel, err := filepath.Rel(baseDir, targetDir)
-	if err != nil {
-		return fmt.Errorf("cannot make %s relative to %s: %w", targetDir, baseDir, err)
-	}
-
-	if rel == "." {
+	if len(components) == 0 {
 		return nil
 	}
 
-	components := strings.Split(rel, string(filepath.Separator))
-
-	dirFd, err := unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	dirFd, err := openBaseDirectoryFD(baseDir)
 	if err != nil {
 		return fmt.Errorf("opening base directory: %w", err)
 	}
 	defer func() { _ = unix.Close(dirFd) }()
 
 	for _, component := range components {
-		if component == "" || component == "." {
-			continue
-		}
-
-		err := unix.Mkdirat(dirFd, component, uint32(perm))
-		if err != nil && err != unix.EEXIST {
-			return fmt.Errorf("creating directory %s: %w", component, err)
-		}
-
-		newFd, err := unix.Openat(dirFd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+		newFd, err := ensureAndOpenChildDir(dirFd, component, perm)
 		if err != nil {
-			if err == unix.ELOOP || err == unix.ENOTDIR {
-				return errors.E(errors.SymlinkNotAllowed,
-					fmt.Sprintf("symlink detected: %s", component), nil)
-			}
-			return fmt.Errorf("opening directory %s: %w", component, err)
+			return err
 		}
-
 		_ = unix.Close(dirFd)
 		dirFd = newFd
 	}
 
 	return nil
+}
+
+func containedRelativeComponents(baseDir, targetDir string) ([]string, error) {
+	if _, err := validateContained(baseDir, targetDir); err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(baseDir, targetDir)
+	if err != nil {
+		return nil, fmt.Errorf("cannot make %s relative to %s: %w", targetDir, baseDir, err)
+	}
+	if rel == "." {
+		return nil, nil
+	}
+	return filterPathComponents(strings.Split(rel, string(filepath.Separator))), nil
+}
+
+func filterPathComponents(components []string) []string {
+	out := make([]string, 0, len(components))
+	for _, component := range components {
+		if component == "" || component == "." {
+			continue
+		}
+		out = append(out, component)
+	}
+	return out
+}
+
+func openBaseDirectoryFD(baseDir string) (int, error) {
+	return unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+}
+
+func ensureAndOpenChildDir(dirFd int, component string, perm os.FileMode) (int, error) {
+	if err := unix.Mkdirat(dirFd, component, uint32(perm)); err != nil && err != unix.EEXIST {
+		return -1, fmt.Errorf("creating directory %s: %w", component, err)
+	}
+	newFD, err := unix.Openat(dirFd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err == nil {
+		return newFD, nil
+	}
+	if err == unix.ELOOP || err == unix.ENOTDIR {
+		return -1, errors.E(errors.SymlinkNotAllowed, fmt.Sprintf("symlink detected: %s", component), nil)
+	}
+	return -1, fmt.Errorf("opening directory %s: %w", component, err)
 }
 
 func validateContained(baseDir, candidate string) (string, error) {

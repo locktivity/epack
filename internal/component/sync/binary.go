@@ -14,49 +14,50 @@ import (
 // InstallPath returns deterministic install location for source-based components.
 // All path components are validated to prevent path traversal attacks.
 func InstallPath(baseDir string, kind componenttypes.ComponentKind, name, version, binaryName string) (string, error) {
-	// Defense-in-depth: validate components even though they should be validated at load time
+	if err := validateInstallNames(kind, name, binaryName); err != nil {
+		return "", err
+	}
+	if err := validateInstallVersion(version); err != nil {
+		return "", err
+	}
+	return filepath.Join(baseDir, kind.Plural(), name, version, runtime.GOOS+"-"+runtime.GOARCH, binaryName), nil
+}
+
+func validateInstallNames(kind componenttypes.ComponentKind, name, binaryName string) error {
+	validateName, err := nameValidator(kind)
+	if err != nil {
+		return err
+	}
+	if err := validateName(name); err != nil {
+		return fmt.Errorf("invalid %s name: %w", kind, err)
+	}
+	if err := validateName(binaryName); err != nil {
+		return fmt.Errorf("invalid binary name: %w", err)
+	}
+	return nil
+}
+
+func nameValidator(kind componenttypes.ComponentKind) (func(string) error, error) {
 	switch kind {
 	case componenttypes.KindCollector:
-		if err := config.ValidateCollectorName(name); err != nil {
-			return "", fmt.Errorf("invalid %s name: %w", kind, err)
-		}
-		if err := config.ValidateCollectorName(binaryName); err != nil {
-			return "", fmt.Errorf("invalid binary name: %w", err)
-		}
+		return config.ValidateCollectorName, nil
 	case componenttypes.KindTool:
-		if err := config.ValidateToolName(name); err != nil {
-			return "", fmt.Errorf("invalid %s name: %w", kind, err)
-		}
-		if err := config.ValidateToolName(binaryName); err != nil {
-			return "", fmt.Errorf("invalid binary name: %w", err)
-		}
+		return config.ValidateToolName, nil
 	case componenttypes.KindRemote:
-		if err := config.ValidateRemoteName(name); err != nil {
-			return "", fmt.Errorf("invalid %s name: %w", kind, err)
-		}
-		// Remote binary names are epack-remote-<adapter>, validate the adapter part
-		if err := config.ValidateRemoteName(binaryName); err != nil {
-			return "", fmt.Errorf("invalid binary name: %w", err)
-		}
+		return config.ValidateRemoteName, nil
 	default:
-		return "", fmt.Errorf("unknown component kind: %s", kind)
+		return nil, fmt.Errorf("unknown component kind: %s", kind)
 	}
+}
 
+func validateInstallVersion(version string) error {
 	if version == "" {
-		return "", fmt.Errorf("version cannot be empty")
+		return fmt.Errorf("version cannot be empty")
 	}
 	if err := config.ValidateVersion(version); err != nil {
-		return "", fmt.Errorf("invalid version: %w", err)
+		return fmt.Errorf("invalid version: %w", err)
 	}
-
-	return filepath.Join(
-		baseDir,
-		kind.Plural(),
-		name,
-		version,
-		runtime.GOOS+"-"+runtime.GOARCH,
-		binaryName,
-	), nil
+	return nil
 }
 
 // ResolveBinaryPath resolves a collector binary path from config + lockfile.

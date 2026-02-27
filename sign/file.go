@@ -45,66 +45,85 @@ func SignPackFileWithOptions(ctx context.Context, packPath string, s Signer, opt
 		return errors.E(errors.InvalidInput, "signer cannot be nil", nil)
 	}
 
-	maxMemory := opts.MaxMemoryBytes
-	if maxMemory <= 0 {
-		maxMemory = limits.DefaultSigningMemoryLimit
+	snapshot, manifest, err := loadSigningSnapshot(packPath, effectiveSigningMemoryLimit(opts))
+	if err != nil {
+		return err
 	}
+	statementJSON, filename, err := buildSigningPayload(manifest, s.Identity())
+	if err != nil {
+		return err
+	}
+	bundleJSON, err := signPayload(ctx, s, statementJSON)
+	if err != nil {
+		return err
+	}
+	if err := writeZipFromSnapshot(packPath, snapshot, filename, bundleJSON); err != nil {
+		return fmt.Errorf("adding attestation to pack: %w", err)
+	}
+	return nil
+}
 
+func effectiveSigningMemoryLimit(opts MemoryLimitOptions) int64 {
+	if opts.MaxMemoryBytes > 0 {
+		return opts.MaxMemoryBytes
+	}
+	return limits.DefaultSigningMemoryLimit
+}
+
+func loadSigningSnapshot(packPath string, maxMemory int64) (map[string]*snapshotEntry, *pack.Manifest, error) {
 	p, err := pack.Open(packPath)
 	if err != nil {
-		return fmt.Errorf("opening pack: %w", err)
+		return nil, nil, fmt.Errorf("opening pack: %w", err)
 	}
 	defer func() { _ = p.Close() }()
 
 	zipReader := p.Zip()
 	if zipReader == nil {
-		return errors.E(errors.InvalidInput, "pack was not opened from a file", nil)
+		return nil, nil, errors.E(errors.InvalidInput, "pack was not opened from a file", nil)
 	}
 
 	snapshot, err := snapshotZipContentsWithLimit(zipReader, maxMemory)
 	if err != nil {
-		return fmt.Errorf("snapshotting pack contents: %w", err)
+		return nil, nil, fmt.Errorf("snapshotting pack contents: %w", err)
 	}
 
-	// Verify against snapshot bytes to prevent TOCTOU
 	manifest, err := verifySnapshotIntegrity(snapshot)
 	if err != nil {
-		return fmt.Errorf("pack integrity check failed (refusing to sign): %w", err)
+		return nil, nil, fmt.Errorf("pack integrity check failed (refusing to sign): %w", err)
 	}
+	return snapshot, manifest, nil
+}
 
+func buildSigningPayload(manifest *pack.Manifest, identity string) ([]byte, string, error) {
 	statement, err := NewStatement(manifest.PackDigest, manifest.Stream)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
 	statementJSON, err := json.Marshal(statement)
 	if err != nil {
-		return fmt.Errorf("marshaling statement: %w", err)
+		return nil, "", fmt.Errorf("marshaling statement: %w", err)
 	}
+	filename, err := safeAttestationFilename(identity)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid signer identity: %w", err)
+	}
+	return statementJSON, filename, nil
+}
 
+func signPayload(ctx context.Context, s Signer, statementJSON []byte) ([]byte, error) {
 	bundle, err := s.Sign(ctx, statementJSON)
 	if err != nil {
-		return fmt.Errorf("signing: %w", err)
+		return nil, fmt.Errorf("signing: %w", err)
 	}
 	if bundle == nil {
-		return errors.E(errors.InvalidInput, "signer returned nil bundle", nil)
+		return nil, errors.E(errors.InvalidInput, "signer returned nil bundle", nil)
 	}
-
 	bundleJSON, err := MarshalBundle(bundle)
 	if err != nil {
-		return fmt.Errorf("marshaling bundle: %w", err)
+		return nil, fmt.Errorf("marshaling bundle: %w", err)
 	}
-
-	filename, err := safeAttestationFilename(s.Identity())
-	if err != nil {
-		return fmt.Errorf("invalid signer identity: %w", err)
-	}
-
-	if err := writeZipFromSnapshot(packPath, snapshot, filename, bundleJSON); err != nil {
-		return fmt.Errorf("adding attestation to pack: %w", err)
-	}
-
-	return nil
+	return bundleJSON, nil
 }
 
 // snapshotEntry holds a single file's contents and metadata from a zip archive.
@@ -139,51 +158,49 @@ func snapshotZipContentsWithLimit(zr *zip.Reader, maxTotalBytes int64) (map[stri
 		if f.Mode().IsDir() {
 			continue
 		}
-
-		if f.UncompressedSize64 > uint64(perEntryLimit) {
-			return nil, errors.E(errors.ArtifactTooLarge,
-				fmt.Sprintf("entry %q declared size %d exceeds limit %d", f.Name, f.UncompressedSize64, perEntryLimit), nil)
-		}
-
-		remaining := maxTotalBytes - totalBytes
-		if remaining <= 0 {
-			return nil, errors.E(errors.ZipBomb,
-				fmt.Sprintf("aggregate size exceeds signing memory limit %d bytes", maxTotalBytes), nil)
-		}
-
-		reader, err := f.Open()
+		content, err := readSnapshotEntry(f, perEntryLimit, maxTotalBytes-totalBytes, maxTotalBytes)
 		if err != nil {
-			return nil, fmt.Errorf("opening %s: %w", f.Name, err)
+			return nil, err
 		}
-
-		// +1 to detect oversized entries after decompression
-		readLimit := perEntryLimit + 1
-		if remaining < readLimit {
-			readLimit = remaining + 1
-		}
-		limited := io.LimitReader(reader, readLimit)
-		content, err := io.ReadAll(limited)
-		_ = reader.Close() // Error intentionally ignored; content already read
-		if err != nil {
-			return nil, fmt.Errorf("reading %s: %w", f.Name, err)
-		}
-		if int64(len(content)) > perEntryLimit {
-			return nil, errors.E(errors.ArtifactTooLarge,
-				fmt.Sprintf("entry %q exceeds size limit %d bytes", f.Name, perEntryLimit), nil)
-		}
-
 		totalBytes += int64(len(content))
-		if totalBytes > maxTotalBytes {
-			return nil, errors.E(errors.ZipBomb,
-				fmt.Sprintf("aggregate size %d exceeds signing memory limit %d bytes", totalBytes, maxTotalBytes), nil)
-		}
-
-		snapshot[f.Name] = &snapshotEntry{
-			header:  f.FileHeader,
-			content: content,
-		}
+		snapshot[f.Name] = &snapshotEntry{header: f.FileHeader, content: content}
 	}
 	return snapshot, nil
+}
+
+func readSnapshotEntry(f *zip.File, perEntryLimit, remaining, maxTotalBytes int64) ([]byte, error) {
+	if f.UncompressedSize64 > uint64(perEntryLimit) {
+		return nil, errors.E(errors.ArtifactTooLarge,
+			fmt.Sprintf("entry %q declared size %d exceeds limit %d", f.Name, f.UncompressedSize64, perEntryLimit), nil)
+	}
+	if remaining <= 0 {
+		return nil, errors.E(errors.ZipBomb,
+			fmt.Sprintf("aggregate size exceeds signing memory limit %d bytes", maxTotalBytes), nil)
+	}
+
+	reader, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", f.Name, err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	readLimit := perEntryLimit + 1
+	if remaining < readLimit {
+		readLimit = remaining + 1
+	}
+	content, err := io.ReadAll(io.LimitReader(reader, readLimit))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", f.Name, err)
+	}
+	if int64(len(content)) > perEntryLimit {
+		return nil, errors.E(errors.ArtifactTooLarge,
+			fmt.Sprintf("entry %q exceeds size limit %d bytes", f.Name, perEntryLimit), nil)
+	}
+	if int64(len(content)) > remaining {
+		return nil, errors.E(errors.ZipBomb,
+			fmt.Sprintf("aggregate size exceeds signing memory limit %d bytes", maxTotalBytes), nil)
+	}
+	return content, nil
 }
 
 // verifySnapshotIntegrity verifies pack integrity against snapshot bytes.

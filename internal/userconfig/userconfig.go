@@ -200,7 +200,6 @@ func ParseUtilitiesLock(data []byte) (*UtilitiesLock, error) {
 // This includes name validation, platform count limits, version validation, and timestamp validation.
 // Iterates in sorted order for deterministic error messages.
 func (lf *UtilitiesLock) validateUtilitiesForParse() error {
-	// Sort keys for deterministic error messages
 	names := make([]string, 0, len(lf.Utilities))
 	for name := range lf.Utilities {
 		names = append(names, name)
@@ -208,36 +207,41 @@ func (lf *UtilitiesLock) validateUtilitiesForParse() error {
 	sort.Strings(names)
 
 	for _, name := range names {
-		u := lf.Utilities[name]
-
-		// Validate utility name to prevent path traversal
-		if err := config.ValidateUtilityName(name); err != nil {
-			return fmt.Errorf("utilities lockfile contains invalid name %q: %w", name, err)
+		if err := validateUtilityForParse(name, lf.Utilities[name]); err != nil {
+			return err
 		}
+	}
+	return nil
+}
 
-		// SECURITY: Enforce platform count limit
-		if len(u.Platforms) > limits.MaxPlatformCount {
-			return fmt.Errorf("utility %q has %d platforms, exceeds limit of %d",
-				name, len(u.Platforms), limits.MaxPlatformCount)
+func validateUtilityForParse(name string, u componenttypes.LockedUtility) error {
+	if err := config.ValidateUtilityName(name); err != nil {
+		return fmt.Errorf("utilities lockfile contains invalid name %q: %w", name, err)
+	}
+	if len(u.Platforms) > limits.MaxPlatformCount {
+		return fmt.Errorf("utility %q has %d platforms, exceeds limit of %d",
+			name, len(u.Platforms), limits.MaxPlatformCount)
+	}
+	if u.Version != "" {
+		if err := config.ValidateVersion(u.Version); err != nil {
+			return fmt.Errorf("utility %q has invalid version: %w", name, err)
 		}
+	}
+	if err := validateUtilityTimestamps(name, u); err != nil {
+		return err
+	}
+	return nil
+}
 
-		// Validate version to prevent path traversal
-		if u.Version != "" {
-			if err := config.ValidateVersion(u.Version); err != nil {
-				return fmt.Errorf("utility %q has invalid version: %w", name, err)
-			}
+func validateUtilityTimestamps(name string, u componenttypes.LockedUtility) error {
+	if u.LockedAt != "" {
+		if err := timestamp.Validate(u.LockedAt); err != nil {
+			return fmt.Errorf("utility %q has invalid locked_at timestamp: %w", name, err)
 		}
-
-		// Validate timestamp formats if present
-		if u.LockedAt != "" {
-			if err := timestamp.Validate(u.LockedAt); err != nil {
-				return fmt.Errorf("utility %q has invalid locked_at timestamp: %w", name, err)
-			}
-		}
-		if u.Verification != nil && u.Verification.VerifiedAt != "" {
-			if err := timestamp.Validate(u.Verification.VerifiedAt); err != nil {
-				return fmt.Errorf("utility %q has invalid verified_at timestamp: %w", name, err)
-			}
+	}
+	if u.Verification != nil && u.Verification.VerifiedAt != "" {
+		if err := timestamp.Validate(u.Verification.VerifiedAt); err != nil {
+			return fmt.Errorf("utility %q has invalid verified_at timestamp: %w", name, err)
 		}
 	}
 	return nil

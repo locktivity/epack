@@ -102,58 +102,76 @@ type DigestInfo struct {
 //  2. Missing digest: allowed only with InsecureAllowUnpinned, never in frozen mode
 //  3. Frozen mode: all components must have a digest
 func CheckSecurity(kind ComponentKind, name string, info DigestInfo, opts VerifyOptions) error {
-	// PATH-based component checks
-	if info.IsPATHBased {
-		if opts.Secure.Frozen {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("%s %q uses PATH-based discovery (not allowed in --frozen mode)", kind, name),
-				fmt.Sprintf("Configure a source for this %s in epack.yaml and run 'epack lock && epack sync'", kind), nil)
-		}
-		if !opts.Unsafe.AllowUnpinned {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("%s %q not found in lockfile", kind, name),
-				fmt.Sprintf("Run 'epack lock' to pin all %ss, or use --insecure-allow-unpinned for development", kind.Plural()), nil)
-		}
-		// PATH-based allowed with explicit opt-in
+	if err := checkPATHBasedSecurity(kind, name, info, opts); err != nil {
+		return err
+	}
+	if err := checkSourceDigestSecurity(kind, name, info, opts); err != nil {
+		return err
+	}
+	if err := checkExternalSecurity(kind, name, info, opts); err != nil {
+		return err
+	}
+	return checkFrozenVerificationSecurity(kind, name, info, opts)
+}
+
+func checkPATHBasedSecurity(kind ComponentKind, name string, info DigestInfo, opts VerifyOptions) error {
+	if !info.IsPATHBased {
 		return nil
 	}
-
-	// Source-based component with missing digest
-	if info.IsSourceBased && info.MissingDigest {
-		if opts.Secure.Frozen {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("%s %q missing digest in lockfile (required in --frozen mode)", kind, name),
-				"Run 'epack lock' to compute and pin digests", nil)
-		}
-		if !opts.Unsafe.AllowUnpinned {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("%s %q missing digest in lockfile", kind, name),
-				"Run 'epack lock' to compute and pin digests, or use --insecure-allow-unpinned for development", nil)
-		}
-	}
-
-	// External component without lockfile pinning
-	if info.IsExternal && info.Digest == "" {
-		if opts.Secure.Frozen {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("external %s %q is not pinned in lockfile (required in --frozen mode)", kind, name),
-				fmt.Sprintf("Run 'epack %s lock' to pin external %ss", kind, kind.Plural()), nil)
-		}
-		if !opts.Unsafe.AllowUnpinned {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-				fmt.Sprintf("external %s %q is not pinned in lockfile", kind, name),
-				fmt.Sprintf("Run 'epack %s lock' to pin external %ss, or use --insecure-allow-unpinned", kind, kind.Plural()), nil)
-		}
-	}
-
-	// Frozen mode: all components must be verifiable
-	if opts.Secure.Frozen && info.NeedsVerification && info.Digest == "" {
+	if opts.Secure.Frozen {
 		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
-			fmt.Sprintf("%s %q not pinned in lockfile (required in --frozen mode)", kind, name),
-			fmt.Sprintf("Run 'epack lock' to pin all %ss", kind.Plural()), nil)
+			fmt.Sprintf("%s %q uses PATH-based discovery (not allowed in --frozen mode)", kind, name),
+			fmt.Sprintf("Configure a source for this %s in epack.yaml and run 'epack lock && epack sync'", kind), nil)
 	}
+	if opts.Unsafe.AllowUnpinned {
+		return nil
+	}
+	return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		fmt.Sprintf("%s %q not found in lockfile", kind, name),
+		fmt.Sprintf("Run 'epack lock' to pin all %ss, or use --insecure-allow-unpinned for development", kind.Plural()), nil)
+}
 
-	return nil
+func checkSourceDigestSecurity(kind ComponentKind, name string, info DigestInfo, opts VerifyOptions) error {
+	if !info.IsSourceBased || !info.MissingDigest {
+		return nil
+	}
+	if opts.Secure.Frozen {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("%s %q missing digest in lockfile (required in --frozen mode)", kind, name),
+			"Run 'epack lock' to compute and pin digests", nil)
+	}
+	if opts.Unsafe.AllowUnpinned {
+		return nil
+	}
+	return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		fmt.Sprintf("%s %q missing digest in lockfile", kind, name),
+		"Run 'epack lock' to compute and pin digests, or use --insecure-allow-unpinned for development", nil)
+}
+
+func checkExternalSecurity(kind ComponentKind, name string, info DigestInfo, opts VerifyOptions) error {
+	if !info.IsExternal || info.Digest != "" {
+		return nil
+	}
+	if opts.Secure.Frozen {
+		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			fmt.Sprintf("external %s %q is not pinned in lockfile (required in --frozen mode)", kind, name),
+			fmt.Sprintf("Run 'epack %s lock' to pin external %ss", kind, kind.Plural()), nil)
+	}
+	if opts.Unsafe.AllowUnpinned {
+		return nil
+	}
+	return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		fmt.Sprintf("external %s %q is not pinned in lockfile", kind, name),
+		fmt.Sprintf("Run 'epack %s lock' to pin external %ss, or use --insecure-allow-unpinned", kind, kind.Plural()), nil)
+}
+
+func checkFrozenVerificationSecurity(kind ComponentKind, name string, info DigestInfo, opts VerifyOptions) error {
+	if !opts.Secure.Frozen || !info.NeedsVerification || info.Digest != "" {
+		return nil
+	}
+	return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		fmt.Sprintf("%s %q not pinned in lockfile (required in --frozen mode)", kind, name),
+		fmt.Sprintf("Run 'epack lock' to pin all %ss", kind.Plural()), nil)
 }
 
 // WarnUnpinnedExecution prints a warning when executing an unpinned component.

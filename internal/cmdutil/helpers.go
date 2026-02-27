@@ -11,6 +11,7 @@ import (
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
+	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/spf13/cobra"
 )
@@ -172,49 +173,51 @@ func FilterConfigComponents(cfg *config.JobConfig, names []string) (*config.JobC
 // LockfileNeedsUpdate checks if the lockfile needs updating for the given config.
 // This checks both collectors and tools.
 func LockfileNeedsUpdate(cfg *config.JobConfig, lf *lockfile.LockFile, currentPlatform string) bool {
-	// Determine required platforms
-	platforms := cfg.Platforms
-	if len(platforms) == 0 {
-		platforms = []string{currentPlatform}
+	platforms := requiredPlatforms(cfg.Platforms, currentPlatform)
+	if hasCollectorLockfileGap(cfg, lf, platforms) {
+		return true
 	}
+	return hasToolLockfileGap(cfg, lf, platforms)
+}
 
-	// Check each source collector
+func requiredPlatforms(platforms []string, currentPlatform string) []string {
+	if len(platforms) > 0 {
+		return platforms
+	}
+	return []string{currentPlatform}
+}
+
+func hasCollectorLockfileGap(cfg *config.JobConfig, lf *lockfile.LockFile, platforms []string) bool {
 	for name, c := range cfg.Collectors {
 		if c.Source == "" {
-			continue // External binary, skip
+			continue
 		}
-
 		locked, ok := lf.GetCollector(name)
-		if !ok {
-			return true // Collector not in lockfile
-		}
-
-		// Check if all required platforms are present
-		for _, platform := range platforms {
-			if _, hasPlatform := locked.Platforms[platform]; !hasPlatform {
-				return true // Platform missing
-			}
+		if !ok || missingRequiredPlatforms(locked.Platforms, platforms) {
+			return true
 		}
 	}
+	return false
+}
 
-	// Check each source tool
+func hasToolLockfileGap(cfg *config.JobConfig, lf *lockfile.LockFile, platforms []string) bool {
 	for name, t := range cfg.Tools {
 		if t.Source == "" {
-			continue // External binary, skip
+			continue
 		}
-
 		locked, ok := lf.GetTool(name)
-		if !ok {
-			return true // Tool not in lockfile
-		}
-
-		// Check if all required platforms are present
-		for _, platform := range platforms {
-			if _, hasPlatform := locked.Platforms[platform]; !hasPlatform {
-				return true // Platform missing
-			}
+		if !ok || missingRequiredPlatforms(locked.Platforms, platforms) {
+			return true
 		}
 	}
+	return false
+}
 
+func missingRequiredPlatforms(locked map[string]componenttypes.LockedPlatform, required []string) bool {
+	for _, platform := range required {
+		if _, hasPlatform := locked[platform]; !hasPlatform {
+			return true
+		}
+	}
 	return false
 }

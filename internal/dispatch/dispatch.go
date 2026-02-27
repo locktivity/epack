@@ -105,78 +105,87 @@ func ToolWithFlags(ctx context.Context, out Output, toolName string, toolArgs []
 // dispatchVerifiedTool executes a tool with TOCTOU-safe digest verification
 // and full Tool Protocol v1 support.
 func dispatchVerifiedTool(ctx context.Context, out Output, toolName string, toolArgs []string, workDir string, toolCfg config.ToolConfig, lf *lockfile.LockFile, flags WrapperFlags) error {
-	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
-
-	packPath := flags.PackPath
-	absPackPath, runID, runDir, err := prepareDispatchRunContext(out, toolName, flags, packPath)
+	prepared, err := prepareVerifiedToolDispatch(out, toolName, toolArgs, workDir, toolCfg, lf, flags)
 	if err != nil {
 		return err
 	}
-
-	locked, platformEntry, err := resolveToolLockfileEntry(out, lf, toolName, platformKey, runID, runDir, absPackPath, flags)
-	if err != nil {
-		return err
+	if prepared.cleanup != nil {
+		defer prepared.cleanup()
+	}
+	if prepared.configCleanup != nil {
+		defer prepared.configCleanup()
 	}
 
-	execPath, cleanup, err := resolveToolExecPath(out, workDir, lf, toolName, toolCfg, locked.Version, platformEntry, runID, runDir, absPackPath, flags)
-	if err != nil {
-		return err
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-
-	caps, requiresPack, toolVersion := resolveToolCapabilities(execPath, locked.Version)
-	if err := validateToolInputs(out, toolName, runID, runDir, packPath, absPackPath, toolVersion, requiresPack, caps); err != nil {
-		return err
-	}
-
-	packDigest, err := verifyPackAndGetDigest(out, toolName, runID, runDir, packPath, absPackPath, toolVersion)
-	if err != nil {
-		return err
-	}
-
-	// Record start time BEFORE execution
-	startedAt := time.Now().UTC()
-
-	// Write config file if tool has config
-	configFilePath, configCleanup, err := writeToolConfig(toolCfg)
-	if err != nil {
-		return writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
-			componenttypes.ExitConfigFailed, componenttypes.ErrCodeConfigFailed,
-			fmt.Sprintf("writing tool config: %v", err))
-	}
-	if configCleanup != nil {
-		defer configCleanup()
-	}
-
-	// Build protocol environment
-	env := buildProtocolEnv(toolName, runID, runDir, absPackPath, packDigest, startedAt, toolCfg, configFilePath, flags)
-
-	// Build tool arguments: if --pack was used, prepend absolute path
-	finalToolArgs := toolArgs
-	if flags.PackPath != "" && absPackPath != "" {
-		finalToolArgs = append([]string{absPackPath}, toolArgs...)
-	}
-
-	// Execute tool and capture exit code
 	binaryName := componenttypes.BinaryName(componenttypes.KindTool, toolName)
-	toolExitCode, execErr := execToolWithProtocol(ctx, execPath, binaryName, finalToolArgs, env, runDir)
-
-	// Record completion time
+	toolExitCode, execErr := execToolWithProtocol(ctx, prepared.execPath, binaryName, prepared.finalToolArgs, prepared.env, prepared.runDir)
 	completedAt := time.Now().UTC()
-
-	// Process result.json (validate or backfill)
-	// Use toolVersion from capabilities (with fallback to locked.Version set above)
-	wrapperExitCode, result := processToolResult(out, toolName, runID, runDir, absPackPath, startedAt, completedAt, toolExitCode, toolVersion, execErr)
-
-	// Print run summary (respects quiet mode)
-	printRunSummary(out, result, runDir, flags.QuietMode)
-
+	wrapperExitCode, result := processToolResult(out, toolName, prepared.runID, prepared.runDir, prepared.absPackPath, prepared.startedAt, completedAt, toolExitCode, prepared.toolVersion, execErr)
+	printRunSummary(out, result, prepared.runDir, flags.QuietMode)
 	if wrapperExitCode != 0 {
 		return &errors.Error{Code: errors.InvalidInput, Exit: wrapperExitCode, Message: fmt.Sprintf("tool exited with code %d", wrapperExitCode)}
 	}
 	return nil
+}
+
+type verifiedDispatchPrepared struct {
+	runID         string
+	runDir        string
+	absPackPath   string
+	execPath      string
+	toolVersion   string
+	startedAt     time.Time
+	env           []string
+	finalToolArgs []string
+	cleanup       func()
+	configCleanup func()
+}
+
+func prepareVerifiedToolDispatch(out Output, toolName string, toolArgs []string, workDir string, toolCfg config.ToolConfig, lf *lockfile.LockFile, flags WrapperFlags) (*verifiedDispatchPrepared, error) {
+	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
+	packPath := flags.PackPath
+	absPackPath, runID, runDir, err := prepareDispatchRunContext(out, toolName, flags, packPath)
+	if err != nil {
+		return nil, err
+	}
+	locked, platformEntry, err := resolveToolLockfileEntry(out, lf, toolName, platformKey, runID, runDir, absPackPath, flags)
+	if err != nil {
+		return nil, err
+	}
+	execPath, cleanup, err := resolveToolExecPath(out, workDir, lf, toolName, toolCfg, locked.Version, platformEntry, runID, runDir, absPackPath, flags)
+	if err != nil {
+		return nil, err
+	}
+	caps, requiresPack, toolVersion := resolveToolCapabilities(execPath, locked.Version)
+	if err := validateToolInputs(out, toolName, runID, runDir, packPath, absPackPath, toolVersion, requiresPack, caps); err != nil {
+		return nil, err
+	}
+	packDigest, err := verifyPackAndGetDigest(out, toolName, runID, runDir, packPath, absPackPath, toolVersion)
+	if err != nil {
+		return nil, err
+	}
+	startedAt := time.Now().UTC()
+	configFilePath, configCleanup, err := writeToolConfig(toolCfg)
+	if err != nil {
+		return nil, writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
+			componenttypes.ExitConfigFailed, componenttypes.ErrCodeConfigFailed,
+			fmt.Sprintf("writing tool config: %v", err))
+	}
+	finalToolArgs := toolArgs
+	if flags.PackPath != "" && absPackPath != "" {
+		finalToolArgs = append([]string{absPackPath}, toolArgs...)
+	}
+	return &verifiedDispatchPrepared{
+		runID:         runID,
+		runDir:        runDir,
+		absPackPath:   absPackPath,
+		execPath:      execPath,
+		toolVersion:   toolVersion,
+		startedAt:     startedAt,
+		env:           buildProtocolEnv(toolName, runID, runDir, absPackPath, packDigest, startedAt, toolCfg, configFilePath, flags),
+		finalToolArgs: finalToolArgs,
+		cleanup:       cleanup,
+		configCleanup: configCleanup,
+	}, nil
 }
 
 func prepareDispatchRunContext(out Output, toolName string, flags WrapperFlags, packPath string) (absPackPath, runID, runDir string, err error) {
