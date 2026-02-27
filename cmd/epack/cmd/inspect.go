@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/pack"
@@ -148,7 +149,11 @@ func printInspectSources(out *output.Writer, palette *output.Palette, sources []
 	out.Section("Sources")
 	for _, s := range sources {
 		if s.Version != "" {
-			out.Print("  %s %s\n", s.Name, palette.Dim("v"+s.Version))
+			version := s.Version
+			if !strings.HasPrefix(version, "v") {
+				version = "v" + version
+			}
+			out.Print("  %s %s\n", s.Name, palette.Dim(version))
 		} else {
 			out.Print("  %s\n", s.Name)
 		}
