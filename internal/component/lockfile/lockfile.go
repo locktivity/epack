@@ -31,6 +31,7 @@ type LockedCollector struct {
 	Kind         string                                   `yaml:"kind,omitempty"` // "external" or empty for source-based
 	Source       string                                   `yaml:"source,omitempty"`
 	Version      string                                   `yaml:"version,omitempty"`
+	Commit       string                                   `yaml:"commit,omitempty"` // Git commit SHA for supply chain provenance
 	Signer       *componenttypes.LockedSigner             `yaml:"signer,omitempty"`
 	ResolvedFrom *componenttypes.ResolvedFrom             `yaml:"resolved_from,omitempty"`
 	Verification *componenttypes.Verification             `yaml:"verification,omitempty"`
@@ -45,6 +46,7 @@ type LockedTool struct {
 	Kind         string                                   `yaml:"kind,omitempty"` // "external" or empty for source-based
 	Source       string                                   `yaml:"source,omitempty"`
 	Version      string                                   `yaml:"version,omitempty"`
+	Commit       string                                   `yaml:"commit,omitempty"` // Git commit SHA for supply chain provenance
 	Signer       *componenttypes.LockedSigner             `yaml:"signer,omitempty"`
 	ResolvedFrom *componenttypes.ResolvedFrom             `yaml:"resolved_from,omitempty"`
 	Verification *componenttypes.Verification             `yaml:"verification,omitempty"`
@@ -58,6 +60,7 @@ type LockedRemote struct {
 	Kind         string                                   `yaml:"kind,omitempty"` // "external" or empty for source-based
 	Source       string                                   `yaml:"source,omitempty"`
 	Version      string                                   `yaml:"version,omitempty"`
+	Commit       string                                   `yaml:"commit,omitempty"` // Git commit SHA for supply chain provenance
 	Signer       *componenttypes.LockedSigner             `yaml:"signer,omitempty"`
 	ResolvedFrom *componenttypes.ResolvedFrom             `yaml:"resolved_from,omitempty"`
 	Verification *componenttypes.Verification             `yaml:"verification,omitempty"`
@@ -474,6 +477,7 @@ type LockedComponentInfo struct {
 	Kind         string
 	Source       string
 	Version      string
+	Commit       string
 	Signer       *componenttypes.LockedSigner
 	ResolvedFrom *componenttypes.ResolvedFrom
 	Verification *componenttypes.Verification
@@ -495,6 +499,7 @@ func (lf *LockFile) GetComponentInfo(kind componenttypes.ComponentKind, name str
 			Kind:         c.Kind,
 			Source:       c.Source,
 			Version:      c.Version,
+			Commit:       c.Commit,
 			Signer:       copySigner(c.Signer),
 			ResolvedFrom: copyResolvedFrom(c.ResolvedFrom),
 			Verification: copyVerification(c.Verification),
@@ -510,6 +515,7 @@ func (lf *LockFile) GetComponentInfo(kind componenttypes.ComponentKind, name str
 			Kind:         t.Kind,
 			Source:       t.Source,
 			Version:      t.Version,
+			Commit:       t.Commit,
 			Signer:       copySigner(t.Signer),
 			ResolvedFrom: copyResolvedFrom(t.ResolvedFrom),
 			Verification: copyVerification(t.Verification),
@@ -525,6 +531,7 @@ func (lf *LockFile) GetComponentInfo(kind componenttypes.ComponentKind, name str
 			Kind:         r.Kind,
 			Source:       r.Source,
 			Version:      r.Version,
+			Commit:       r.Commit,
 			Signer:       copySigner(r.Signer),
 			ResolvedFrom: copyResolvedFrom(r.ResolvedFrom),
 			Verification: copyVerification(r.Verification),

@@ -15,9 +15,12 @@ type Manifest struct {
 
 // Source represents a source collector that contributed artifacts.
 type Source struct {
-	Name      string   `json:"name"`
-	Version   string   `json:"version"`
-	Artifacts []string `json:"artifacts,omitempty"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Source       string   `json:"source,omitempty"`       // Repository path (e.g., "github.com/locktivity/epack-collector-aws")
+	Commit       string   `json:"commit,omitempty"`       // Git commit SHA that built the collector binary
+	BinaryDigest string   `json:"binary_digest,omitempty"` // SHA256 digest of the collector binary
+	Artifacts    []string `json:"artifacts,omitempty"`
 }
 
 // Artifact represents an artifact in the manifest.

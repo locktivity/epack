@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/locktivity/epack/internal/component/config"
@@ -572,10 +574,12 @@ func syncRuns(
 
 // findRuns finds run result files for syncing.
 func findRuns(packPath string, cfg *config.RemoteConfig, extraPaths []string) ([]remote.RunInfo, error) {
-	// Default paths
+	// Default paths match where CreateRunDir places results:
+	// - tools/**/result.json for pack-based tool runs
+	// - runs/**/result.json for packless runs (stored in sidecar)
 	paths := cfg.Runs.Paths
 	if len(paths) == 0 {
-		paths = []string{".epack/runs/**/result.json"}
+		paths = []string{"tools/**/result.json", "runs/**/result.json"}
 	}
 	paths = append(paths, extraPaths...)
 
@@ -591,7 +595,7 @@ func findRuns(packPath string, cfg *config.RemoteConfig, extraPaths []string) ([
 			pattern = filepath.Join(baseDir, pattern)
 		}
 
-		matches, err := filepath.Glob(pattern)
+		matches, err := globWithDoublestar(pattern)
 		if err != nil {
 			continue // Invalid pattern, skip
 		}
@@ -628,6 +632,104 @@ func findRuns(packPath string, cfg *config.RemoteConfig, extraPaths []string) ([
 	}
 
 	return runs, nil
+}
+
+// globWithDoublestar handles glob patterns with ** for recursive directory matching.
+// Unlike filepath.Glob, this properly handles ** to match any number of directories.
+func globWithDoublestar(pattern string) ([]string, error) {
+	// If pattern doesn't contain **, use standard glob
+	if !strings.Contains(pattern, "**") {
+		return filepath.Glob(pattern)
+	}
+
+	var matches []string
+	baseDir := doublestarBaseDir(pattern)
+	err := filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		matched, matchErr := matchDoublestar(pattern, path)
+		if matchErr != nil {
+			return nil
+		}
+		if matched {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+
+	return matches, err
+}
+
+func doublestarBaseDir(pattern string) string {
+	cleanPattern := filepath.Clean(pattern)
+	sep := string(filepath.Separator)
+	parts := strings.Split(cleanPattern, sep)
+	var baseParts []string
+	for _, part := range parts {
+		if strings.ContainsAny(part, "*?[") {
+			break
+		}
+		baseParts = append(baseParts, part)
+	}
+	if len(baseParts) == 0 {
+		if filepath.IsAbs(cleanPattern) {
+			return sep
+		}
+		return "."
+	}
+	baseDir := filepath.Join(baseParts...)
+	if filepath.IsAbs(cleanPattern) {
+		return sep + baseDir
+	}
+	return baseDir
+}
+
+func matchDoublestar(pattern, p string) (bool, error) {
+	patternParts := strings.Split(filepath.ToSlash(filepath.Clean(pattern)), "/")
+	pathParts := strings.Split(filepath.ToSlash(filepath.Clean(p)), "/")
+	return matchDoublestarParts(patternParts, pathParts)
+}
+
+func matchDoublestarParts(patternParts, pathParts []string) (bool, error) {
+	if len(patternParts) == 0 {
+		return len(pathParts) == 0, nil
+	}
+
+	part := patternParts[0]
+	if part == "**" {
+		if len(patternParts) == 1 {
+			return true, nil
+		}
+		for i := 0; i <= len(pathParts); i++ {
+			matched, err := matchDoublestarParts(patternParts[1:], pathParts[i:])
+			if err != nil {
+				return false, err
+			}
+			if matched {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	if len(pathParts) == 0 {
+		return false, nil
+	}
+
+	matched, err := path.Match(part, pathParts[0])
+	if err != nil {
+		return false, err
+	}
+	if !matched {
+		return false, nil
+	}
+
+	return matchDoublestarParts(patternParts[1:], pathParts[1:])
 }
 
 // computeSHA256 computes SHA256 digest of data.

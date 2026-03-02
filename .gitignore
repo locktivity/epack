@@ -8,6 +8,7 @@
 # Test artifacts
 *.pack
 *.test
+result.json
 
 # IDE
 .idea/

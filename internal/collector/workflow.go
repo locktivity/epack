@@ -267,22 +267,38 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 
 	b := builder.New(cfg.Stream)
 
-	// Load lockfile to get collector versions for source metadata
+	// Load lockfile to get collector versions and digests for source metadata
 	lockfilePath := filepath.Join(workDir, lockfile.FileName)
 	lf, _ := lockfile.Load(lockfilePath) // Ignore error; sources are optional
 
-	// Add each collector as a source with its version from the lockfile
+	// Get current platform for binary digest lookup
+	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
+
+	// Add each collector as a source with its version and provenance from the lockfile
 	for _, r := range runResult.Results {
 		if !r.Success {
 			continue
 		}
 		version := ""
+		source := ""
+		commit := ""
+		binaryDigest := ""
 		if lf != nil {
 			if locked, ok := lf.GetCollector(r.Collector); ok {
 				version = locked.Version
+				source = locked.Source
+				commit = locked.Commit
+				// Get the binary digest for the current platform
+				if platformEntry, ok := locked.Platforms[platformKey]; ok {
+					binaryDigest = platformEntry.Digest
+				}
 			}
 		}
-		b.AddSource(r.Collector, version)
+		b.AddSourceWithOptions(r.Collector, version, builder.SourceOptions{
+			Source:       source,
+			Commit:       commit,
+			BinaryDigest: binaryDigest,
+		})
 	}
 
 	// Add each collector's output as an artifact using shared helper

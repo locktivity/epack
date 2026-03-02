@@ -74,6 +74,27 @@ func (b *Builder) AddSource(name, version string) *Builder {
 	return b
 }
 
+// SourceOptions contains optional provenance fields for a source collector.
+type SourceOptions struct {
+	Source       string // Repository path (e.g., "github.com/locktivity/epack-collector-aws")
+	Commit       string // Git commit SHA that built the collector binary
+	BinaryDigest string // SHA256 digest of the collector binary (sha256:hex format)
+}
+
+// AddSourceWithOptions adds a source collector with provenance information.
+// The source, commit, and binary_digest fields provide cryptographic proof of which
+// exact binary produced the artifacts, enabling supply chain verification.
+func (b *Builder) AddSourceWithOptions(name, version string, opts SourceOptions) *Builder {
+	b.sources = append(b.sources, pack.Source{
+		Name:         name,
+		Version:      version,
+		Source:       opts.Source,
+		Commit:       opts.Commit,
+		BinaryDigest: opts.BinaryDigest,
+	})
+	return b
+}
+
 // SetProvenance sets the provenance for the manifest.
 // Use this when creating merged packs to document source packs.
 func (b *Builder) SetProvenance(prov pack.Provenance) *Builder {

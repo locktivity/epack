@@ -21,6 +21,10 @@ type CollectorSpec struct {
 	// Version is the semantic version (e.g., "1.0.0").
 	Version string
 
+	// Commit is the git commit SHA that built this binary.
+	// Set via ldflags at build time for supply chain provenance.
+	Commit string
+
 	// Description is a human-readable description of what the collector gathers.
 	Description string
 
@@ -247,6 +251,10 @@ func outputCollectorCapabilities(spec CollectorSpec) int {
 		"version":          spec.Version,
 		"protocol_version": componenttypes.CollectorProtocolVersion,
 		"description":      spec.Description,
+	}
+	// Include commit if set (for supply chain provenance)
+	if spec.Commit != "" {
+		caps["commit"] = spec.Commit
 	}
 
 	enc := json.NewEncoder(os.Stdout)

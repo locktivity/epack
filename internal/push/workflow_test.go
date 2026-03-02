@@ -2,6 +2,7 @@ package push
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -235,4 +236,56 @@ func TestUploadSkip_Integration(t *testing.T) {
 	// 2. Push workflow skips the HTTP upload step entirely
 	// 3. Push.finalize is still called to create the release
 	// 4. User sees success without re-uploading bytes
+}
+
+func TestGlobWithDoublestar(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "tools/aws/run1/result.json"), "{}")
+	mustWriteFile(t, filepath.Join(root, "tools/aws/run1/nested/result.json"), "{}")
+	mustWriteFile(t, filepath.Join(root, "runs/local/run2/result.json"), "{}")
+	mustWriteFile(t, filepath.Join(root, "tools/aws/run1/other.txt"), "x")
+
+	tests := []struct {
+		name    string
+		pattern string
+		want    int
+	}{
+		{
+			name:    "recursive result files",
+			pattern: filepath.Join(root, "tools/**/result.json"),
+			want:    2,
+		},
+		{
+			name:    "nested suffix after doublestar",
+			pattern: filepath.Join(root, "tools/**/nested/result.json"),
+			want:    1,
+		},
+		{
+			name:    "multiple doublestar segments",
+			pattern: filepath.Join(root, "**/run*/**/result.json"),
+			want:    3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := globWithDoublestar(tt.pattern)
+			if err != nil {
+				t.Fatalf("globWithDoublestar() error: %v", err)
+			}
+			if len(got) != tt.want {
+				t.Fatalf("globWithDoublestar(%q) got %d matches, want %d: %v", tt.pattern, len(got), tt.want, got)
+			}
+		})
+	}
+}
+
+func mustWriteFile(t *testing.T, p, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", p, err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", p, err)
+	}
 }
