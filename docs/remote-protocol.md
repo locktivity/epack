@@ -75,7 +75,7 @@ remotes:
       notes: "Monthly SOC2 evidence"
     runs:
       sync: true
-      paths: [".epack/runs/**/result.json"]
+      paths: ["tools/**/result.json", "runs/**/result.json"]
 ```
 
 ### Configuration Fields

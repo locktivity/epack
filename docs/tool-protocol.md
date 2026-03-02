@@ -662,7 +662,7 @@ The `epack tool list` command displays trust badges:
 ```
 NAME     VERSION   TRUST
 ai      v1.2.3    ✓ sigstore_signed
-policy   v0.8.0    ○ digest_pinned
+policy   v0.1.22   ○ digest_pinned
 custom   external  × unverified
 ```
 

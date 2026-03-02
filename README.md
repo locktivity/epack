@@ -35,7 +35,7 @@
 brew install locktivity/tap/epack
 
 # Go
-go install -tags components github.com/locktivity/epack/cmd/epack@latest
+go install -tags components github.com/locktivity/epack/cmd/epack@v0.1.22
 
 # Binary releases (with SLSA Level 3 provenance)
 # → github.com/locktivity/epack/releases
@@ -171,7 +171,7 @@ import (
 // Build
 b := builder.New("myorg/stream")
 b.AddFile("./config.json")
-b.Write("evidence.epack")
+b.Build("evidence.epack")
 
 // Read and verify
 p, _ := pack.Open("evidence.epack")
