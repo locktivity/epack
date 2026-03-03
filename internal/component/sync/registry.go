@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"strings"
 
 	"github.com/locktivity/epack/internal/component/github"
 	"github.com/locktivity/epack/internal/component/semver"
@@ -40,6 +41,9 @@ type RegistryClient interface {
 type ReleaseInfo struct {
 	// Version is the resolved version tag (e.g., "v1.2.3").
 	Version string
+
+	// Commit is the git commit SHA the release points to (if available).
+	Commit string
 
 	// Assets contains platform-specific binaries and their metadata.
 	Assets []AssetInfo
@@ -147,6 +151,7 @@ func (r *GitHubRegistry) FetchRelease(ctx context.Context, source, version strin
 
 	info := &ReleaseInfo{
 		Version: release.TagName,
+		Commit:  normalizeCommitSHA(release.TargetCommitish),
 		Assets:  make([]AssetInfo, 0, len(release.Assets)),
 	}
 
@@ -161,6 +166,22 @@ func (r *GitHubRegistry) FetchRelease(ctx context.Context, source, version strin
 	}
 
 	return info, nil
+}
+
+func normalizeCommitSHA(v string) string {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return ""
+	}
+	if len(s) < 7 || len(s) > 40 {
+		return ""
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return ""
+		}
+	}
+	return strings.ToLower(s)
 }
 
 // DownloadAsset downloads a release asset to the specified path.

@@ -187,10 +187,11 @@ func (l *Locker) lockSourceCollector(ctx context.Context, name string, cfg confi
 			existing, exists := lf.GetCollector(name)
 			return existing.Version, existing.Platforms, exists
 		},
-		func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
+		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Collectors[name] = lockfile.LockedCollector{
 				Source:    sourceURI,
 				Version:   selectedTag,
+				Commit:    commit,
 				Signer:    signer,
 				LockedAt:  timestamp.Now().String(),
 				Platforms: platforms,
@@ -289,10 +290,11 @@ func (l *Locker) lockSourceTool(ctx context.Context, name string, cfg config.Too
 			existing, exists := lf.GetTool(name)
 			return existing.Version, existing.Platforms, exists
 		},
-		func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
+		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Tools[name] = lockfile.LockedTool{
 				Source:    sourceURI,
 				Version:   selectedTag,
+				Commit:    commit,
 				Signer:    signer,
 				LockedAt:  timestamp.Now().String(),
 				Platforms: platforms,
@@ -355,10 +357,11 @@ func (l *Locker) lockSourceRemote(ctx context.Context, name string, cfg config.R
 			existing, exists := lf.GetRemote(name)
 			return existing.Version, existing.Platforms, exists
 		},
-		func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
+		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Remotes[name] = lockfile.LockedRemote{
 				Source:    sourceURI,
 				Version:   selectedTag,
+				Commit:    commit,
 				Signer:    signer,
 				LockedAt:  timestamp.Now().String(),
 				Platforms: platforms,
@@ -371,7 +374,7 @@ func (l *Locker) lockSourceComponent(
 	name, sourceRef, binaryLookupName, kind string,
 	opts LockOpts,
 	getExisting func() (version string, platforms map[string]componenttypes.LockedPlatform, exists bool),
-	updateEntry func(sourceURI, selectedTag string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform),
+	updateEntry func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform),
 ) (*LockResult, error) {
 	resolved, err := l.resolveSourceComponentVersion(ctx, sourceRef, binaryLookupName, opts)
 	if err != nil {
@@ -389,7 +392,7 @@ func (l *Locker) lockSourceComponent(
 	}
 
 	mergeExistingPlatforms(lockedPlatforms, existingPlatforms, exists, opts.AllPlatforms)
-	updateEntry(BuildSourceURI(resolved.owner, resolved.repo), resolved.selectedTag, signer, lockedPlatforms)
+	updateEntry(BuildSourceURI(resolved.owner, resolved.repo), resolved.selectedTag, resolved.commit, signer, lockedPlatforms)
 	return buildSourceLockResult(name, kind, resolved.selectedTag, lockedPlatforms, exists, existingVersion), nil
 }
 
@@ -397,6 +400,7 @@ type resolvedSourceComponent struct {
 	owner       string
 	repo        string
 	selectedTag string
+	commit      string
 	release     *ReleaseInfo
 	platforms   []string
 }
@@ -427,6 +431,7 @@ func (l *Locker) resolveSourceComponentVersion(
 		owner:       owner,
 		repo:        repo,
 		selectedTag: selectedTag,
+		commit:      release.Commit,
 		release:     release,
 		platforms:   platforms,
 	}, nil

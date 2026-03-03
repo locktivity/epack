@@ -94,7 +94,8 @@ func TestParseSource(t *testing.T) {
 
 func TestFetchRelease(t *testing.T) {
 	release := github.Release{
-		TagName: "v1.2.3",
+		TagName:         "v1.2.3",
+		TargetCommitish: "0123456789abcdef0123456789abcdef01234567",
 		Assets: []github.Asset{
 			{Name: "collector-linux-amd64", BrowserDownloadURL: "https://example.com/download"},
 		},
@@ -117,6 +118,9 @@ func TestFetchRelease(t *testing.T) {
 	}
 	if got.TagName != "v1.2.3" {
 		t.Errorf("TagName = %q, want %q", got.TagName, "v1.2.3")
+	}
+	if got.TargetCommitish != "0123456789abcdef0123456789abcdef01234567" {
+		t.Errorf("TargetCommitish = %q, want %q", got.TargetCommitish, "0123456789abcdef0123456789abcdef01234567")
 	}
 	if len(got.Assets) != 1 {
 		t.Errorf("Assets len = %d, want 1", len(got.Assets))

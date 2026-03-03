@@ -130,8 +130,9 @@ func NewClientWithBaseURL(baseURL string) (*Client, error) {
 
 // Release represents a GitHub release.
 type Release struct {
-	TagName string  `json:"tag_name"`
-	Assets  []Asset `json:"assets"`
+	TagName         string  `json:"tag_name"`
+	TargetCommitish string  `json:"target_commitish,omitempty"`
+	Assets          []Asset `json:"assets"`
 }
 
 // Asset represents a GitHub release asset.

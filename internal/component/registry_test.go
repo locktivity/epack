@@ -71,7 +71,8 @@ func TestGitHubRegistry_ResolveVersion_Caret(t *testing.T) {
 
 func TestGitHubRegistry_FetchRelease(t *testing.T) {
 	release := github.Release{
-		TagName: "v1.2.3",
+		TagName:         "v1.2.3",
+		TargetCommitish: "A123456789ABCDEF0123456789abcdef01234567",
 		Assets: []github.Asset{
 			{Name: "tool-linux-amd64", BrowserDownloadURL: "https://example.com/tool-linux-amd64", Size: 1000},
 			{Name: "tool-linux-amd64.sigstore.json", BrowserDownloadURL: "https://example.com/tool-linux-amd64.sigstore.json", Size: 500},
@@ -95,6 +96,9 @@ func TestGitHubRegistry_FetchRelease(t *testing.T) {
 
 	if info.Version != "v1.2.3" {
 		t.Errorf("expected version 'v1.2.3', got %q", info.Version)
+	}
+	if info.Commit != "a123456789abcdef0123456789abcdef01234567" {
+		t.Errorf("expected normalized commit SHA, got %q", info.Commit)
 	}
 	if len(info.Assets) != 2 {
 		t.Fatalf("expected 2 assets, got %d", len(info.Assets))
