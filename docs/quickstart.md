@@ -11,13 +11,13 @@ brew install locktivity/tap/epack
 Or with Go:
 
 ```bash
-go install -tags components github.com/locktivity/epack/cmd/epack@v0.1.22
+go install -tags components github.com/locktivity/epack/cmd/epack@v0.1.23
 ```
 
 For a minimal verify-only build (no component commands), install without tags:
 
 ```bash
-go install github.com/locktivity/epack/cmd/epack@v0.1.22
+go install github.com/locktivity/epack/cmd/epack@v0.1.23
 ```
 
 ## Create a Project

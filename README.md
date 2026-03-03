@@ -35,7 +35,7 @@
 brew install locktivity/tap/epack
 
 # Go
-go install -tags components github.com/locktivity/epack/cmd/epack@v0.1.22
+go install -tags components github.com/locktivity/epack/cmd/epack@v0.1.23
 
 # Binary releases (with SLSA Level 3 provenance)
 # → github.com/locktivity/epack/releases
