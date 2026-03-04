@@ -4,12 +4,24 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing release version (e.g., 0.2.0)'
+        required: true
+        type: string
+      container_only:
+        description: 'Only build containers (skip binaries/homebrew)'
+        required: true
+        type: boolean
+        default: true
 
 permissions: read-all
 
 jobs:
-  # Run tests before building
+  # Run tests before building (skip for container-only runs)
   test:
+    if: ${{ !inputs.container_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +51,7 @@ jobs:
     outputs:
       version: ${{ steps.ldflags.outputs.version }}
       commit: ${{ steps.ldflags.outputs.commit }}
+      tag: ${{ steps.ldflags.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,11 +59,20 @@ jobs:
 
       - id: ldflags
         run: |
-          echo "version=$(git describe --tags --always --dirty | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.version }}" != "" ]; then
+            # Manual dispatch with existing version
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            # Tag-triggered release
+            echo "version=$(git describe --tags --always --dirty | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
           echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
   # Build epack (full version with components) - SLSA Level 3
   build-epack:
+    if: ${{ !inputs.container_only }}
     needs: [test, args]
     permissions:
       id-token: write
@@ -75,6 +97,7 @@ jobs:
 
   # Build epack-core (minimal version: no components) - SLSA Level 3
   build-epack-core:
+    if: ${{ !inputs.container_only }}
     needs: [test, args]
     permissions:
       id-token: write
@@ -99,6 +122,7 @@ jobs:
 
   # Create GitHub Release with all artifacts
   release:
+    if: ${{ !inputs.container_only }}
     needs: [args, build-epack, build-epack-core]
     runs-on: ubuntu-latest
     permissions:
@@ -131,6 +155,7 @@ jobs:
 
   # Update Homebrew tap with new version and checksums
   homebrew:
+    if: ${{ !inputs.container_only }}
     needs: [args, release]
     runs-on: ubuntu-latest
     steps:
@@ -288,3 +313,50 @@ jobs:
           git add Formula/
           git commit -m "epack ${{ needs.args.outputs.version }}"
           git push
+
+  # Publish container images to GHCR
+  container:
+    needs: [args]
+    if: ${{ always() && needs.args.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        variant: [epack, epack-core]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download binaries
+        run: |
+          mkdir -p binaries
+          for arch in amd64 arm64; do
+            curl -sfL "https://github.com/${{ github.repository }}/releases/download/${{ needs.args.outputs.tag }}/${{ matrix.variant }}-linux-${arch}" \
+              -o "binaries/${{ matrix.variant }}-linux-${arch}"
+            chmod +x "binaries/${{ matrix.variant }}-linux-${arch}"
+          done
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .github/container/${{ matrix.variant }}.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.variant }}:${{ needs.args.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.variant }}:latest
