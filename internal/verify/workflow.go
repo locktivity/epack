@@ -257,8 +257,8 @@ func verifyAttestationsWorkflow(ctx context.Context, p *pack.Pack, manifest *pac
 			continue
 		}
 
-		// Verify statement semantics: require valid in-toto statement with matching pack digest.
-		if err := verify.VerifyStatementSemantics(result, manifest.PackDigest); err != nil {
+		// Verify statement semantics: require valid in-toto statement with matching manifest digest.
+		if err := verify.VerifyStatementSemantics(result, p.ManifestDigest()); err != nil {
 			errors = append(errors, fmt.Sprintf("%q: %v", attPath, err))
 			continue
 		}

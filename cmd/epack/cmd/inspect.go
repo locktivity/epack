@@ -87,7 +87,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 
 	attestations := p.ListAttestations()
 	if out.IsJSON() {
-		return printInspectJSON(out, manifest, attestations)
+		return printInspectJSON(out, manifest, p.ManifestDigest(), attestations)
 	}
 
 	if inspectSummary {
@@ -108,11 +108,14 @@ func printRawManifest(out *output.Writer, manifest pack.Manifest) error {
 	return nil
 }
 
-func printInspectJSON(out *output.Writer, manifest pack.Manifest, attestations []string) error {
+func printInspectJSON(out *output.Writer, manifest pack.Manifest, manifestDigest string, attestations []string) error {
+	// manifest_digest should be raw hex (no sha256: prefix) per spec conventions
+	rawManifestDigest := strings.TrimPrefix(manifestDigest, "sha256:")
 	return out.JSON(inspectOutput{
 		SpecVersion:      manifest.SpecVersion,
 		Stream:           manifest.Stream,
 		PackDigest:       manifest.PackDigest,
+		ManifestDigest:   rawManifestDigest,
 		GeneratedAt:      manifest.GeneratedAt,
 		ArtifactCount:    len(manifest.Artifacts),
 		AttestationCount: len(attestations),
@@ -195,6 +198,7 @@ type inspectOutput struct {
 	SpecVersion      string          `json:"spec_version"`
 	Stream           string          `json:"stream"`
 	PackDigest       string          `json:"pack_digest"`
+	ManifestDigest   string          `json:"manifest_digest"`
 	GeneratedAt      string          `json:"generated_at"`
 	ArtifactCount    int             `json:"artifact_count"`
 	AttestationCount int             `json:"attestation_count"`

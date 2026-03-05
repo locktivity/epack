@@ -363,30 +363,6 @@ func TestVerifyStatementSemantics_WrongPredicateType(t *testing.T) {
 	}
 }
 
-func TestVerifyStatementSemantics_WrongPredicatePackDigest(t *testing.T) {
-	// PoC: A validly signed statement with mismatched predicate pack_digest should be rejected
-	result := &verify.Result{
-		Verified: true,
-		Statement: &verify.Statement{
-			Type:          "https://in-toto.io/Statement/v1",
-			PredicateType: "https://evidencepack.org/attestation/v1",
-			Subjects: []verify.Subject{
-				{Name: "pack", Digest: map[string]string{"sha256": "abc123"}},
-			},
-			// Subject matches, but predicate has different pack_digest
-			Predicate: []byte(`{"pack_digest":"sha256:different_digest"}`),
-		},
-	}
-
-	err := verify.VerifyStatementSemantics(result, "sha256:abc123")
-	if err == nil {
-		t.Error("VerifyStatementSemantics should reject mismatched predicate pack_digest")
-	}
-	if !strings.Contains(err.Error(), "pack_digest") && !strings.Contains(err.Error(), "does not match") {
-		t.Errorf("error should mention pack_digest mismatch, got: %v", err)
-	}
-}
-
 func TestVerifyStatementSemantics_NilStatement(t *testing.T) {
 	result := &verify.Result{
 		Verified: true,
@@ -443,9 +419,9 @@ func TestVerifyStatementSemantics_ValidStatement(t *testing.T) {
 			Type:          "https://in-toto.io/Statement/v1",
 			PredicateType: "https://evidencepack.org/attestation/v1",
 			Subjects: []verify.Subject{
-				{Name: "pack", Digest: map[string]string{"sha256": "abc123"}},
+				{Name: "manifest.json", Digest: map[string]string{"sha256": "abc123"}},
 			},
-			Predicate: []byte(`{"pack_digest":"sha256:abc123"}`),
+			Predicate: []byte(`{}`), // Empty predicate per spec
 		},
 	}
 

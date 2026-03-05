@@ -25,7 +25,6 @@ type Subject struct {
 }
 
 // EvidencePackPayload is the predicate content for evidence pack attestations.
-type EvidencePackPayload struct {
-	PackDigest string `json:"pack_digest"`
-	Stream     string `json:"stream,omitempty"`
-}
+// The predicate is intentionally empty because all relevant data (stream, artifacts,
+// pack_digest) is in the manifest, which is cryptographically bound via the subject digest.
+type EvidencePackPayload struct{}

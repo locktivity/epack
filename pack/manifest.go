@@ -265,12 +265,31 @@ func validateSourcePack(i int, sp SourcePack) error {
 	if err := validateDigest(sp.PackDigest); err != nil {
 		return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid pack_digest format for source pack at index %d", i), err)
 	}
+	if sp.ManifestDigest == "" {
+		return errors.E(errors.MissingRequiredField, fmt.Sprintf("manifest_digest is required for source pack at index %d", i), nil)
+	}
+	if err := validateRawManifestDigest(sp.ManifestDigest); err != nil {
+		return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid manifest_digest format for source pack at index %d", i), err)
+	}
 	if sp.Artifacts == "" {
 		return errors.E(errors.MissingRequiredField, fmt.Sprintf("artifacts is required for source pack at index %d", i), nil)
 	}
 	for j, att := range sp.EmbeddedAttestations {
 		if err := validateEmbeddedAttestation(att); err != nil {
 			return errors.E(errors.InvalidManifest, fmt.Sprintf("invalid embedded attestation %d for source pack at index %d", j, i), err)
+		}
+	}
+	return nil
+}
+
+// validateRawManifestDigest validates manifest_digest format: 64 lowercase hex characters (no prefix).
+func validateRawManifestDigest(manifestDigest string) error {
+	if len(manifestDigest) != 64 {
+		return fmt.Errorf("must be 64 hex characters, got %d", len(manifestDigest))
+	}
+	for _, c := range manifestDigest {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return fmt.Errorf("must be lowercase hex, found %q", c)
 		}
 	}
 	return nil

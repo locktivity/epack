@@ -80,6 +80,7 @@ type PackInfo struct {
 	Path      string `json:"path"`
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"size_bytes"`
+	Checksum  string `json:"checksum,omitempty"` // Base64-encoded MD5 for upload verification
 }
 
 // ReleaseInfo contains release metadata for push operations.

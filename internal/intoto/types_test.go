@@ -46,10 +46,7 @@ func TestStatementJSONSerialization(t *testing.T) {
 			},
 		},
 		PredicateType: EvidencePackPredicateType,
-		Predicate: EvidencePackPayload{
-			PackDigest: "sha256:abc123",
-			Stream:     "org/stream",
-		},
+		Predicate:     EvidencePackPayload{},
 	}
 
 	data, err := json.Marshal(stmt)
@@ -60,6 +57,11 @@ func TestStatementJSONSerialization(t *testing.T) {
 	// Verify _type field is present (the JSON tag)
 	if !strings.Contains(string(data), `"_type"`) {
 		t.Error("JSON should contain _type field")
+	}
+
+	// Verify predicate is empty object
+	if !strings.Contains(string(data), `"predicate":{}`) {
+		t.Errorf("JSON should contain empty predicate, got %s", string(data))
 	}
 
 	// Roundtrip
@@ -79,9 +81,6 @@ func TestStatementJSONSerialization(t *testing.T) {
 	}
 	if decoded.Subject[0].Name != "test.epack" {
 		t.Errorf("Subject[0].Name = %q, want %q", decoded.Subject[0].Name, "test.epack")
-	}
-	if decoded.Predicate.PackDigest != "sha256:abc123" {
-		t.Errorf("Predicate.PackDigest = %q, want %q", decoded.Predicate.PackDigest, "sha256:abc123")
 	}
 }
 
@@ -116,37 +115,17 @@ func TestSubjectJSONSerialization(t *testing.T) {
 	}
 }
 
-// TestEvidencePackPayloadStreamOmitempty ensures stream is omitted when empty.
-func TestEvidencePackPayloadStreamOmitempty(t *testing.T) {
-	payload := EvidencePackPayload{
-		PackDigest: "sha256:abc123",
-		Stream:     "", // empty
-	}
+// TestEvidencePackPayloadEmpty ensures empty payload serializes correctly.
+func TestEvidencePackPayloadEmpty(t *testing.T) {
+	payload := EvidencePackPayload{}
 
 	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
 	}
 
-	if strings.Contains(string(data), `"stream"`) {
-		t.Error("JSON should omit empty stream field")
-	}
-}
-
-// TestEvidencePackPayloadWithStream ensures stream is included when set.
-func TestEvidencePackPayloadWithStream(t *testing.T) {
-	payload := EvidencePackPayload{
-		PackDigest: "sha256:abc123",
-		Stream:     "org/stream",
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("Marshal failed: %v", err)
-	}
-
-	if !strings.Contains(string(data), `"stream"`) {
-		t.Error("JSON should include stream field when set")
+	if string(data) != "{}" {
+		t.Errorf("JSON = %q, want {}", string(data))
 	}
 }
 
@@ -156,7 +135,7 @@ func TestStatementWithEmptySubjects(t *testing.T) {
 		Type:          StatementType,
 		Subject:       []Subject{},
 		PredicateType: EvidencePackPredicateType,
-		Predicate:     EvidencePackPayload{PackDigest: "sha256:abc"},
+		Predicate:     EvidencePackPayload{},
 	}
 
 	data, err := json.Marshal(stmt)

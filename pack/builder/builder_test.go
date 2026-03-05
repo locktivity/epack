@@ -447,9 +447,10 @@ func TestBuilder_SetProvenance(t *testing.T) {
 		MergedBy: "test-user",
 		SourcePacks: []pack.SourcePack{
 			{
-				Stream:     "source-stream",
-				PackDigest: "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-				Artifacts:  "5",
+				Stream:         "source-stream",
+				PackDigest:     "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+				ManifestDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				Artifacts:      "5",
 			},
 		},
 	}

@@ -60,6 +60,7 @@ func TestInspectOutput_JSONSerialization(t *testing.T) {
 		SpecVersion:      "1.0",
 		Stream:           "test/stream",
 		PackDigest:       "sha256:abc123",
+		ManifestDigest:   "abc123def456789012345678901234567890123456789012345678901234abcd",
 		GeneratedAt:      "2024-01-01T00:00:00Z",
 		ArtifactCount:    2,
 		AttestationCount: 1,
@@ -94,6 +95,7 @@ func TestInspectOutput_AllFieldsPresent(t *testing.T) {
 		SpecVersion:      "1.0",
 		Stream:           "test/stream",
 		PackDigest:       "sha256:abc123",
+		ManifestDigest:   "abc123def456789012345678901234567890123456789012345678901234abcd",
 		GeneratedAt:      "2024-01-01T00:00:00Z",
 		ArtifactCount:    0,
 		AttestationCount: 0,
@@ -113,7 +115,7 @@ func TestInspectOutput_AllFieldsPresent(t *testing.T) {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}
 
-	requiredFields := []string{"spec_version", "stream", "pack_digest", "generated_at", "artifact_count", "attestation_count"}
+	requiredFields := []string{"spec_version", "stream", "pack_digest", "manifest_digest", "generated_at", "artifact_count", "attestation_count"}
 	for _, field := range requiredFields {
 		if _, exists := decoded[field]; !exists {
 			t.Errorf("Missing required field: %s", field)

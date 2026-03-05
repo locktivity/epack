@@ -49,7 +49,7 @@ func SignPackFileWithOptions(ctx context.Context, packPath string, s Signer, opt
 	if err != nil {
 		return err
 	}
-	statementJSON, filename, err := buildSigningPayload(manifest, s.Identity())
+	statementJSON, filename, err := buildSigningPayload(snapshot, manifest, s.Identity())
 	if err != nil {
 		return err
 	}
@@ -94,8 +94,18 @@ func loadSigningSnapshot(packPath string, maxMemory int64) (map[string]*snapshot
 	return snapshot, manifest, nil
 }
 
-func buildSigningPayload(manifest *pack.Manifest, identity string) ([]byte, string, error) {
-	statement, err := NewStatement(manifest.PackDigest, manifest.Stream)
+func buildSigningPayload(snapshot map[string]*snapshotEntry, manifest *pack.Manifest, identity string) ([]byte, string, error) {
+	// Compute manifest digest from raw bytes for the attestation subject
+	manifestEntry, ok := snapshot[packpath.Manifest]
+	if !ok {
+		return nil, "", errors.E(errors.MissingEntry, "manifest.json not found in snapshot", nil)
+	}
+	_, manifestDigest, err := pack.ComputeManifestDigest(manifestEntry.content)
+	if err != nil {
+		return nil, "", fmt.Errorf("computing manifest digest: %w", err)
+	}
+
+	statement, err := NewStatement(manifestDigest)
 	if err != nil {
 		return nil, "", err
 	}

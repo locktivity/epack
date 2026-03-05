@@ -19,9 +19,10 @@ import (
 //
 // Pack is safe for concurrent read operations.
 type Pack struct {
-	manifest *Manifest
-	index    map[string]*zip.File
-	reader   *zip.ReadCloser
+	manifest       *Manifest
+	manifestDigest string // JCS-canonicalized SHA256 of manifest.json (format: "sha256:{hex}")
+	index          map[string]*zip.File
+	reader         *zip.ReadCloser
 }
 
 // UntrustedBytes are bytes read without manifest integrity verification.
@@ -91,6 +92,12 @@ func (b *ReadBudget) Remaining() int64 {
 // Mutations to the returned value do not affect the pack's internal state.
 func (p *Pack) Manifest() Manifest {
 	return p.manifest.Copy()
+}
+
+// ManifestDigest returns the JCS-canonicalized SHA256 digest of the manifest.
+// Format: "sha256:{hex}" where hex is 64 lowercase characters.
+func (p *Pack) ManifestDigest() string {
+	return p.manifestDigest
 }
 
 // Close releases resources associated with the pack.
@@ -480,13 +487,20 @@ func loadFromSafeReader(safeReader *ziputil.SafeReader) (*Pack, error) {
 		return nil, fmt.Errorf("parsing manifest.json: %w", err)
 	}
 
+	// Compute manifest digest for attestation verification
+	_, manifestDigest, err := ComputeManifestDigest(manifestData)
+	if err != nil {
+		return nil, fmt.Errorf("computing manifest digest: %w", err)
+	}
+
 	if err := validateArtifactsMatch(index, manifest); err != nil {
 		return nil, err
 	}
 
 	return &Pack{
-		manifest: manifest,
-		index:    index,
+		manifest:       manifest,
+		manifestDigest: manifestDigest,
+		index:          index,
 	}, nil
 }
 

@@ -192,26 +192,28 @@ func TestVerifyEmbeddedAttestations_MergedPackNoEmbedded(t *testing.T) {
 	}
 }
 
-// statementVerifier is a test verifier that returns a result with a configurable pack digest.
+// statementVerifier is a test verifier that returns a result with configurable manifest digest.
 type statementVerifier struct {
-	packDigest string
+	manifestDigest string // used for subject digest
 }
 
 func (v *statementVerifier) Verify(ctx context.Context, attestation []byte) (*verify.Result, error) {
-	// Build the predicate JSON with pack_digest
-	predicateJSON, _ := json.Marshal(map[string]string{
-		"pack_digest": v.packDigest,
-	})
+	// Use manifest digest for subject (strip "sha256:" prefix)
+	manifestHash := v.manifestDigest
+	if len(manifestHash) > 7 && manifestHash[:7] == "sha256:" {
+		manifestHash = manifestHash[7:]
+	}
 
 	return &verify.Result{
 		Verified: true,
 		Statement: &verify.Statement{
 			Type:          "https://in-toto.io/Statement/v1",
 			PredicateType: "https://evidencepack.org/attestation/v1",
-			Predicate:     predicateJSON,
+			Predicate:     []byte("{}"), // Empty predicate per spec
 			Subjects: []verify.Subject{
 				{
-					Digest: map[string]string{"sha256": v.packDigest[7:]}, // strip "sha256:" prefix
+					Name:   "manifest.json",
+					Digest: map[string]string{"sha256": manifestHash},
 				},
 			},
 		},
@@ -228,9 +230,9 @@ func TestVerifyEmbeddedAttestations_MergedPackWithEmbedded(t *testing.T) {
 	}
 	defer func() { _ = pack.Close() }()
 
-	// Create a verifier that returns a result with matching subject digest
+	// Create a verifier that returns a result with matching subject digest (manifest_digest)
 	v := &statementVerifier{
-		packDigest: "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+		manifestDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 	}
 
 	results, err := pack.VerifyEmbeddedAttestations(context.Background(), v)
@@ -270,11 +272,11 @@ func TestVerifyEmbeddedAttestations_MergedPackWithMultipleEmbedded(t *testing.T)
 	}
 	defer func() { _ = pack.Close() }()
 
-	// Create a verifier that handles both source pack digests
+	// Create a verifier that handles both source pack manifest digests
 	v := &multiDigestVerifier{
-		packDigests: map[int]string{
-			0: "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
-			1: "sha256:def456abc123def456abc123def456abc123def456abc123def456abc123def4",
+		manifestDigests: map[int]string{
+			0: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			1: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
 		},
 	}
 
@@ -306,23 +308,18 @@ func TestVerifyEmbeddedAttestations_MergedPackWithMultipleEmbedded(t *testing.T)
 
 // multiDigestVerifier returns statements with digests based on call index.
 type multiDigestVerifier struct {
-	packDigests map[int]string // full pack digests like "sha256:abc..."
-	calls       int
+	manifestDigests map[int]string // full manifest digests like "sha256:abc..." (used for subject)
+	calls           int
 }
 
 func (v *multiDigestVerifier) Verify(ctx context.Context, attestation []byte) (*verify.Result, error) {
-	packDigest := v.packDigests[v.calls]
+	manifestDigest := v.manifestDigests[v.calls]
 	v.calls++
 
-	// Build the predicate JSON with pack_digest
-	predicateJSON, _ := json.Marshal(map[string]string{
-		"pack_digest": packDigest,
-	})
-
-	// Extract the hash part after "sha256:"
-	hashPart := packDigest
-	if len(packDigest) > 7 && packDigest[:7] == "sha256:" {
-		hashPart = packDigest[7:]
+	// Extract the hash part after "sha256:" for manifest digest (subject)
+	hashPart := manifestDigest
+	if len(manifestDigest) > 7 && manifestDigest[:7] == "sha256:" {
+		hashPart = manifestDigest[7:]
 	}
 
 	return &verify.Result{
@@ -330,9 +327,10 @@ func (v *multiDigestVerifier) Verify(ctx context.Context, attestation []byte) (*
 		Statement: &verify.Statement{
 			Type:          "https://in-toto.io/Statement/v1",
 			PredicateType: "https://evidencepack.org/attestation/v1",
-			Predicate:     predicateJSON,
+			Predicate:     []byte("{}"), // Empty predicate per spec
 			Subjects: []verify.Subject{
 				{
+					Name:   "manifest.json",
 					Digest: map[string]string{"sha256": hashPart},
 				},
 			},
@@ -370,14 +368,14 @@ func TestVerifyEmbeddedAttestations_SubjectMismatch(t *testing.T) {
 	}
 	defer func() { _ = pack.Close() }()
 
-	// Create a verifier that returns a result with a non-matching subject digest
+	// Create a verifier that returns a result with a non-matching subject digest (manifestDigest)
 	v := &statementVerifier{
-		packDigest: "sha256:wrong_digest_that_does_not_match_source_pack",
+		manifestDigest: "sha256:wrong000000000000000000000000000000000000000000000000000000000000",
 	}
 
 	_, err = pack.VerifyEmbeddedAttestations(context.Background(), v)
 	if err == nil {
-		t.Fatal("VerifyEmbeddedAttestations() expected error when subject doesn't match pack digest")
+		t.Fatal("VerifyEmbeddedAttestations() expected error when subject doesn't match manifest digest")
 	}
 }
 
@@ -423,6 +421,7 @@ func createTestMergedPackWithEmbedded(t *testing.T) string {
 				{
 					Stream:               "test/source",
 					PackDigest:           "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+					ManifestDigest:       "1111111111111111111111111111111111111111111111111111111111111111",
 					Artifacts:            json.Number("1"),
 					EmbeddedAttestations: []EmbeddedAttestation{embeddedAttestation},
 				},
@@ -501,12 +500,14 @@ func createTestMergedPackWithMultipleEmbedded(t *testing.T) string {
 				{
 					Stream:               "test/source1",
 					PackDigest:           "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+					ManifestDigest:       "1111111111111111111111111111111111111111111111111111111111111111",
 					Artifacts:            json.Number("1"),
 					EmbeddedAttestations: []EmbeddedAttestation{embeddedAttestation1},
 				},
 				{
 					Stream:               "test/source2",
 					PackDigest:           "sha256:def456abc123def456abc123def456abc123def456abc123def456abc123def4",
+					ManifestDigest:       "2222222222222222222222222222222222222222222222222222222222222222",
 					Artifacts:            json.Number("1"),
 					EmbeddedAttestations: []EmbeddedAttestation{embeddedAttestation2},
 				},
@@ -572,9 +573,10 @@ func createTestMergedPackWithoutEmbedded(t *testing.T) string {
 			MergedBy: "test",
 			SourcePacks: []SourcePack{
 				{
-					Stream:     "test/source",
-					PackDigest: "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
-					Artifacts:  json.Number("1"),
+					Stream:         "test/source",
+					PackDigest:     "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+					ManifestDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					Artifacts:      json.Number("1"),
 					// No EmbeddedAttestation
 				},
 			},

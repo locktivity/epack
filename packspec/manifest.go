@@ -55,6 +55,7 @@ type Provenance struct {
 type SourcePack struct {
 	Stream               string                `json:"stream"`
 	PackDigest           string                `json:"pack_digest"`
+	ManifestDigest       string                `json:"manifest_digest"`
 	Artifacts            json.Number           `json:"artifacts"`
 	EmbeddedAttestations []EmbeddedAttestation `json:"embedded_attestations,omitempty"`
 }

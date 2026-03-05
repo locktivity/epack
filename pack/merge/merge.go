@@ -187,14 +187,15 @@ func mergeOneSourcePack(ctx context.Context, b *builder.Builder, p *pack.Pack, i
 	}
 
 	sp := pack.SourcePack{
-		Stream:     srcStream,
-		PackDigest: manifest.PackDigest,
-		Artifacts:  json.Number(fmt.Sprintf("%d", countEmbeddedArtifacts(manifest.Artifacts))),
+		Stream:         srcStream,
+		PackDigest:     manifest.PackDigest,
+		ManifestDigest: strings.TrimPrefix(p.ManifestDigest(), "sha256:"), // Raw hex per spec
+		Artifacts:      json.Number(fmt.Sprintf("%d", countEmbeddedArtifacts(manifest.Artifacts))),
 	}
 	if !opts.IncludeAttestations {
 		return sp, nil
 	}
-	embedded, err := collectEmbeddedAttestations(ctx, p, srcStream, manifest.PackDigest, opts)
+	embedded, err := collectEmbeddedAttestations(ctx, p, srcStream, opts)
 	if err != nil {
 		return pack.SourcePack{}, err
 	}
@@ -234,8 +235,9 @@ func mergedArtifactPath(path, srcStream string, isMergedPack bool) string {
 	return filepath.Join("artifacts", srcStream, relativePath)
 }
 
-func collectEmbeddedAttestations(ctx context.Context, p *pack.Pack, srcStream, packDigest string, opts Options) ([]pack.EmbeddedAttestation, error) {
+func collectEmbeddedAttestations(ctx context.Context, p *pack.Pack, srcStream string, opts Options) ([]pack.EmbeddedAttestation, error) {
 	embedded := make([]pack.EmbeddedAttestation, 0)
+	manifestDigest := p.ManifestDigest()
 	for _, attPath := range p.ListAttestations() {
 		attData, err := p.ReadAttestation(attPath)
 		if err != nil {
@@ -244,7 +246,7 @@ func collectEmbeddedAttestations(ctx context.Context, p *pack.Pack, srcStream, p
 		if err := verify.ValidateAttestation(attData); err != nil {
 			return nil, fmt.Errorf("validating attestation %s from %s: %w", attPath, srcStream, err)
 		}
-		if err := verifyAttestationForMerge(ctx, opts, attData, attPath, srcStream, packDigest); err != nil {
+		if err := verifyAttestationForMerge(ctx, opts, attData, attPath, srcStream, manifestDigest); err != nil {
 			return nil, err
 		}
 		parsed, err := parseEmbeddedAttestation(attData)
@@ -256,7 +258,7 @@ func collectEmbeddedAttestations(ctx context.Context, p *pack.Pack, srcStream, p
 	return embedded, nil
 }
 
-func verifyAttestationForMerge(ctx context.Context, opts Options, attData []byte, attPath, srcStream, packDigest string) error {
+func verifyAttestationForMerge(ctx context.Context, opts Options, attData []byte, attPath, srcStream, manifestDigest string) error {
 	if !opts.VerifyAttestations {
 		return nil
 	}
@@ -267,7 +269,7 @@ func verifyAttestationForMerge(ctx context.Context, opts Options, attData []byte
 	if err != nil {
 		return fmt.Errorf("verifying attestation %s from %s: %w", attPath, srcStream, err)
 	}
-	if err := verify.VerifyStatementSemantics(result, packDigest); err != nil {
+	if err := verify.VerifyStatementSemantics(result, manifestDigest); err != nil {
 		return fmt.Errorf("attestation %s from %s: %w", attPath, srcStream, err)
 	}
 	return nil

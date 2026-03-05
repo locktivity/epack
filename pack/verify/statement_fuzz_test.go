@@ -25,7 +25,7 @@ func FuzzVerifyStatementSemantics(f *testing.F) {
 		"_type": "https://in-toto.io/Statement/v1",
 		"predicateType": "https://evidencepack.org/attestation/v1",
 		"subject": [{"name": "pack", "digest": {"sha256": "abc123"}}],
-		"predicate": {"pack_digest": "sha256:abc123"}
+		"predicate": {"pack_digest": "sha256:xyz"}
 	}`
 	f.Add(validStatement, "sha256:abc123")
 
@@ -79,17 +79,7 @@ func FuzzVerifyStatementSemantics(f *testing.F) {
 				t.Error("accepted empty subjects")
 			}
 
-			// Verify predicate pack_digest matches
-			var pred struct {
-				PackDigest string `json:"pack_digest"`
-			}
-			if json.Unmarshal(result.Statement.Predicate, &pred) == nil {
-				if pred.PackDigest != expectedDigest {
-					t.Errorf("accepted mismatched predicate pack_digest: %s vs %s", pred.PackDigest, expectedDigest)
-				}
-			}
-
-			// Verify at least one subject matches
+			// Verify at least one subject matches the manifest digest
 			matched := false
 			for _, subj := range result.Statement.Subjects {
 				for algo, digest := range subj.Digest {
@@ -106,35 +96,6 @@ func FuzzVerifyStatementSemantics(f *testing.F) {
 	})
 }
 
-// FuzzVerifyPredicatePackDigest tests predicate parsing with arbitrary JSON.
-func FuzzVerifyPredicatePackDigest(f *testing.F) {
-	f.Add([]byte(`{}`), "sha256:abc123")
-	f.Add([]byte(`{"pack_digest":"sha256:abc123"}`), "sha256:abc123")
-	f.Add([]byte(`{"pack_digest":"sha256:wrong"}`), "sha256:abc123")
-	f.Add([]byte(`{"pack_digest":null}`), "sha256:abc123")
-	f.Add([]byte(`{"pack_digest":123}`), "sha256:abc123")
-	f.Add([]byte(`null`), "sha256:abc123")
-	f.Add([]byte(`[]`), "sha256:abc123")
-	f.Add([]byte(``), "sha256:abc123")
-
-	f.Fuzz(func(t *testing.T, predicateJSON []byte, expectedDigest string) {
-		// Should not panic
-		err := verifyPredicatePackDigest(predicateJSON, expectedDigest)
-
-		// If accepted, verify the digest actually matches
-		if err == nil {
-			var pred struct {
-				PackDigest string `json:"pack_digest"`
-			}
-			if json.Unmarshal(predicateJSON, &pred) == nil {
-				if pred.PackDigest != expectedDigest {
-					t.Errorf("accepted mismatched pack_digest: got %q, expected %q", pred.PackDigest, expectedDigest)
-				}
-			}
-		}
-	})
-}
-
 // FuzzVerifySubjectDigest tests subject digest matching with arbitrary subjects.
 func FuzzVerifySubjectDigest(f *testing.F) {
 	f.Add("sha256", "abc123", "sha256:abc123")
@@ -143,18 +104,20 @@ func FuzzVerifySubjectDigest(f *testing.F) {
 	f.Add("", "", "sha256:abc123")
 
 	f.Fuzz(func(t *testing.T, algo, digest, expectedDigest string) {
-		subjects := []Subject{
-			{
-				Name:   "pack",
-				Digest: map[string]string{algo: digest},
-			},
+		subject := Subject{
+			Name:   "manifest.json",
+			Digest: map[string]string{algo: digest},
 		}
 
 		// Should not panic
-		err := verifySubjectDigest(subjects, expectedDigest)
+		err := verifySubjectDigest(subject, expectedDigest)
 
-		// If accepted, verify the digest actually matches
+		// If accepted, verify the digest actually matches sha256
 		if err == nil {
+			// Must be sha256 per spec
+			if algo != "sha256" {
+				t.Errorf("accepted non-sha256 algorithm: %q", algo)
+			}
 			fullDigest := algo + ":" + digest
 			if fullDigest != expectedDigest {
 				t.Errorf("accepted mismatched subject digest: got %q, expected %q", fullDigest, expectedDigest)

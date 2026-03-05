@@ -301,6 +301,7 @@ func TestParseManifest(t *testing.T) {
 					"source_packs": [{
 						"stream": "source-stream",
 						"pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+						"manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 						"artifacts": 5
 					}]
 				}
@@ -388,6 +389,60 @@ func TestParseManifest(t *testing.T) {
 			wantErr: errors.InvalidManifest,
 			wantMsg: "invalid pack_digest format for source pack at index 0",
 		},
+		{
+			name: "missing source pack manifest_digest",
+			input: `{
+				"spec_version": "1.0",
+				"stream": "test",
+				"generated_at": "2024-01-15T10:30:00Z",
+				"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+				"sources": [],
+				"artifacts": [],
+				"provenance": {
+					"type": "merged",
+					"merged_at": "2024-01-15T10:30:00Z",
+					"source_packs": [{"stream": "source-stream", "pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef", "artifacts": 5}]
+				}
+			}`,
+			wantErr: errors.MissingRequiredField,
+			wantMsg: "manifest_digest is required for source pack at index 0",
+		},
+		{
+			name: "invalid source pack manifest_digest format - too short",
+			input: `{
+				"spec_version": "1.0",
+				"stream": "test",
+				"generated_at": "2024-01-15T10:30:00Z",
+				"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+				"sources": [],
+				"artifacts": [],
+				"provenance": {
+					"type": "merged",
+					"merged_at": "2024-01-15T10:30:00Z",
+					"source_packs": [{"stream": "source-stream", "pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef", "manifest_digest": "abc123", "artifacts": 5}]
+				}
+			}`,
+			wantErr: errors.InvalidManifest,
+			wantMsg: "invalid manifest_digest format for source pack at index 0",
+		},
+		{
+			name: "invalid source pack manifest_digest format - uppercase",
+			input: `{
+				"spec_version": "1.0",
+				"stream": "test",
+				"generated_at": "2024-01-15T10:30:00Z",
+				"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+				"sources": [],
+				"artifacts": [],
+				"provenance": {
+					"type": "merged",
+					"merged_at": "2024-01-15T10:30:00Z",
+					"source_packs": [{"stream": "source-stream", "pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef", "manifest_digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "artifacts": 5}]
+				}
+			}`,
+			wantErr: errors.InvalidManifest,
+			wantMsg: "invalid manifest_digest format for source pack at index 0",
+		},
 
 		// Embedded attestation validation (Sigstore bundle format per spec Section 3.7)
 		{
@@ -405,6 +460,7 @@ func TestParseManifest(t *testing.T) {
 					"source_packs": [{
 						"stream": "source-stream",
 						"pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+						"manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 						"artifacts": 5,
 						"embedded_attestations": [{
 							"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
@@ -430,6 +486,7 @@ func TestParseManifest(t *testing.T) {
 					"source_packs": [{
 						"stream": "source-stream",
 						"pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+						"manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 						"artifacts": 5,
 						"embedded_attestations": [{
 							"verificationMaterial": {"x509CertificateChain": {"certificates": ["..."]}},
@@ -456,6 +513,7 @@ func TestParseManifest(t *testing.T) {
 					"source_packs": [{
 						"stream": "source-stream",
 						"pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+						"manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 						"artifacts": 5,
 						"embedded_attestations": [{
 							"mediaType": "application/unknown",
@@ -483,6 +541,7 @@ func TestParseManifest(t *testing.T) {
 					"source_packs": [{
 						"stream": "source-stream",
 						"pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+						"manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 						"artifacts": 5,
 						"embedded_attestations": [{
 							"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
@@ -509,6 +568,7 @@ func TestParseManifest(t *testing.T) {
 					"source_packs": [{
 						"stream": "source-stream",
 						"pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+						"manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 						"artifacts": 5,
 						"embedded_attestations": [{
 							"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
@@ -1127,7 +1187,8 @@ func TestParseManifest_SourcePackMissingArtifacts(t *testing.T) {
 			"merged_at": "2024-01-15T10:30:00Z",
 			"source_packs": [{
 				"stream": "source-stream",
-				"pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+				"pack_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+				"manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			}]
 		}
 	}`

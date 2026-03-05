@@ -74,7 +74,7 @@ func (p *Pack) verifyAttestationWithoutIntegrityCheck(ctx context.Context, path 
 		return nil, errors.E(errors.SignatureInvalid, "verifier returned nil result", nil)
 	}
 
-	if err := verify.VerifyStatementSemantics(result, p.manifest.PackDigest); err != nil {
+	if err := verify.VerifyStatementSemantics(result, p.manifestDigest); err != nil {
 		return nil, err
 	}
 
@@ -139,8 +139,9 @@ func (p *Pack) VerifyEmbeddedAttestations(ctx context.Context, v verify.Verifier
 				return nil, fmt.Errorf("source_pack[%d] (%s) attestation[%d]: verification failed: %w", i, sp.Stream, j, err)
 			}
 
-			// Verify statement subject matches source pack's digest
-			if err := verify.VerifyStatementSemantics(result, sp.PackDigest); err != nil {
+			// Verify statement subject matches source pack's manifest digest
+			// manifest_digest is stored as raw hex in spec; add sha256: prefix for internal verification
+			if err := verify.VerifyStatementSemantics(result, "sha256:"+sp.ManifestDigest); err != nil {
 				// SECURITY: Fail closed - return nil results when ANY verification fails.
 				return nil, fmt.Errorf("source_pack[%d] (%s) attestation[%d]: %w", i, sp.Stream, j, err)
 			}

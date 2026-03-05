@@ -44,9 +44,14 @@ func goldenPath(name string) string {
 }
 
 // NormalizeDigests replaces sha256 digests with a placeholder.
+// Handles both prefixed (sha256:hex) and raw hex (manifest_digest) formats.
 func NormalizeDigests(s string) string {
+	// First, normalize prefixed digests
 	re := regexp.MustCompile(`sha256:[a-f0-9]{64}`)
-	return re.ReplaceAllString(s, "sha256:<DIGEST>")
+	s = re.ReplaceAllString(s, "sha256:<DIGEST>")
+	// Then, normalize raw hex manifest_digest (64 chars on a JSON line)
+	reManifest := regexp.MustCompile(`("manifest_digest":\s*")[a-f0-9]{64}(")`)
+	return reManifest.ReplaceAllString(s, "${1}<MANIFEST_DIGEST>${2}")
 }
 
 // NormalizeTruncatedDigests replaces truncated digests (sha256:abc123...) with placeholder.

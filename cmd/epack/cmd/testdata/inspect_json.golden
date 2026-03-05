@@ -2,6 +2,7 @@
   "spec_version": "1.0",
   "stream": "test/golden-inspect-json",
   "pack_digest": "sha256:<DIGEST>",
+  "manifest_digest": "<MANIFEST_DIGEST>",
   "generated_at": "<TIMESTAMP>",
   "artifact_count": 1,
   "attestation_count": 0,

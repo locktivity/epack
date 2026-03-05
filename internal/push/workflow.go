@@ -2,7 +2,9 @@ package push
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -314,6 +316,12 @@ func runPushPrepare(ctx context.Context, exec *remote.Executor, remoteName strin
 	step("Preparing upload", true)
 	defer step("Preparing upload", false)
 
+	// Compute MD5 checksum for upload verification (base64-encoded for S3)
+	checksum, err := computePackChecksum(absPackPath)
+	if err != nil {
+		return nil, fmt.Errorf("computing checksum: %w", err)
+	}
+
 	prepResp, err := exec.Prepare(ctx, &remote.PrepareRequest{
 		Remote: remoteName,
 		Target: target,
@@ -321,6 +329,7 @@ func runPushPrepare(ctx context.Context, exec *remote.Executor, remoteName strin
 			Path:      absPackPath,
 			Digest:    packDigest,
 			SizeBytes: packSize,
+			Checksum:  checksum,
 		},
 		Release: releaseInfo,
 	})
@@ -328,6 +337,22 @@ func runPushPrepare(ctx context.Context, exec *remote.Executor, remoteName strin
 		return nil, fmt.Errorf("push.prepare failed: %w", err)
 	}
 	return prepResp, nil
+}
+
+// computePackChecksum computes the base64-encoded MD5 checksum of a pack file.
+// This format is required by S3's Content-MD5 header for upload verification.
+func computePackChecksum(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(h.Sum(nil)), nil
 }
 
 func maybeRunPushUpload(ctx context.Context, absPackPath string, upload remote.UploadInfo, transport config.RemoteTransport, onProgress UploadProgressCallback, step StepCallback) error {
