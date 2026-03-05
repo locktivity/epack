@@ -316,8 +316,8 @@ jobs:
 
   # Publish container images to GHCR
   container:
-    needs: [args]
-    if: ${{ always() && needs.args.result == 'success' }}
+    needs: [args, release]
+    if: ${{ always() && needs.args.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
