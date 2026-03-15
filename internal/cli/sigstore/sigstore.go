@@ -25,13 +25,14 @@ func (p *IdentityPolicy) HasPolicy() bool {
 // VerifierConfig holds all configuration for building a Sigstore verifier.
 type VerifierConfig struct {
 	// TrustRootPath is the path to a trust root JSON file.
-	// If empty, falls back to fetching from TUF.
+	// If empty, online verification falls back to fetching from TUF.
 	TrustRootPath string
 
 	// Identity policy for signer verification.
 	Identity IdentityPolicy
 
-	// Offline skips transparency log verification.
+	// Offline uses embedded Rekor/TSA timestamps instead of live transparency log lookups.
+	// Requires TrustRootPath.
 	Offline bool
 
 	// InsecureSkipIdentityCheck allows any valid signature without identity verification.
@@ -42,6 +43,10 @@ type VerifierConfig struct {
 // Returns options and any error encountered during setup.
 func BuildVerifierOptions(cfg VerifierConfig) ([]verify.Option, error) {
 	var opts []verify.Option
+
+	if cfg.Offline && cfg.TrustRootPath == "" {
+		return nil, fmt.Errorf("offline verification requires a trust root")
+	}
 
 	trOpt, err := LoadTrustRootOption(cfg.TrustRootPath)
 	if err != nil {

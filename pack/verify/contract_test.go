@@ -124,6 +124,10 @@ func TestVerifierContract_CallsRecorded(t *testing.T) {
 // Skips the test if network is unavailable (TUF fetch fails).
 func mustCreateSigstoreVerifier(t *testing.T, opts ...Option) *SigstoreVerifier {
 	t.Helper()
+	cfg := applyOptions(opts)
+	if cfg.offline && cfg.trustedRoot == nil {
+		opts = append(opts, WithTrustedRoot(mustLoadTestTrustedRoot(t)))
+	}
 	verifier, err := NewSigstoreVerifier(opts...)
 	if err != nil {
 		t.Skipf("skipping test, cannot create verifier (network may be unavailable): %v", err)
@@ -224,7 +228,7 @@ func TestSigstoreVerifier_ContextCancellation(t *testing.T) {
 
 	verifier := mustCreateSigstoreVerifier(t,
 		WithInsecureSkipIdentityCheck(),
-		WithOffline(), // Don't need network for this test
+		WithOffline(),
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -291,7 +295,6 @@ func TestSigstoreVerifier_VerifiedFalseNotReturned(t *testing.T) {
 func TestWithOfflineOption(t *testing.T) {
 	t.Parallel()
 
-	// Should succeed - offline mode doesn't require network
 	verifier := mustCreateSigstoreVerifier(t,
 		WithOffline(),
 		WithInsecureSkipIdentityCheck(),

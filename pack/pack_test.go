@@ -858,7 +858,7 @@ func TestPack_ListAttestations(t *testing.T) {
 		{
 			name:         "no attestations",
 			attestations: nil,
-			want:         nil,
+			want:         []string{},
 		},
 		{
 			name:         "single attestation",

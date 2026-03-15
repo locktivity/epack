@@ -394,7 +394,7 @@ func (r *Runner) testRemotePullFinalize(ctx context.Context) {
 			"environment": "test",
 		},
 		"finalize_token": "test-token",
-		"pack_digest":    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		"digest":         "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 	}
 	requestJSON, _ := json.Marshal(request)
 
@@ -413,7 +413,7 @@ func (r *Runner) testRemotePullFinalize(ctx context.Context) {
 		return
 	}
 
-	// REM-060: Accepts finalize_token and pack_digest (implicit)
+	// REM-060: Accepts finalize_token and digest (implicit)
 	r.pass("REM-060")
 
 	ok, _ := response["ok"].(bool)

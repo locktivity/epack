@@ -393,7 +393,7 @@ func mapSafeReaderError(err error) error {
 // ListAttestations returns a sorted list of attestation file paths.
 // Attestations are files in the attestations/ directory ending with .sigstore.json.
 func (p *Pack) ListAttestations() []string {
-	var attestations []string
+	attestations := []string{}
 	for path := range p.index {
 		if strings.HasPrefix(path, packpath.Attestations) && strings.HasSuffix(path, packpath.SigstoreExt) {
 			attestations = append(attestations, path)

@@ -5,6 +5,7 @@ package componentcmd
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -283,62 +284,72 @@ func isComponentInstalled(projectRoot, kind, name string) bool {
 
 // findLastPush finds the most recent push receipt.
 func findLastPush(projectRoot string) *pushStatus {
-	// Look for receipts in common locations
 	receiptsDir := filepath.Join(projectRoot, ".epack", "receipts", "push")
 	if _, err := os.Stat(receiptsDir); os.IsNotExist(err) {
 		return nil
 	}
 
-	entries, err := os.ReadDir(receiptsDir)
-	if err != nil || len(entries) == 0 {
+	var receiptPaths []string
+	if err := filepath.WalkDir(receiptsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || d.IsDir() {
+			return nil
+		}
+		if filepath.Ext(d.Name()) == ".json" {
+			receiptPaths = append(receiptPaths, path)
+		}
+		return nil
+	}); err != nil || len(receiptPaths) == 0 {
 		return nil
 	}
 
-	// Find most recent receipt
-	var latest os.DirEntry
+	var latest *pushStatus
 	var latestTime time.Time
-	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" {
-			info, err := e.Info()
-			if err == nil && info.ModTime().After(latestTime) {
-				latest = e
-				latestTime = info.ModTime()
+	for _, receiptPath := range receiptPaths {
+		data, err := os.ReadFile(receiptPath)
+		if err != nil {
+			continue
+		}
+
+		var receipt struct {
+			Remote    string    `json:"remote"`
+			CreatedAt time.Time `json:"created_at"`
+			Timestamp time.Time `json:"timestamp"`
+			Release   struct {
+				ReleaseID string `json:"release_id"`
+			} `json:"release"`
+			Pack struct {
+				Path string `json:"path"`
+			} `json:"pack"`
+		}
+		if err := json.Unmarshal(data, &receipt); err != nil {
+			continue
+		}
+
+		receiptTime := receipt.CreatedAt
+		if receiptTime.IsZero() {
+			receiptTime = receipt.Timestamp
+		}
+		if receiptTime.IsZero() {
+			info, err := os.Stat(receiptPath)
+			if err != nil {
+				continue
+			}
+			receiptTime = info.ModTime()
+		}
+
+		if latest == nil || receiptTime.After(latestTime) {
+			latestTime = receiptTime
+			latest = &pushStatus{
+				Remote:      receipt.Remote,
+				Timestamp:   receiptTime,
+				ReleaseID:   receipt.Release.ReleaseID,
+				PackPath:    receipt.Pack.Path,
+				ReceiptPath: receiptPath,
 			}
 		}
 	}
 
-	if latest == nil {
-		return nil
-	}
-
-	// Parse the receipt
-	receiptPath := filepath.Join(receiptsDir, latest.Name())
-	data, err := os.ReadFile(receiptPath)
-	if err != nil {
-		return nil
-	}
-
-	var receipt struct {
-		Remote    string    `json:"remote"`
-		Timestamp time.Time `json:"timestamp"`
-		Release   struct {
-			ReleaseID string `json:"release_id"`
-		} `json:"release"`
-		Pack struct {
-			Path string `json:"path"`
-		} `json:"pack"`
-	}
-	if err := json.Unmarshal(data, &receipt); err != nil {
-		return nil
-	}
-
-	return &pushStatus{
-		Remote:      receipt.Remote,
-		Timestamp:   receipt.Timestamp,
-		ReleaseID:   receipt.Release.ReleaseID,
-		PackPath:    receipt.Pack.Path,
-		ReceiptPath: receiptPath,
-	}
+	return latest
 }
 
 // formatTimeAgo formats a time as a human-readable "X ago" string.

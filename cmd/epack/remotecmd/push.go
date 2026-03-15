@@ -186,15 +186,16 @@ func outputPushResult(out *output.Writer, remoteName, packPath string, result *p
 
 	if out.IsJSON() {
 		return out.JSON(map[string]interface{}{
-			"pushed":        true,
-			"remote":        remoteName,
-			"pack":          packPath,
-			"release_id":    result.Release.ReleaseID,
-			"canonical_ref": result.Release.CanonicalRef,
-			"links":         result.Links,
-			"synced_runs":   result.SyncedRuns,
-			"failed_runs":   result.FailedRuns,
-			"receipt_path":  result.ReceiptPath,
+			"pushed":         true,
+			"remote":         remoteName,
+			"pack":           packPath,
+			"release_id":     result.Release.ReleaseID,
+			"canonical_ref":  result.Release.CanonicalRef,
+			"links":          result.Links,
+			"synced_runs":    result.SyncedRuns,
+			"failed_runs":    result.FailedRuns,
+			"failed_outputs": result.FailedOutputs,
+			"receipt_path":   result.ReceiptPath,
 		})
 	}
 
@@ -206,6 +207,12 @@ func outputPushResult(out *output.Writer, remoteName, packPath string, result *p
 	}
 	if len(result.SyncedRuns) > 0 {
 		out.Print("  • Runs:    %d synced\n", len(result.SyncedRuns))
+	}
+	if len(result.FailedOutputs) > 0 {
+		out.Print("  • Outputs: %d failed to upload\n", len(result.FailedOutputs))
+		for _, fo := range result.FailedOutputs {
+			out.Verbose("      %s: %s\n", fo.Path, fo.Reason)
+		}
 	}
 	if viewURL, ok := result.Links["view"]; ok {
 		out.Print("\nView:  %s\n", viewURL)

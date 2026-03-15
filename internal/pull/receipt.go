@@ -73,6 +73,9 @@ func (w *ReceiptWriter) Write(receipt *Receipt) (string, error) {
 	if baseDir == "" {
 		baseDir = ".epack/receipts/pull"
 	}
+	if err := safefile.EnsureBaseDir(baseDir); err != nil {
+		return "", fmt.Errorf("ensuring receipt base directory: %w", err)
+	}
 
 	// SECURITY: Validate remote name to prevent path traversal.
 	// Remote names come from user configuration and could contain "../" sequences.
@@ -85,9 +88,9 @@ func (w *ReceiptWriter) Write(receipt *Receipt) (string, error) {
 	shortDigest := shortDigestSuffix(receipt.Pack.Digest)
 	filename := fmt.Sprintf("%s_%s.json", timestamp, shortDigest)
 
-	// Build full path: <baseDir>/<remote>/<filename>
-	remoteDir := filepath.Join(baseDir, receipt.Remote)
-	path := filepath.Join(remoteDir, filename)
+	// Build relative and absolute paths: <baseDir>/<remote>/<filename>
+	relPath := filepath.Join(receipt.Remote, filename)
+	path := filepath.Join(baseDir, relPath)
 
 	// Marshal receipt to JSON
 	data, err := json.MarshalIndent(receipt, "", "  ")
@@ -98,7 +101,7 @@ func (w *ReceiptWriter) Write(receipt *Receipt) (string, error) {
 	// SECURITY: Use safefile.WriteFile for TOCTOU-safe directory creation
 	// and file writing. This prevents symlink attacks where an attacker swaps
 	// a directory for a symlink between MkdirAll and WriteFile.
-	if err := safefile.WriteFile(baseDir, path, data); err != nil {
+	if err := safefile.WriteFile(baseDir, relPath, data); err != nil {
 		return "", fmt.Errorf("writing receipt: %w", err)
 	}
 

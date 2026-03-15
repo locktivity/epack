@@ -302,7 +302,7 @@ func runListSources(cmd *cobra.Command, args []string) error {
 }
 
 func filterArtifacts(artifacts []pack.Artifact, pattern string) []pack.Artifact {
-	var result []pack.Artifact
+	result := []pack.Artifact{}
 	for _, a := range artifacts {
 		if matchPath(a.Path, pattern) {
 			result = append(result, a)
@@ -312,7 +312,7 @@ func filterArtifacts(artifacts []pack.Artifact, pattern string) []pack.Artifact 
 }
 
 func filterStrings(items []string, pattern string) []string {
-	var result []string
+	result := []string{}
 	for _, item := range items {
 		if matchPath(item, pattern) {
 			result = append(result, item)

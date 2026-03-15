@@ -102,7 +102,7 @@ var Requirements = []Requirement{
 	{ID: "REM-051", Level: LevelMust, Description: "pull.prepare returns download.url on success", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
 	{ID: "REM-052", Level: LevelMust, Description: "pull.prepare returns pack.digest for integrity verification", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
 	{ID: "REM-054", Level: LevelMust, Description: "pull.prepare returns finalize_token", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
-	{ID: "REM-060", Level: LevelMust, Description: "pull.finalize accepts finalize_token and pack_digest", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
+	{ID: "REM-060", Level: LevelMust, Description: "pull.finalize accepts finalize_token and digest", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
 	{ID: "REM-061", Level: LevelMust, Description: "pull.finalize returns confirmed: true on success", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
 	{ID: "REM-070", Level: LevelMust, Description: "Set ok: false for error responses", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
 	{ID: "REM-071", Level: LevelMust, Description: "Set type: error for error responses", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},

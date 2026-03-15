@@ -21,7 +21,8 @@ type PackOpts struct {
 	// TrustRootPath pins a specific Sigstore trust root instead of fetching from TUF.
 	TrustRootPath string
 
-	// Offline skips transparency log verification.
+	// Offline disables live trust-root lookups and relies on embedded Rekor or
+	// TSA timestamps only. Requires TrustRootPath.
 	Offline bool
 
 	// IntegrityOnly skips attestation verification, only checking digests.
@@ -50,11 +51,30 @@ type PackResult struct {
 	ArtifactCount    int
 	AttestationCount int
 
+	// Attestations contains details about each verified attestation.
+	// Only populated when attestations are verified (not in IntegrityOnly mode).
+	Attestations []AttestationDetail
+
 	// Errors from each verification step
 	ArtifactErrors    []string
 	PackDigestError   string
 	AttestationErrors []string
 	EmbeddedErrors    []string
+}
+
+// AttestationDetail contains identity information from a verified attestation.
+type AttestationDetail struct {
+	// Path is the attestation file path within the pack.
+	Path string `json:"path"`
+
+	// Issuer is the OIDC issuer that authenticated the signer.
+	Issuer string `json:"issuer,omitempty"`
+
+	// Subject is the certificate subject (email or URI from SAN).
+	Subject string `json:"subject,omitempty"`
+
+	// SignedAt is the timestamp from the transparency log entry.
+	SignedAt string `json:"signed_at,omitempty"`
 }
 
 // HasErrors returns true if any verification step failed.
@@ -101,7 +121,9 @@ func Pack(ctx context.Context, p *pack.Pack, opts PackOpts) (*PackResult, error)
 					"no attestations found (RequireAttestation specified)")
 			}
 		} else {
-			result.AttestationErrors = verifyAttestationsWorkflow(ctx, p, &manifest, attestations, opts)
+			details, errs := verifyAttestationsWorkflow(ctx, p, &manifest, attestations, opts)
+			result.Attestations = details
+			result.AttestationErrors = errs
 		}
 	}
 
@@ -224,23 +246,25 @@ func ValidateIdentityPolicy(opts PackOpts) error {
 }
 
 // verifyAttestationsWorkflow verifies all attestation signatures and statement semantics.
-func verifyAttestationsWorkflow(ctx context.Context, p *pack.Pack, manifest *pack.Manifest, attestations []string, opts PackOpts) []string {
+// Returns attestation details and any errors encountered.
+func verifyAttestationsWorkflow(ctx context.Context, p *pack.Pack, manifest *pack.Manifest, attestations []string, opts PackOpts) ([]AttestationDetail, []string) {
+	var details []AttestationDetail
 	var errors []string
 
 	// SECURITY: Require identity policy before attestation verification.
 	// Uses centralized ValidateIdentityPolicy to ensure consistent enforcement.
 	if err := ValidateIdentityPolicy(opts); err != nil {
-		return []string{err.Error()}
+		return nil, []string{err.Error()}
 	}
 
 	vopts, err := buildVerifierOptions(opts)
 	if err != nil {
-		return []string{fmt.Sprintf("failed to build verifier options: %v", err)}
+		return nil, []string{fmt.Sprintf("failed to build verifier options: %v", err)}
 	}
 
 	verifier, err := verify.NewSigstoreVerifier(vopts...)
 	if err != nil {
-		return []string{fmt.Sprintf("failed to create verifier: %v", err)}
+		return nil, []string{fmt.Sprintf("failed to create verifier: %v", err)}
 	}
 
 	for _, attPath := range attestations {
@@ -262,9 +286,20 @@ func verifyAttestationsWorkflow(ctx context.Context, p *pack.Pack, manifest *pac
 			errors = append(errors, fmt.Sprintf("%q: %v", attPath, err))
 			continue
 		}
+
+		// Capture attestation details from successful verification
+		detail := AttestationDetail{Path: attPath}
+		if result.Identity != nil {
+			detail.Issuer = result.Identity.Issuer
+			detail.Subject = result.Identity.Subject
+		}
+		if len(result.Timestamps) > 0 {
+			detail.SignedAt = result.Timestamps[0].UTC().Format("2006-01-02T15:04:05Z")
+		}
+		details = append(details, detail)
 	}
 
-	return errors
+	return details, errors
 }
 
 // verifyEmbeddedAttestationsWorkflow verifies embedded attestations in merged pack provenance.

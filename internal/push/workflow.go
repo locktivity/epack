@@ -106,8 +106,31 @@ type Result struct {
 	// FailedRuns lists run IDs that failed to sync.
 	FailedRuns []string
 
+	// FailedOutputs lists output files that failed to upload.
+	FailedOutputs []remote.FailedOutput
+
 	// ReceiptPath is the path to the written receipt file.
 	ReceiptPath string
+}
+
+// verifiedPack contains the local pack facts derived during verification.
+// It keeps workflow-specific data together while still projecting protocol
+// payloads as remote.PackInfo when needed.
+type verifiedPack struct {
+	remote.PackInfo
+	stream string
+}
+
+func (p verifiedPack) preparePackInfo() remote.PackInfo {
+	return p.PackInfo
+}
+
+func (p verifiedPack) finalizePackInfo() remote.PackInfo {
+	return remote.PackInfo{
+		Path:      p.Path,
+		Digest:    p.Digest,
+		SizeBytes: p.SizeBytes,
+	}
 }
 
 // Push uploads a pack to a remote registry.
@@ -123,7 +146,7 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	step := newPushStepEmitter(opts.OnStep)
-	absPackPath, packDigest, packSize, err := verifyPushPack(opts.PackPath, step)
+	verified, err := verifyPushPack(opts.PackPath, step)
 	if err != nil {
 		return nil, err
 	}
@@ -139,16 +162,16 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 	if !caps.SupportsPrepareFinalize() {
 		return nil, fmt.Errorf("adapter does not support prepare/finalize upload protocol")
 	}
-	target := buildPushTarget(remoteCfg, opts)
+	target := buildPushTarget(remoteCfg, opts, verified.stream)
 	releaseInfo := buildReleaseInfo(remoteCfg, opts)
-	prepResp, err := runPushPrepare(ctx, exec, opts.Remote, target, absPackPath, packDigest, packSize, releaseInfo, step)
+	prepResp, err := runPushPrepare(ctx, exec, opts.Remote, target, verified, releaseInfo, step)
 	if err != nil {
 		return nil, err
 	}
-	if err := maybeRunPushUpload(ctx, absPackPath, prepResp.Upload, remoteCfg.Transport, opts.OnUploadProgress, step); err != nil {
+	if err := maybeRunPushUpload(ctx, verified.Path, prepResp.Upload, remoteCfg.Transport, opts.OnUploadProgress, step); err != nil {
 		return nil, err
 	}
-	finalResp, err := runPushFinalize(ctx, exec, opts.Remote, target, absPackPath, packDigest, packSize, prepResp.FinalizeToken, step)
+	finalResp, err := runPushFinalize(ctx, exec, opts.Remote, target, verified, prepResp.FinalizeToken, step)
 	if err != nil {
 		return nil, err
 	}
@@ -157,11 +180,11 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 		Release: &finalResp.Release,
 		Links:   finalResp.Links,
 	}
-	if err := maybeSyncPushRuns(ctx, exec, target, packDigest, absPackPath, remoteCfg, opts, caps, step, result); err != nil {
+	if err := maybeSyncPushRuns(ctx, exec, target, verified, remoteCfg, opts, caps, step, result); err != nil {
 		return result, err
 	}
 
-	result.ReceiptPath = writePushReceipt(opts.Remote, target, absPackPath, packDigest, packSize, finalResp, result, stderr)
+	result.ReceiptPath = writePushReceipt(projectRoot, opts.Remote, target, verified, finalResp, result, stderr)
 
 	return result, nil
 }
@@ -192,7 +215,7 @@ func maybeSyncPushRuns(
 	ctx context.Context,
 	exec *remote.Executor,
 	target remote.TargetConfig,
-	packDigest, absPackPath string,
+	pack verifiedPack,
 	remoteCfg *config.RemoteConfig,
 	opts Options,
 	caps *remote.Capabilities,
@@ -203,9 +226,10 @@ func maybeSyncPushRuns(
 		return nil
 	}
 	step("Syncing runs", true)
-	syncedRuns, failedRuns, syncErr := syncRuns(ctx, exec, target, packDigest, absPackPath, remoteCfg, opts.RunsPaths)
+	syncedRuns, failedRuns, failedOutputs, syncErr := syncRuns(ctx, exec, target, pack.FileDigest, pack.Path, remoteCfg, opts.RunsPaths)
 	result.SyncedRuns = syncedRuns
 	result.FailedRuns = failedRuns
+	result.FailedOutputs = failedOutputs
 	step("Syncing runs", false)
 	if syncErr == nil || !remoteCfg.Runs.RequireSuccess {
 		return nil
@@ -221,28 +245,63 @@ func newPushStepEmitter(cb StepCallback) StepCallback {
 	}
 }
 
-func verifyPushPack(packPath string, step StepCallback) (string, string, int64, error) {
+// verifyPushPack verifies pack integrity and returns the pack data needed by the push workflow.
+func verifyPushPack(packPath string, step StepCallback) (verifiedPack, error) {
 	step("Verifying pack integrity", true)
 	defer step("Verifying pack integrity", false)
 
 	absPackPath, err := filepath.Abs(packPath)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("resolving pack path: %w", err)
+		return verifiedPack{}, fmt.Errorf("resolving pack path: %w", err)
 	}
 	p, err := pack.Open(absPackPath)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("opening pack: %w", err)
+		return verifiedPack{}, fmt.Errorf("opening pack: %w", err)
 	}
 	defer func() { _ = p.Close() }()
 
 	if err := p.VerifyIntegrity(); err != nil {
-		return "", "", 0, fmt.Errorf("pack verification failed: %w", err)
+		return verifiedPack{}, fmt.Errorf("pack verification failed: %w", err)
 	}
 	packInfo, err := os.Stat(absPackPath)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("getting pack info: %w", err)
+		return verifiedPack{}, fmt.Errorf("getting pack info: %w", err)
 	}
-	return absPackPath, p.Manifest().PackDigest, packInfo.Size(), nil
+
+	fileDigest, checksum, err := computePackFileMetadata(absPackPath)
+	if err != nil {
+		return verifiedPack{}, fmt.Errorf("computing pack file metadata: %w", err)
+	}
+
+	manifest := p.Manifest()
+	return verifiedPack{
+		PackInfo: remote.PackInfo{
+			Path:           absPackPath,
+			Digest:         manifest.PackDigest,
+			ManifestDigest: strings.TrimPrefix(p.ManifestDigest(), "sha256:"),
+			FileDigest:     fileDigest,
+			SizeBytes:      packInfo.Size(),
+			Checksum:       checksum,
+		},
+		stream: manifest.Stream,
+	}, nil
+}
+
+// computePackFileMetadata computes the file SHA256 digest and upload checksum
+// from the actual .epack bytes in one pass.
+func computePackFileMetadata(path string) (fileDigest, checksum string, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = f.Close() }()
+
+	fileHash := sha256.New()
+	checksumHash := md5.New()
+	if _, err := io.Copy(io.MultiWriter(fileHash, checksumHash), f); err != nil {
+		return "", "", err
+	}
+	return fmt.Sprintf("sha256:%x", fileHash.Sum(nil)), base64.StdEncoding.EncodeToString(checksumHash.Sum(nil)), nil
 }
 
 func loadPushRemoteConfig(opts Options, step StepCallback) (string, *config.JobConfig, *config.RemoteConfig, error) {
@@ -285,10 +344,11 @@ func preparePushAdapter(ctx context.Context, opts Options, step StepCallback, st
 	)
 }
 
-func buildPushTarget(remoteCfg *config.RemoteConfig, opts Options) remote.TargetConfig {
+func buildPushTarget(remoteCfg *config.RemoteConfig, opts Options, manifestStream string) remote.TargetConfig {
 	target := remote.TargetConfig{
 		Workspace:   remoteCfg.Target.Workspace,
 		Environment: remoteCfg.Target.Environment,
+		Stream:      manifestStream,
 	}
 	if opts.Workspace != "" {
 		target.Workspace = opts.Workspace
@@ -307,52 +367,25 @@ func buildReleaseInfo(remoteCfg *config.RemoteConfig, opts Options) remote.Relea
 		releaseInfo.Notes = remoteCfg.Release.Notes
 	}
 	if remoteCfg.Release.Source != nil {
-		releaseInfo.Source = buildSourceInfo(remoteCfg.Release.Source)
+		releaseInfo.BuildContext = buildBuildContext(remoteCfg.Release.Source)
 	}
 	return releaseInfo
 }
 
-func runPushPrepare(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, absPackPath, packDigest string, packSize int64, releaseInfo remote.ReleaseInfo, step StepCallback) (*remote.PrepareResponse, error) {
+func runPushPrepare(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, pack verifiedPack, releaseInfo remote.ReleaseInfo, step StepCallback) (*remote.PrepareResponse, error) {
 	step("Preparing upload", true)
 	defer step("Preparing upload", false)
 
-	// Compute MD5 checksum for upload verification (base64-encoded for S3)
-	checksum, err := computePackChecksum(absPackPath)
-	if err != nil {
-		return nil, fmt.Errorf("computing checksum: %w", err)
-	}
-
 	prepResp, err := exec.Prepare(ctx, &remote.PrepareRequest{
-		Remote: remoteName,
-		Target: target,
-		Pack: remote.PackInfo{
-			Path:      absPackPath,
-			Digest:    packDigest,
-			SizeBytes: packSize,
-			Checksum:  checksum,
-		},
+		Remote:  remoteName,
+		Target:  target,
+		Pack:    pack.preparePackInfo(),
 		Release: releaseInfo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("push.prepare failed: %w", err)
 	}
 	return prepResp, nil
-}
-
-// computePackChecksum computes the base64-encoded MD5 checksum of a pack file.
-// This format is required by S3's Content-MD5 header for upload verification.
-func computePackChecksum(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = f.Close() }()
-
-	h := md5.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(h.Sum(nil)), nil
 }
 
 func maybeRunPushUpload(ctx context.Context, absPackPath string, upload remote.UploadInfo, transport config.RemoteTransport, onProgress UploadProgressCallback, step StepCallback) error {
@@ -367,17 +400,13 @@ func maybeRunPushUpload(ctx context.Context, absPackPath string, upload remote.U
 	return nil
 }
 
-func runPushFinalize(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, absPackPath, packDigest string, packSize int64, finalizeToken string, step StepCallback) (*remote.FinalizeResponse, error) {
+func runPushFinalize(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, pack verifiedPack, finalizeToken string, step StepCallback) (*remote.FinalizeResponse, error) {
 	step("Finalizing release", true)
 	defer step("Finalizing release", false)
 	finalResp, err := exec.Finalize(ctx, &remote.FinalizeRequest{
-		Remote: remoteName,
-		Target: target,
-		Pack: remote.PackInfo{
-			Path:      absPackPath,
-			Digest:    packDigest,
-			SizeBytes: packSize,
-		},
+		Remote:        remoteName,
+		Target:        target,
+		Pack:          pack.finalizePackInfo(),
 		FinalizeToken: finalizeToken,
 	})
 	if err != nil {
@@ -386,20 +415,20 @@ func runPushFinalize(ctx context.Context, exec *remote.Executor, remoteName stri
 	return finalResp, nil
 }
 
-func writePushReceipt(remoteName string, target remote.TargetConfig, absPackPath, packDigest string, packSize int64, finalResp *remote.FinalizeResponse, result *Result, stderr io.Writer) string {
+func writePushReceipt(projectRoot, remoteName string, target remote.TargetConfig, pack verifiedPack, finalResp *remote.FinalizeResponse, result *Result, stderr io.Writer) string {
 	receipt := NewReceipt(
 		remoteName,
 		target,
-		absPackPath,
-		packDigest,
-		packSize,
+		pack.Path,
+		pack.Digest,
+		pack.SizeBytes,
 		&finalResp.Release,
 		finalResp.Links,
 		result.SyncedRuns,
 		result.FailedRuns,
 	)
 	writer := &ReceiptWriter{
-		BaseDir: filepath.Join(packpath.SidecarDir(absPackPath), "receipts", "push"),
+		BaseDir: filepath.Join(projectRoot, ".epack", "receipts", "push"),
 	}
 	receiptPath, err := writer.Write(receipt)
 	if err != nil {
@@ -408,25 +437,29 @@ func writePushReceipt(remoteName string, target remote.TargetConfig, absPackPath
 	return receiptPath
 }
 
-// buildSourceInfo builds source info from environment variables.
-func buildSourceInfo(src *config.RemoteReleaseSource) *remote.SourceInfo {
-	info := &remote.SourceInfo{}
+// buildBuildContext builds build context from environment variables.
+func buildBuildContext(src *config.RemoteReleaseSource) map[string]string {
+	ctx := make(map[string]string)
 
 	if src.Git != nil {
 		if src.Git.SHAEnv != "" {
-			info.GitSHA = os.Getenv(src.Git.SHAEnv)
+			if sha := os.Getenv(src.Git.SHAEnv); sha != "" {
+				ctx["git_sha"] = sha
+			}
 		}
 	}
 	if src.CI != nil {
 		if src.CI.RunURLEnv != "" {
-			info.CIRunURL = os.Getenv(src.CI.RunURLEnv)
+			if url := os.Getenv(src.CI.RunURLEnv); url != "" {
+				ctx["ci_run_url"] = url
+			}
 		}
 	}
 
-	if info.GitSHA == "" && info.CIRunURL == "" {
+	if len(ctx) == 0 {
 		return nil
 	}
-	return info
+	return ctx
 }
 
 // uploadPackWithProgress uploads the pack file using the provided upload info,
@@ -555,25 +588,25 @@ func syncRuns(
 	ctx context.Context,
 	exec *remote.Executor,
 	target remote.TargetConfig,
-	packDigest string,
+	fileDigest string,
 	packPath string,
 	cfg *config.RemoteConfig,
 	extraPaths []string,
-) (synced []string, failed []string, err error) {
+) (synced []string, failed []string, failedOutputs []remote.FailedOutput, err error) {
 	// Find run result files
 	runs, err := findRuns(packPath, cfg, extraPaths)
 	if err != nil {
-		return nil, nil, fmt.Errorf("finding runs: %w", err)
+		return nil, nil, nil, fmt.Errorf("finding runs: %w", err)
 	}
 
 	if len(runs) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	// Sync runs
 	req := &remote.RunsSyncRequest{
 		Target:     target,
-		PackDigest: packDigest,
+		FileDigest: fileDigest,
 		Runs:       runs,
 	}
 
@@ -583,7 +616,7 @@ func syncRuns(
 		for _, run := range runs {
 			failed = append(failed, run.RunID)
 		}
-		return nil, failed, err
+		return nil, failed, nil, err
 	}
 
 	for _, item := range resp.Items {
@@ -594,7 +627,7 @@ func syncRuns(
 		}
 	}
 
-	return synced, failed, nil
+	return synced, failed, resp.FailedOutputs, nil
 }
 
 // findRuns finds run result files for syncing.

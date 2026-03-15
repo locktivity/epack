@@ -125,8 +125,9 @@ func WithSubjectRegexp(pattern *regexp.Regexp) Option {
 	}
 }
 
-// WithOffline disables online transparency log verification.
-// When offline, verification relies on embedded timestamps only.
+// WithOffline disables live trust-root and transparency log lookups.
+// When offline, verification relies on embedded Rekor or TSA timestamps only
+// and requires a pinned trusted root via WithTrustedRoot.
 func WithOffline() Option {
 	return func(c *config) {
 		c.offline = true

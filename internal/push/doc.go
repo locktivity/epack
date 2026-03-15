@@ -26,7 +26,8 @@
 //
 // # Receipt Files
 //
-// Push operations write receipt files to .epack/receipts/push/<remote>/<timestamp>_<digest>.json.
+// Push operations write receipt files to the project-local
+// .epack/receipts/push/<remote>/<timestamp>_<digest>.json path.
 // These provide an audit trail of all push operations and include release information,
 // synced runs, and client metadata.
 //

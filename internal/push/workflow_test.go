@@ -2,10 +2,14 @@ package push
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/locktivity/epack/internal/remote"
 )
 
 func TestValidateAdapterURL(t *testing.T) {
@@ -135,6 +139,60 @@ func TestComputeSHA256(t *testing.T) {
 				t.Errorf("computeSHA256(%q) = %q, want %q", tt.data, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestComputePackFileMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.epack")
+	if err := os.WriteFile(path, []byte("hello world"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+
+	fileDigest, checksum, err := computePackFileMetadata(path)
+	if err != nil {
+		t.Fatalf("computePackFileMetadata() error = %v", err)
+	}
+	if fileDigest != "sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" {
+		t.Fatalf("computePackFileMetadata() fileDigest = %q", fileDigest)
+	}
+	if checksum != "XrY7u+Ae7tCTyyK7j1rNww==" {
+		t.Fatalf("computePackFileMetadata() checksum = %q", checksum)
+	}
+}
+
+func TestWritePushReceipt_UsesProjectReceiptDir(t *testing.T) {
+	projectRoot := t.TempDir()
+	packPath := filepath.Join(projectRoot, "dist", "sample.epack")
+
+	receiptPath := writePushReceipt(
+		projectRoot,
+		"origin",
+		remote.TargetConfig{Workspace: "acme"},
+		verifiedPack{
+			PackInfo: remote.PackInfo{
+				Path:      packPath,
+				Digest:    "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+				SizeBytes: 42,
+			},
+		},
+		&remote.FinalizeResponse{
+			Release: remote.ReleaseResult{
+				ReleaseID:    "rel_123",
+				PackDigest:   "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+				CreatedAt:    time.Date(2026, 3, 13, 12, 0, 0, 0, time.UTC),
+				CanonicalRef: "origin/acme/releases/rel_123",
+			},
+		},
+		&Result{},
+		io.Discard,
+	)
+
+	wantDir := filepath.Join(projectRoot, ".epack", "receipts", "push", "origin")
+	if filepath.Dir(receiptPath) != wantDir {
+		t.Fatalf("receipt dir = %q, want %q", filepath.Dir(receiptPath), wantDir)
+	}
+	if _, err := os.Stat(receiptPath); err != nil {
+		t.Fatalf("receipt file missing: %v", err)
 	}
 }
 

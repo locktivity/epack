@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"regexp"
 	"testing"
 	"time"
@@ -12,12 +13,7 @@ import (
 
 // TestNewSigstoreVerifier_InvalidBundle tests that invalid bundle JSON is rejected.
 func TestNewSigstoreVerifier_InvalidBundle(t *testing.T) {
-	// Skip if we can't create a verifier (requires network for TUF)
-	// Use InsecureSkipIdentityCheck since we're only testing bundle parsing
-	v, err := NewSigstoreVerifier(WithOffline(), WithInsecureSkipIdentityCheck())
-	if err != nil {
-		t.Skipf("skipping test, cannot create verifier: %v", err)
-	}
+	v := mustCreateSigstoreVerifier(t, WithOffline(), WithInsecureSkipIdentityCheck())
 
 	tests := []struct {
 		name        string
@@ -56,6 +52,56 @@ func TestNewSigstoreVerifier_InvalidBundle(t *testing.T) {
 				t.Errorf("Verify() unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestSigstoreVerifier_Offline_VerifiesCertificateSignedBundleWithIntegratedTimestamps(t *testing.T) {
+	t.Parallel()
+
+	bundleJSON, err := os.ReadFile("testdata/sigstore-js-provenance.sigstore.json")
+	if err != nil {
+		t.Fatalf("failed to read bundle fixture: %v", err)
+	}
+
+	verifier, err := NewSigstoreVerifier(
+		WithOffline(),
+		WithTrustedRoot(mustLoadTestTrustedRoot(t)),
+		WithInsecureSkipIdentityCheck(),
+	)
+	if err != nil {
+		t.Fatalf("failed to create verifier: %v", err)
+	}
+
+	result, err := verifier.Verify(context.Background(), bundleJSON)
+	if err != nil {
+		t.Fatalf("offline verification should succeed for Rekor-backed certificate bundle: %v", err)
+	}
+	if result == nil || !result.Verified {
+		t.Fatal("expected verified result")
+	}
+	if len(result.Timestamps) == 0 {
+		t.Fatal("expected offline verification to preserve embedded timestamp evidence")
+	}
+	if result.TransparencyLog == nil {
+		t.Fatal("expected transparency log details from embedded bundle")
+	}
+	if result.Identity == nil {
+		t.Fatal("expected signer identity from certificate bundle")
+	}
+}
+
+func TestNewSigstoreVerifier_OfflineRequiresTrustedRoot(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewSigstoreVerifier(
+		WithOffline(),
+		WithInsecureSkipIdentityCheck(),
+	)
+	if err == nil {
+		t.Fatal("expected offline verifier construction to fail without trusted root")
+	}
+	if !containsString(err.Error(), "requires a trusted root") {
+		t.Fatalf("expected trusted root error, got %v", err)
 	}
 }
 

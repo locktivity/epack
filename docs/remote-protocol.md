@@ -219,25 +219,27 @@ The push workflow consists of:
   "remote": "locktivity",
   "target": {
     "workspace": "acme",
-    "environment": "prod"
+    "environment": "prod",
+    "stream": "acme/evidence"
   },
   "pack": {
     "path": "packs/evidence.epack",
     "digest": "sha256:abc123...",
+    "manifest_digest": "sha256:def456...",
+    "file_digest": "sha256:789abc...",
     "size_bytes": 1048576
   },
   "release": {
     "labels": ["monthly", "soc2"],
     "notes": "Monthly evidence collection",
-    "source": {
+    "build_context": {
       "git_sha": "abc123def456",
       "ci_run_url": "https://github.com/..."
     }
   },
   "identity": {
     "mode": "oidc_token",
-    "token": "eyJhbGc...",
-    "claims": {"sub": "repo:org/repo:ref:refs/heads/main"}
+    "token": "eyJhbGc..."
   }
 }
 ```
@@ -272,11 +274,14 @@ The push workflow consists of:
   "remote": "locktivity",
   "target": {
     "workspace": "acme",
-    "environment": "prod"
+    "environment": "prod",
+    "stream": "acme/evidence"
   },
   "pack": {
     "path": "packs/evidence.epack",
     "digest": "sha256:abc123...",
+    "manifest_digest": "sha256:def456...",
+    "file_digest": "sha256:789abc...",
     "size_bytes": 1048576
   },
   "finalize_token": "tok_xyz789"
@@ -350,6 +355,7 @@ Pack references are mutually exclusive. Use one of:
   "type": "pull.prepare.result",
   "request_id": "req_abc123",
   "download": {
+    "method": "GET",
     "url": "https://storage.example.com/presigned-download-url",
     "headers": {
       "Accept": "application/zip"
@@ -381,7 +387,7 @@ Pack references are mutually exclusive. Use one of:
     "environment": "prod"
   },
   "finalize_token": "tok_xyz789",
-  "pack_digest": "sha256:abc123..."
+  "digest": "sha256:abc123..."
 }
 ```
 
@@ -409,7 +415,7 @@ Pack references are mutually exclusive. Use one of:
     "workspace": "acme",
     "environment": "prod"
   },
-  "pack_digest": "sha256:abc123...",
+  "file_digest": "sha256:file456...",
   "runs": [
     {
       "run_id": "2024-01-15T12-00-00-000000Z-000001",
@@ -434,11 +440,23 @@ Pack references are mutually exclusive. Use one of:
       "run_id": "2024-01-15T12-00-00-000000Z-000001",
       "status": "accepted"
     }
+  ],
+  "failed_outputs": [
+    {
+      "run_id": "2024-01-15T12-00-00-000000Z-000001",
+      "path": "outputs/large-report.pdf",
+      "reason": "file size 52428800 exceeds maximum 50000000 bytes"
+    }
   ]
 }
 ```
 
 Run sync statuses: `accepted`, `rejected`, `duplicate`
+
+The `failed_outputs` field (optional) lists output files that could not be uploaded. Reasons include:
+- File exceeds maximum size (50MB)
+- File path outside result directory
+- Upload or confirmation failure
 
 ## Authentication
 
@@ -539,10 +557,11 @@ Action hints provide guidance on resolving errors:
 
 ## Receipt Files
 
-Push operations write receipt files for audit trail:
+Push and pull operations write receipt files for audit trail in the project-local state directory:
 
 ```
 .epack/receipts/push/<remote>/<timestamp>_<digest>.json
+.epack/receipts/pull/<remote>/<timestamp>_<digest>.json
 ```
 
 Receipt files include:

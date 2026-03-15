@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+func validTrustRootPath() string {
+	return filepath.Join("..", "..", "..", "pack", "verify", "testdata", "public-good.json")
+}
+
 func TestIdentityPolicy_HasPolicy(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -139,8 +143,22 @@ func TestBuildVerifierOptions_NoOptionsWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildVerifierOptions_Offline(t *testing.T) {
+func TestBuildVerifierOptions_OfflineRequiresTrustRoot(t *testing.T) {
 	cfg := VerifierConfig{
+		Identity:                  IdentityPolicy{},
+		Offline:                   true,
+		InsecureSkipIdentityCheck: true, // need this since no identity
+	}
+
+	_, err := BuildVerifierOptions(cfg)
+	if err == nil {
+		t.Fatal("expected error for offline verification without trust root")
+	}
+}
+
+func TestBuildVerifierOptions_OfflineWithTrustRoot(t *testing.T) {
+	cfg := VerifierConfig{
+		TrustRootPath:             validTrustRootPath(),
 		Identity:                  IdentityPolicy{},
 		Offline:                   true,
 		InsecureSkipIdentityCheck: true, // need this since no identity
@@ -151,9 +169,9 @@ func TestBuildVerifierOptions_Offline(t *testing.T) {
 		t.Fatalf("BuildVerifierOptions failed: %v", err)
 	}
 
-	// Should have offline + insecure skip options
-	if len(opts) < 2 {
-		t.Errorf("expected at least 2 options, got %d", len(opts))
+	// Should have trusted root + offline + insecure skip options.
+	if len(opts) < 3 {
+		t.Errorf("expected at least 3 options, got %d", len(opts))
 	}
 }
 

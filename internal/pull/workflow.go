@@ -140,7 +140,7 @@ func Pull(ctx context.Context, opts Options) (*Result, error) {
 		return nil, err
 	}
 	finalizePull(ctx, exec, opts.Remote, target, prepResp, stderr, step)
-	result.ReceiptPath = writePullReceipt(opts.Remote, target, absOutputPath, &prepResp.Pack, result.Verified, stderr)
+	result.ReceiptPath = writePullReceipt(projectRoot, opts.Remote, target, absOutputPath, &prepResp.Pack, result.Verified, stderr)
 
 	return result, nil
 }
@@ -350,10 +350,10 @@ func finalizePull(ctx context.Context, exec *remote.Executor, remoteName string,
 	}
 }
 
-func writePullReceipt(remoteName string, target remote.TargetConfig, absOutputPath string, packMeta *remote.PackMetadata, verified bool, stderr io.Writer) string {
+func writePullReceipt(projectRoot, remoteName string, target remote.TargetConfig, absOutputPath string, packMeta *remote.PackMetadata, verified bool, stderr io.Writer) string {
 	receipt := NewReceipt(remoteName, target, absOutputPath, packMeta, verified)
 	writer := &ReceiptWriter{
-		BaseDir: filepath.Join(packpath.SidecarDir(absOutputPath), "receipts", "pull"),
+		BaseDir: filepath.Join(projectRoot, ".epack", "receipts", "pull"),
 	}
 	receiptPath, err := writer.Write(receipt)
 	if err != nil {

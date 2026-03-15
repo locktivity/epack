@@ -69,39 +69,35 @@ const (
 	ErrCodeNetworkError        = "network_error"
 )
 
-// TargetConfig specifies the remote target (workspace/environment).
+// TargetConfig specifies the remote target (workspace/environment/stream).
 type TargetConfig struct {
 	Workspace   string `json:"workspace,omitempty"`
 	Environment string `json:"environment,omitempty"`
+	Stream      string `json:"stream,omitempty"`
 }
 
 // PackInfo contains pack metadata for push operations.
 type PackInfo struct {
-	Path      string `json:"path"`
-	Digest    string `json:"digest"`
-	SizeBytes int64  `json:"size_bytes"`
-	Checksum  string `json:"checksum,omitempty"` // Base64-encoded MD5 for upload verification
+	Path           string `json:"path"`
+	Digest         string `json:"digest"`                    // pack_digest: SHA256 of artifact content
+	ManifestDigest string `json:"manifest_digest,omitempty"` // SHA256 of JCS-canonicalized manifest (primary identity)
+	FileDigest     string `json:"file_digest,omitempty"`     // SHA256 of .epack file (differs from Digest when attestations added)
+	SizeBytes      int64  `json:"size_bytes"`
+	Checksum       string `json:"checksum,omitempty"` // Base64-encoded MD5 for upload verification
 }
 
 // ReleaseInfo contains release metadata for push operations.
 type ReleaseInfo struct {
-	Labels []string    `json:"labels,omitempty"`
-	Notes  string      `json:"notes,omitempty"`
-	Source *SourceInfo `json:"source,omitempty"`
-}
-
-// SourceInfo contains source control metadata.
-type SourceInfo struct {
-	GitSHA   string `json:"git_sha,omitempty"`
-	CIRunURL string `json:"ci_run_url,omitempty"`
+	Labels       []string          `json:"labels,omitempty"`
+	Notes        string            `json:"notes,omitempty"`
+	BuildContext map[string]string `json:"build_context,omitempty"`
 }
 
 // AuthHints contains authentication hints for adapter requests.
 // This is passed to adapters to help them authenticate with remotes.
 type AuthHints struct {
-	Mode   string            `json:"mode,omitempty"`   // oidc_token, api_key, etc.
-	Token  string            `json:"token,omitempty"`  // For OIDC mode
-	Claims map[string]string `json:"claims,omitempty"` // OIDC claims
+	Mode  string `json:"mode,omitempty"`  // oidc_token, api_key, etc.
+	Token string `json:"token,omitempty"` // For OIDC mode
 }
 
 // RunInfo contains metadata about a single run to sync.
@@ -116,7 +112,7 @@ type UploadInfo struct {
 	Method    string            `json:"method"`
 	URL       string            `json:"url"`
 	Headers   map[string]string `json:"headers,omitempty"`
-	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
+	ExpiresAt string            `json:"expires_at,omitempty"`
 }
 
 // DownloadInfo contains presigned download details.
@@ -124,7 +120,7 @@ type DownloadInfo struct {
 	Method    string            `json:"method"`
 	URL       string            `json:"url"`
 	Headers   map[string]string `json:"headers,omitempty"`
-	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
+	ExpiresAt string            `json:"expires_at,omitempty"`
 }
 
 // PackRef specifies how to reference a pack for pull operations.
@@ -214,7 +210,7 @@ type RunsSyncRequest struct {
 	ProtocolVersion int          `json:"protocol_version"`
 	RequestID       string       `json:"request_id"`
 	Target          TargetConfig `json:"target"`
-	PackDigest      string       `json:"pack_digest"`
+	FileDigest      string       `json:"file_digest"` // SHA256 of .epack file (unique pack identifier)
 	Runs            []RunInfo    `json:"runs"`
 }
 
@@ -290,16 +286,25 @@ type PullFinalizeResponse struct {
 	OK        bool   `json:"ok"`
 	Type      string `json:"type"` // "pull.finalize.result"
 	RequestID string `json:"request_id"`
+	Confirmed bool   `json:"confirmed"`
 }
 
 // RunsSyncResponse is returned from runs.sync.
 type RunsSyncResponse struct {
-	OK        bool          `json:"ok"`
-	Type      string        `json:"type"` // "runs.sync.result"
-	RequestID string        `json:"request_id"`
-	Accepted  int           `json:"accepted"`
-	Rejected  int           `json:"rejected"`
-	Items     []RunSyncItem `json:"items"`
+	OK            bool           `json:"ok"`
+	Type          string         `json:"type"` // "runs.sync.result"
+	RequestID     string         `json:"request_id"`
+	Accepted      int            `json:"accepted"`
+	Rejected      int            `json:"rejected"`
+	Items         []RunSyncItem  `json:"items"`
+	FailedOutputs []FailedOutput `json:"failed_outputs,omitempty"`
+}
+
+// FailedOutput describes an output file that failed to upload or confirm.
+type FailedOutput struct {
+	RunID  string `json:"run_id"`
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 // AuthLoginResponse is returned from auth.login.

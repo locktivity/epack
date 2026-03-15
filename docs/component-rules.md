@@ -345,7 +345,7 @@ Remote adapters handle communication with registry backends.
 
 | ID | Level | Requirement |
 |----|-------|-------------|
-| REM-060 | MUST | Accept `finalize_token` and `pack_digest` |
+| REM-060 | MUST | Accept `finalize_token` and `digest` |
 | REM-061 | MUST | Return `confirmed: true` on success |
 
 ### 4.8 Error Responses

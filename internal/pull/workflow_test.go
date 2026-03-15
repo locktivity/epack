@@ -2,9 +2,14 @@ package pull
 
 import (
 	"context"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/locktivity/epack/internal/remote"
 )
 
 func TestValidateAdapterURL(t *testing.T) {
@@ -124,6 +129,36 @@ func TestValidateFileRoot_RelativePaths(t *testing.T) {
 			t.Error("expected error for path traversal, got nil")
 		}
 	})
+}
+
+func TestWritePullReceipt_UsesProjectReceiptDir(t *testing.T) {
+	projectRoot := t.TempDir()
+	outputPath := filepath.Join(projectRoot, "downloads", "sample.epack")
+
+	receiptPath := writePullReceipt(
+		projectRoot,
+		"origin",
+		remote.TargetConfig{Workspace: "acme"},
+		outputPath,
+		&remote.PackMetadata{
+			Digest:    "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+			SizeBytes: 42,
+			Stream:    "prod",
+			CreatedAt: time.Date(2026, 3, 13, 12, 0, 0, 0, time.UTC),
+			ReleaseID: "rel_123",
+			Version:   "1.0.0",
+		},
+		true,
+		io.Discard,
+	)
+
+	wantDir := filepath.Join(projectRoot, ".epack", "receipts", "pull", "origin")
+	if filepath.Dir(receiptPath) != wantDir {
+		t.Fatalf("receipt dir = %q, want %q", filepath.Dir(receiptPath), wantDir)
+	}
+	if _, err := os.Stat(receiptPath); err != nil {
+		t.Fatalf("receipt file missing: %v", err)
+	}
 }
 
 func TestSanitizeStreamName(t *testing.T) {

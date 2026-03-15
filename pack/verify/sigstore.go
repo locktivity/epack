@@ -62,6 +62,9 @@ func NewSigstoreVerifier(opts ...Option) (*SigstoreVerifier, error) {
 	cfg := applyOptions(opts)
 
 	trustedMaterial := cfg.trustedRoot
+	if cfg.offline && trustedMaterial == nil {
+		return nil, fmt.Errorf("offline verification requires a trusted root; use WithTrustedRoot")
+	}
 	if trustedMaterial == nil {
 		// Use Sigstore Public Good instance via LiveTrustedRoot
 		liveTrustedRoot, err := root.NewLiveTrustedRoot(tuf.DefaultOptions())
@@ -71,16 +74,16 @@ func NewSigstoreVerifier(opts ...Option) (*SigstoreVerifier, error) {
 		trustedMaterial = liveTrustedRoot
 	}
 
-	// Build verifier options
+	// Build verifier options.
+	//
+	// Offline mode means "do not rely on live services", not "ignore all timestamp
+	// evidence". Certificate-signed Sigstore bundles still need observer timestamps
+	// to establish certificate validity. For the normal Fulcio+Rekor path, those
+	// timestamps come from the embedded Rekor entry in the bundle.
 	var verifierOpts []verify.VerifierOption
-	if cfg.offline {
-		verifierOpts = append(verifierOpts, verify.WithNoObserverTimestamps())
-	} else {
-		if cfg.tlogThreshold > 0 {
-			verifierOpts = append(verifierOpts, verify.WithTransparencyLog(cfg.tlogThreshold))
-			// Use integrated timestamps from the transparency log entries
-			verifierOpts = append(verifierOpts, verify.WithIntegratedTimestamps(cfg.tlogThreshold))
-		}
+	if cfg.tlogThreshold > 0 {
+		verifierOpts = append(verifierOpts, verify.WithTransparencyLog(cfg.tlogThreshold))
+		verifierOpts = append(verifierOpts, verify.WithIntegratedTimestamps(cfg.tlogThreshold))
 	}
 	if cfg.tsaThreshold > 0 {
 		verifierOpts = append(verifierOpts, verify.WithSignedTimestamps(cfg.tsaThreshold))

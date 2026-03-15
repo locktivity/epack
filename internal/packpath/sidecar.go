@@ -6,7 +6,7 @@ import "strings"
 const PackExtension = ".epack"
 
 // SidecarSuffix is the suffix used for pack sidecar directories.
-// Sidecar directories contain tool runs, receipts, and other derived data.
+// Sidecar directories contain tool runs and other pack-local derived data.
 const SidecarSuffix = ".runs"
 
 // SidecarDir returns the sidecar directory path for a pack.

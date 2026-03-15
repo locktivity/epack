@@ -32,7 +32,7 @@ func init() {
 	verifyCmd.Flags().StringVar(&verifyIssuerRegexp, "issuer-regexp", "", "required OIDC issuer (regexp)")
 	verifyCmd.Flags().StringVar(&verifySubject, "subject", "", "required certificate subject (exact match)")
 	verifyCmd.Flags().StringVar(&verifySubjectRegexp, "subject-regexp", "", "required certificate subject (regexp)")
-	verifyCmd.Flags().BoolVar(&verifyOffline, "offline", false, "skip transparency log verification")
+	verifyCmd.Flags().BoolVar(&verifyOffline, "offline", false, "use embedded Rekor/TSA timestamps only; requires --trust-root")
 	verifyCmd.Flags().BoolVar(&verifyIntegrityOnly, "integrity-only", false, "only verify digests, skip attestation verification")
 	verifyCmd.Flags().BoolVar(&verifyRequireAttestation, "require-attestation", false, "fail if no attestations present")
 	verifyCmd.Flags().BoolVar(&verifyInsecureSkipIdentityCheck, "insecure-skip-identity-check", false,
@@ -81,8 +81,8 @@ Examples:
   # Require at least one attestation
   epack verify --require-attestation evidence.epack --issuer "https://accounts.google.com"
 
-  # Offline verification (skip transparency log)
-  epack verify --offline evidence.epack --subject "ci@example.com"
+  # Offline verification using embedded Rekor/TSA timestamps only
+  epack verify --offline --trust-root trusted_root.json evidence.epack --subject "ci@example.com"
 
   # INSECURE: Accept any valid signer (not recommended for production)
   epack verify evidence.epack --insecure-skip-identity-check`,
@@ -152,6 +152,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 			"pack_digest":        result.PackDigest,
 			"artifact_count":     result.ArtifactCount,
 			"attestation_count":  result.AttestationCount,
+			"attestations":       result.Attestations,
 			"artifact_errors":    result.ArtifactErrors,
 			"pack_digest_error":  result.PackDigestError,
 			"attestation_errors": result.AttestationErrors,
@@ -192,6 +193,9 @@ func validateVerifyFlags() error {
 			},
 		})
 	}
+	if verifyOffline && verifyTrustRoot == "" {
+		return exitError("--offline requires --trust-root")
+	}
 	return nil
 }
 
@@ -208,6 +212,26 @@ func printVerifyResults(out *output.Writer, packPath string, result *verify.Pack
 	out.KeyValue("Pack Digest", output.FormatDigest(result.PackDigest))
 	out.KeyValue("Artifacts", fmt.Sprintf("%d verified", result.ArtifactCount))
 	out.KeyValue("Attestations", formatVerifyAttestationStatus(palette, result.AttestationCount))
+
+	// Print attestation details if available
+	if len(result.Attestations) > 0 {
+		out.Println()
+		out.Print("%s\n", palette.Bold("Signers:"))
+		for _, att := range result.Attestations {
+			subject := att.Subject
+			if subject == "" {
+				subject = palette.Dim("(unknown)")
+			}
+			out.Print("  %s %s\n", palette.Green("✓"), subject)
+			if att.Issuer != "" {
+				out.Print("    Issuer: %s\n", att.Issuer)
+			}
+			if att.SignedAt != "" {
+				out.Print("    Signed: %s\n", att.SignedAt)
+			}
+		}
+	}
+
 	out.Println()
 	return nil
 }

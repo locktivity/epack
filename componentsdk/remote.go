@@ -80,30 +80,36 @@ type RemoteHandler interface {
 
 type PushPrepareRequest struct {
 	RequestID string       `json:"request_id"`
+	Remote    string       `json:"remote"`
 	Target    RemoteTarget `json:"target"`
 	Pack      PackInfo     `json:"pack"`
 	Release   ReleaseInfo  `json:"release"`
-	Identity  string       `json:"identity,omitempty"`
+	Identity  *AuthHints   `json:"identity,omitempty"`
 }
 
 type PushFinalizeRequest struct {
-	RequestID     string `json:"request_id"`
-	FinalizeToken string `json:"finalize_token"`
-	Identity      string `json:"identity,omitempty"`
+	RequestID     string       `json:"request_id"`
+	Remote        string       `json:"remote"`
+	Target        RemoteTarget `json:"target"`
+	Pack          PackInfo     `json:"pack"`
+	FinalizeToken string       `json:"finalize_token"`
 }
 
 type PullPrepareRequest struct {
 	RequestID string       `json:"request_id"`
+	Remote    string       `json:"remote"`
 	Target    RemoteTarget `json:"target"`
 	Ref       PullRef      `json:"ref"`
-	Identity  string       `json:"identity,omitempty"`
+	Identity  *AuthHints   `json:"identity,omitempty"`
 }
 
 type PullFinalizeRequest struct {
-	RequestID     string `json:"request_id"`
-	FinalizeToken string `json:"finalize_token"`
-	PackDigest    string `json:"pack_digest"`
-	Identity      string `json:"identity,omitempty"`
+	RequestID     string       `json:"request_id"`
+	Remote        string       `json:"remote"`
+	Target        RemoteTarget `json:"target"`
+	FinalizeToken string       `json:"finalize_token"`
+	Digest        string       `json:"digest,omitempty"`
+	PackDigest    string       `json:"pack_digest,omitempty"` // Deprecated: use Digest.
 }
 
 // Response types
@@ -131,20 +137,30 @@ type PullFinalizeResponse struct {
 // Shared types
 
 type RemoteTarget struct {
-	Workspace   string `json:"workspace"`
+	Workspace   string `json:"workspace,omitempty"`
 	Environment string `json:"environment,omitempty"`
 	Stream      string `json:"stream,omitempty"`
 }
 
 type PackInfo struct {
-	Digest    string `json:"digest"`
-	SizeBytes int64  `json:"size_bytes"`
-	Checksum  string `json:"checksum,omitempty"` // Base64-encoded MD5 for upload verification
+	Path           string `json:"path,omitempty"`
+	Digest         string `json:"digest"`                    // pack_digest: SHA256 of artifact content
+	ManifestDigest string `json:"manifest_digest,omitempty"` // SHA256 of JCS-canonicalized manifest
+	FileDigest     string `json:"file_digest,omitempty"`     // SHA256 of .epack file
+	SizeBytes      int64  `json:"size_bytes"`
+	Checksum       string `json:"checksum,omitempty"` // Base64-encoded MD5 for upload verification
 }
 
 type ReleaseInfo struct {
-	Version     string `json:"version,omitempty"`
-	Description string `json:"description,omitempty"`
+	Version      string            `json:"version,omitempty"`
+	Notes        string            `json:"notes,omitempty"`
+	Labels       []string          `json:"labels,omitempty"`
+	BuildContext map[string]string `json:"build_context,omitempty"`
+}
+
+type AuthHints struct {
+	Mode  string `json:"mode,omitempty"`
+	Token string `json:"token,omitempty"`
 }
 
 type PullRef struct {
@@ -162,19 +178,28 @@ type UploadInfo struct {
 }
 
 type DownloadInfo struct {
-	URL       string `json:"url"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	Method    string            `json:"method"`
+	URL       string            `json:"url"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	ExpiresAt string            `json:"expires_at,omitempty"`
 }
 
 type PackResult struct {
-	Digest    string `json:"digest"`
-	SizeBytes int64  `json:"size_bytes,omitempty"`
+	Digest    string   `json:"digest"`
+	SizeBytes int64    `json:"size_bytes,omitempty"`
+	Stream    string   `json:"stream,omitempty"`
+	CreatedAt string   `json:"created_at,omitempty"`
+	ReleaseID string   `json:"release_id,omitempty"`
+	Version   string   `json:"version,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
 }
 
 type ReleaseResult struct {
-	ReleaseID  string `json:"release_id"`
-	PackDigest string `json:"pack_digest"`
-	Version    string `json:"version,omitempty"`
+	ReleaseID    string `json:"release_id"`
+	PackDigest   string `json:"pack_digest"`
+	Version      string `json:"version,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	CanonicalRef string `json:"canonical_ref,omitempty"`
 }
 
 type Links struct {
@@ -188,6 +213,35 @@ type RemoteError struct {
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable,omitempty"`
 	Action    string `json:"action,omitempty"`
+}
+
+func (r *PullFinalizeRequest) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		RequestID     string       `json:"request_id"`
+		Remote        string       `json:"remote"`
+		Target        RemoteTarget `json:"target"`
+		FinalizeToken string       `json:"finalize_token"`
+		Digest        string       `json:"digest,omitempty"`
+		PackDigest    string       `json:"pack_digest,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*r = PullFinalizeRequest{
+		RequestID:     aux.RequestID,
+		Remote:        aux.Remote,
+		Target:        aux.Target,
+		FinalizeToken: aux.FinalizeToken,
+		Digest:        aux.Digest,
+		PackDigest:    aux.PackDigest,
+	}
+	if r.Digest == "" {
+		r.Digest = aux.PackDigest
+	}
+	if r.PackDigest == "" {
+		r.PackDigest = r.Digest
+	}
+	return nil
 }
 
 func (e RemoteError) Error() string { return e.Message }
