@@ -124,9 +124,18 @@ func buildConformanceCommand(ctx context.Context, kind, binaryPath string, verbo
 		return nil, fmt.Errorf("epack-conformance not found in PATH\n\nInstall with: go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest")
 	}
 
-	args := []string{kind, binaryPath}
+	args := []string{conformanceType(kind), binaryPath}
 	if verbose {
 		args = append([]string{"-v"}, args...)
 	}
 	return exec.CommandContext(ctx, conformancePath, args...), nil
+}
+
+func conformanceType(kind string) string {
+	switch kind {
+	case "remote_adapter":
+		return "remote"
+	default:
+		return kind
+	}
 }
