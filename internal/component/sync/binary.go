@@ -150,12 +150,10 @@ func ResolveRemoteBinaryPath(baseDir, remoteName string, cfg config.RemoteConfig
 		return "", fmt.Errorf("remote %q lock entry missing platform %s", remoteName, platform.Key(runtime.GOOS, runtime.GOARCH))
 	}
 
-	// Binary name is epack-remote-<adapter>
 	adapterName := cfg.EffectiveAdapter()
 	if adapterName == "" {
 		return "", fmt.Errorf("remote %q has no adapter name", remoteName)
 	}
-	binaryName := "epack-remote-" + adapterName
 
-	return InstallPath(baseDir, componenttypes.KindRemote, remoteName, locked.Version, binaryName)
+	return InstallPath(baseDir, componenttypes.KindRemote, remoteName, locked.Version, adapterName)
 }

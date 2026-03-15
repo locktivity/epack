@@ -38,8 +38,9 @@ type lockedComponent struct {
 // componentAccessor provides uniform access to locked components from lockfile.
 type componentAccessor interface {
 	GetLocked(lf *lockfile.LockFile, name string) (*lockedComponent, bool)
-	Kind() string                               // "collector" or "tool"
-	LockfileKind() componenttypes.ComponentKind // componenttypes.KindCollector or componenttypes.KindTool
+	Kind() string                               // "collector", "tool", or "remote"
+	LockfileKind() componenttypes.ComponentKind // componenttypes.KindCollector, KindTool, or KindRemote
+	BinaryName(name string) string              // Binary filename for installation
 }
 
 type collectorAccessor struct{}
@@ -48,6 +49,7 @@ func (collectorAccessor) Kind() string { return "collector" }
 func (collectorAccessor) LockfileKind() componenttypes.ComponentKind {
 	return componenttypes.KindCollector
 }
+func (collectorAccessor) BinaryName(name string) string { return name }
 func (collectorAccessor) GetLocked(lf *lockfile.LockFile, name string) (*lockedComponent, bool) {
 	locked, ok := lf.GetCollector(name)
 	if !ok {
@@ -65,6 +67,7 @@ type toolAccessor struct{}
 
 func (toolAccessor) Kind() string                               { return "tool" }
 func (toolAccessor) LockfileKind() componenttypes.ComponentKind { return componenttypes.KindTool }
+func (toolAccessor) BinaryName(name string) string              { return name }
 func (toolAccessor) GetLocked(lf *lockfile.LockFile, name string) (*lockedComponent, bool) {
 	locked, ok := lf.GetTool(name)
 	if !ok {
@@ -82,6 +85,7 @@ type remoteAccessor struct{}
 
 func (remoteAccessor) Kind() string                               { return "remote" }
 func (remoteAccessor) LockfileKind() componenttypes.ComponentKind { return componenttypes.KindRemote }
+func (remoteAccessor) BinaryName(name string) string              { return name }
 func (remoteAccessor) GetLocked(lf *lockfile.LockFile, name string) (*lockedComponent, bool) {
 	locked, ok := lf.GetRemote(name)
 	if !ok {
@@ -464,7 +468,8 @@ func getLockedComponentForPlatform(accessor componentAccessor, lf *lockfile.Lock
 }
 
 func computeInstallPaths(baseDir string, accessor componentAccessor, name, version string) (installPath, installDir string, err error) {
-	installPath, err = InstallPath(baseDir, accessor.LockfileKind(), name, version, name)
+	binaryName := accessor.BinaryName(name)
+	installPath, err = InstallPath(baseDir, accessor.LockfileKind(), name, version, binaryName)
 	if err != nil {
 		return "", "", fmt.Errorf("computing install path: %w", err)
 	}
