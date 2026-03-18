@@ -32,6 +32,6 @@ func main() {
 			"source":       ctx.Name(),
 			"items":        items,
 		}
-		return ctx.Emit(data)
+		return ctx.Emit([]componentsdk.CollectedArtifact{{Data: data}})
 	})
 }

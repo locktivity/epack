@@ -123,8 +123,12 @@ func TestAddCollectorArtifacts_OutputConsistency(t *testing.T) {
 				t.Fatalf("ParseCollectorOutput failed: %v", err)
 			}
 
+			// These test cases all produce a single artifact
+			if len(envelope.Artifacts) != 1 {
+				t.Fatalf("expected 1 artifact, got %d", len(envelope.Artifacts))
+			}
 			// RawData is already JSON bytes, so we compare directly
-			gotBytes := envelope.RawData
+			gotBytes := envelope.Artifacts[0].RawData
 
 			// Compare JSON values semantically by unmarshaling both
 			var gotAny any
@@ -187,8 +191,12 @@ func TestAddCollectorArtifacts_EnvelopeStripping(t *testing.T) {
 		t.Fatalf("ParseCollectorOutput failed: %v", err)
 	}
 
+	// This test case produces a single artifact
+	if len(envelope.Artifacts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(envelope.Artifacts))
+	}
 	// RawData is already the extracted data bytes
-	artifactBytes := envelope.RawData
+	artifactBytes := envelope.Artifacts[0].RawData
 
 	// The artifact should NOT contain protocol_version
 	var artifactMap map[string]any

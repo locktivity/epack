@@ -76,11 +76,13 @@ func (r *Runner) testCollectorOutput(ctx context.Context) {
 	}
 
 	// COL-002: Protocol envelope format
+	// Accepts either legacy "data" field or new "artifacts" array format
 	var envelope struct {
-		ProtocolVersion int             `json:"protocol_version"`
-		Data            json.RawMessage `json:"data"`
+		ProtocolVersion int               `json:"protocol_version"`
+		Data            json.RawMessage   `json:"data"`
+		Artifacts       []json.RawMessage `json:"artifacts"`
 	}
-	if err := json.Unmarshal(resultOutput, &envelope); err == nil && envelope.ProtocolVersion > 0 && len(envelope.Data) > 0 {
+	if err := json.Unmarshal(resultOutput, &envelope); err == nil && envelope.ProtocolVersion > 0 && (len(envelope.Data) > 0 || len(envelope.Artifacts) > 0) {
 		r.pass("COL-002")
 	} else {
 		// Not using envelope is allowed (COL-003)

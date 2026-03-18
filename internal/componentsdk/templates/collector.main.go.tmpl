@@ -57,5 +57,5 @@ func run(ctx componentsdk.CollectorContext) error {
 		"items":        results,
 	}
 
-	return ctx.Emit(data)
+	return ctx.Emit([]componentsdk.CollectedArtifact{{Data: data}})
 }

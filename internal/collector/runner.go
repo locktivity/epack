@@ -33,14 +33,46 @@ import (
 // CollectorOutput is the envelope returned by collectors via stdout.
 type CollectorOutput struct {
 	ProtocolVersion int `json:"protocol_version"`
+	// Artifacts contains parsed artifact entries from the collector output.
+	// For legacy format (single "data" field), this contains one artifact with no schema/path.
+	Artifacts []CollectorArtifact `json:"-"`
+}
+
+// CollectorArtifact represents a single artifact from collector output.
+type CollectorArtifact struct {
 	// RawData holds the raw JSON bytes of the data field to preserve numeric precision.
-	// Numbers in JSON can exceed float64 precision (2^53-1), so we keep them as raw bytes.
-	RawData json.RawMessage `json:"-"`
+	RawData json.RawMessage
+	// Schema is the semantic schema type (e.g., "evidencepack/cloud-posture@v1").
+	Schema string
+	// Path is the artifact path within the pack (e.g., "posture/cloud.json").
+	Path string
+}
+
+// PathOrDefault returns the artifact's path, or generates a default based on collector name and index.
+func (a CollectorArtifact) PathOrDefault(collector string, index int) string {
+	if a.Path != "" {
+		return a.Path
+	}
+	if index == 0 {
+		return fmt.Sprintf("artifacts/%s.json", collector)
+	}
+	return fmt.Sprintf("artifacts/%s_%d.json", collector, index)
+}
+
+// rawArtifactEntry is the JSON structure for artifacts in the protocol envelope.
+type rawArtifactEntry struct {
+	Data   json.RawMessage `json:"data"`
+	Schema string          `json:"schema"`
+	Path   string          `json:"path"`
 }
 
 // ParseCollectorOutput decodes collector stdout.
-// If stdout is not protocol-envelope JSON, it is preserved as RawData for lossless passthrough.
-// Handles both new format (with "type": "epack_result") and legacy format (without "type").
+// If stdout is not protocol-envelope JSON, it is preserved as a single artifact for lossless passthrough.
+// Handles:
+// - New format with "artifacts" array (multiple artifacts with schema/path)
+// - Legacy format with "data" field (single artifact)
+// - Plain JSON (single artifact, no envelope)
+// - Non-JSON (wrapped as string)
 func ParseCollectorOutput(output []byte) (*CollectorOutput, error) {
 	if !json.Valid(output) {
 		return wrapNonJSONOutput(output)
@@ -57,11 +89,13 @@ func ParseCollectorOutput(output []byte) (*CollectorOutput, error) {
 }
 
 // isResultEnvelope checks if raw JSON is a collector result envelope.
-// Accepts both new format (type: "epack_result") and legacy format (no type field).
+// Accepts envelopes with either "artifacts" array or legacy "data" field.
 func isResultEnvelope(raw map[string]json.RawMessage) bool {
 	_, hasVersion := raw["protocol_version"]
 	_, hasData := raw["data"]
-	if !hasVersion || !hasData {
+	_, hasArtifacts := raw["artifacts"]
+
+	if !hasVersion || (!hasData && !hasArtifacts) {
 		return false
 	}
 
@@ -75,19 +109,55 @@ func isResultEnvelope(raw map[string]json.RawMessage) bool {
 	return true
 }
 
-// extractEnvelope extracts protocol_version and data from a result envelope.
+// extractEnvelope extracts protocol_version and artifacts from a result envelope.
+// Handles both "artifacts" array format and legacy "data" field format.
 func extractEnvelope(raw map[string]json.RawMessage) (*CollectorOutput, error) {
 	var version int
 	if err := json.Unmarshal(raw["protocol_version"], &version); err != nil {
 		return nil, fmt.Errorf("parsing protocol_version: %w", err)
 	}
-	return &CollectorOutput{
+
+	output := &CollectorOutput{
 		ProtocolVersion: version,
-		RawData:         raw["data"],
-	}, nil
+	}
+
+	// Check for new "artifacts" array format first
+	if artifactsRaw, hasArtifacts := raw["artifacts"]; hasArtifacts {
+		artifacts, err := parseArtifactsArray(artifactsRaw)
+		if err != nil {
+			return nil, err
+		}
+		output.Artifacts = artifacts
+		return output, nil
+	}
+
+	// Fall back to legacy "data" field format (single artifact)
+	if dataRaw, hasData := raw["data"]; hasData {
+		output.Artifacts = []CollectorArtifact{{RawData: dataRaw}}
+		return output, nil
+	}
+
+	return nil, fmt.Errorf("envelope missing both 'artifacts' and 'data' fields")
 }
 
-// wrapNonJSONOutput wraps non-JSON output as a JSON string.
+// parseArtifactsArray parses the raw JSON artifacts array into CollectorArtifacts.
+func parseArtifactsArray(raw json.RawMessage) ([]CollectorArtifact, error) {
+	var entries []rawArtifactEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("parsing artifacts: %w", err)
+	}
+	artifacts := make([]CollectorArtifact, len(entries))
+	for i, e := range entries {
+		artifacts[i] = CollectorArtifact{
+			RawData: e.Data,
+			Schema:  e.Schema,
+			Path:    e.Path,
+		}
+	}
+	return artifacts, nil
+}
+
+// wrapNonJSONOutput wraps non-JSON output as a JSON string in a single artifact.
 func wrapNonJSONOutput(output []byte) (*CollectorOutput, error) {
 	quoted, err := json.Marshal(string(output))
 	if err != nil {
@@ -95,17 +165,17 @@ func wrapNonJSONOutput(output []byte) (*CollectorOutput, error) {
 	}
 	return &CollectorOutput{
 		ProtocolVersion: 0,
-		RawData:         quoted,
+		Artifacts:       []CollectorArtifact{{RawData: quoted}},
 	}, nil
 }
 
-// preserveAsRawData creates output with the original JSON preserved as raw data.
+// preserveAsRawData creates output with the original JSON preserved as a single artifact.
 func preserveAsRawData(output []byte) *CollectorOutput {
 	rawCopy := make([]byte, len(output))
 	copy(rawCopy, output)
 	return &CollectorOutput{
 		ProtocolVersion: 0,
-		RawData:         rawCopy,
+		Artifacts:       []CollectorArtifact{{RawData: rawCopy}},
 	}
 }
 

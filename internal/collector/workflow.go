@@ -364,9 +364,15 @@ func lockfileNeedsUpdateWorkflow(cfg *config.JobConfig, lf *lockfile.LockFile, p
 // RunAndBuild use this to ensure consistent output format.
 //
 // Output handling:
-//   - Protocol envelope output: extracts data field only (strips protocol_version)
-//   - Plain JSON output: uses as-is
+//   - Multiple artifacts: each artifact gets its own path (from artifact or default)
+//   - Protocol envelope output: extracts artifacts array or data field
+//   - Plain JSON output: uses as-is as single artifact
 //   - Non-JSON output: wraps in {"collector": name, "raw": output}
+//
+// Artifact paths:
+//   - If artifact specifies a path, use it directly
+//   - Otherwise, default to "artifacts/{collector}.json" for first artifact
+//   - For additional artifacts without paths, use "artifacts/{collector}_{index}.json"
 func addCollectorArtifacts(b *builder.Builder, results []RunResult) error {
 	for _, r := range results {
 		if !r.Success {
@@ -380,13 +386,13 @@ func addCollectorArtifacts(b *builder.Builder, results []RunResult) error {
 			return fmt.Errorf("parsing collector output for %s: %w", r.Collector, err)
 		}
 
-		// Use RawData directly to preserve exact numeric values.
-		// This avoids float64 precision loss for integers > 2^53-1.
-		artifactData := envelope.RawData
-
-		artifactPath := fmt.Sprintf("artifacts/%s.json", r.Collector)
-		if err := b.AddBytes(artifactPath, artifactData); err != nil {
-			return fmt.Errorf("adding artifact %s: %w", artifactPath, err)
+		// Add each artifact
+		for i, artifact := range envelope.Artifacts {
+			artifactPath := artifact.PathOrDefault(r.Collector, i)
+			opts := builder.ArtifactOptions{Schema: artifact.Schema}
+			if err := b.AddBytesWithOptions(artifactPath, artifact.RawData, opts); err != nil {
+				return fmt.Errorf("adding artifact %s: %w", artifactPath, err)
+			}
 		}
 	}
 	return nil

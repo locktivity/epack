@@ -194,17 +194,44 @@ Progress message fields:
 **Result message** (exactly 1, at end of execution):
 
 ```json
-{"type":"epack_result","protocol_version":1,"data":{"collected_at":"2026-02-19T14:30:00Z","items":[...]}}
+{"type":"epack_result","protocol_version":1,"artifacts":[{"data":{...},"schema":"evidencepack/posture@v1","path":"artifacts/posture.json"}]}
 ```
 
 Result message fields:
 - `type`: Always `"epack_result"`
 - `protocol_version`: Protocol version (currently 1)
-- `data`: The collected evidence data
+- `artifacts`: Array of collected artifacts
+
+Each artifact in the array has:
+- `data`: The collected evidence data (required)
+- `schema`: Schema identifier for typed artifacts (optional, e.g., `"evidencepack/cloud-posture@v1"`)
+- `path`: Output path in the pack (optional, defaults to `"artifacts/{collector}.json"`)
+
+**Multi-artifact example:**
+
+A collector can emit multiple artifacts with different schemas:
+
+```json
+{
+  "type": "epack_result",
+  "protocol_version": 1,
+  "artifacts": [
+    {
+      "data": {"repos": [...], "teams": [...]},
+      "path": "artifacts/github.json"
+    },
+    {
+      "data": {"provider": "github", "controls": [...]},
+      "schema": "evidencepack/vcs-posture@v1",
+      "path": "artifacts/github.vcs-posture.json"
+    }
+  ]
+}
+```
 
 **Legacy format (backwards compatible):**
 
-Collectors that omit the `type` field are still supported:
+Collectors using the older `data` field are still supported:
 
 ```json
 {
@@ -216,7 +243,7 @@ Collectors that omit the `type` field are still supported:
 }
 ```
 
-The parser detects legacy format (no `type` + has `protocol_version` + has `data`) and treats it as `"epack_result"`.
+The parser detects legacy format (has `data` instead of `artifacts`) and converts it to a single artifact.
 
 **Plain JSON:**
 
@@ -230,19 +257,32 @@ Plain text output is preserved as a JSON string.
 
 The parser handles output as follows:
 
-1. **Protocol envelope**: Extracts `protocol_version` and preserves exact bytes of `data` field (prevents float64 precision loss for large integers)
-2. **Plain JSON**: Preserves as-is with `protocol_version = 0`
-3. **Non-JSON text**: Quoted as JSON string with `protocol_version = 0`
+1. **Protocol envelope with `artifacts`**: Extracts each artifact's data, schema, and path
+2. **Protocol envelope with `data` (legacy)**: Converts to single artifact, preserving exact bytes (prevents float64 precision loss for large integers)
+3. **Plain JSON**: Preserves as-is as single artifact with `protocol_version = 0`
+4. **Non-JSON text**: Quoted as JSON string with `protocol_version = 0`
 
 ### Artifact Storage
 
-Collector output is stored in the evidence pack:
+Collector artifacts are stored in the evidence pack at paths specified by each artifact:
 
 ```
-artifacts/{collector_name}.json
+artifacts/{path_from_artifact}
 ```
 
-Example: `artifacts/github.json`, `artifacts/jira.json`
+**Path resolution:**
+- If artifact specifies `path`, use it directly
+- If no path, default to `artifacts/{collector}.json` for the first artifact
+- For additional artifacts without paths, use `artifacts/{collector}_{index}.json`
+
+**Example:** A GitHub collector emitting two artifacts:
+
+```
+artifacts/github.json              # Detailed GitHub-specific output
+artifacts/github.vcs-posture.json  # Normalized VCS posture format
+```
+
+Schema information (if provided) is recorded in the pack manifest for downstream tools.
 
 ### Output Limits
 
@@ -497,11 +537,13 @@ func main() {
         ctx.Status("Finalizing...")
 
         // Emit evidence (automatically wrapped with type and protocol_version)
-        return ctx.Emit(map[string]any{
-            "collected_at": time.Now().UTC().Format(time.RFC3339),
-            "source":       ctx.Name(),
-            "items":        items,
-        })
+        return ctx.Emit([]componentsdk.CollectedArtifact{{
+            Data: map[string]any{
+                "collected_at": time.Now().UTC().Format(time.RFC3339),
+                "source":       ctx.Name(),
+                "items":        items,
+            },
+        }})
     })
 }
 ```
@@ -509,9 +551,14 @@ func main() {
 SDK methods:
 - `ctx.Status(message)` - Report indeterminate status (e.g., "Connecting...")
 - `ctx.Progress(current, total, message)` - Report determinate progress (e.g., 5/100)
-- `ctx.Emit(data)` - Emit the final result (handles envelope automatically)
+- `ctx.Emit(artifacts)` - Emit collected artifacts (handles envelope automatically)
 - `ctx.Config()` - Access collector configuration from epack.yaml
 - `ctx.Name()` - Get collector name
+
+`CollectedArtifact` fields:
+- `Data` (required) - The evidence data (any JSON-serializable value)
+- `Schema` (optional) - Schema identifier for typed artifacts (e.g., `"evidencepack/cloud-posture@v1"`)
+- `Path` (optional) - Output path in the pack (defaults to `"artifacts/{collector}.json"`)
 
 ### Manual Implementation
 
@@ -526,9 +573,15 @@ import (
 )
 
 type Output struct {
-    Type            string      `json:"type"`
-    ProtocolVersion int         `json:"protocol_version"`
-    Data            interface{} `json:"data"`
+    Type            string     `json:"type"`
+    ProtocolVersion int        `json:"protocol_version"`
+    Artifacts       []Artifact `json:"artifacts"`
+}
+
+type Artifact struct {
+    Data   any    `json:"data"`
+    Schema string `json:"schema,omitempty"`
+    Path   string `json:"path,omitempty"`
 }
 
 type Evidence struct {
@@ -559,11 +612,13 @@ func main() {
         },
     }
 
-    // Output with protocol envelope (include type field)
+    // Output with protocol envelope
     output := Output{
         Type:            "epack_result",
         ProtocolVersion: 1,
-        Data:            evidence,
+        Artifacts: []Artifact{{
+            Data: evidence,
+        }},
     }
 
     json.NewEncoder(os.Stdout).Encode(output)

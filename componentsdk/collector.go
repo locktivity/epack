@@ -63,9 +63,23 @@ type CollectorContext interface {
 	// Example: Progress(5, 100, "Fetching repositories")
 	Progress(current, total int64, message string)
 
-	// Emit outputs the collected data. This should be called once.
-	// The data is wrapped in the protocol envelope automatically.
-	Emit(data any) error
+	// Emit outputs collected artifacts wrapped in the protocol envelope.
+	// Each artifact contains data and optional schema/path metadata.
+	Emit(artifacts []CollectedArtifact) error
+}
+
+// CollectedArtifact represents a single output artifact from a collector.
+type CollectedArtifact struct {
+	// Data is the artifact content (will be JSON-encoded).
+	Data any
+
+	// Schema is the semantic schema type (e.g., "evidencepack/cloud-posture@v1").
+	// Optional - if empty, the artifact has no schema type.
+	Schema string
+
+	// Path is the path within the pack (e.g., "posture/cloud.json").
+	// Optional - if empty, defaults to "artifacts/{collector}.json".
+	Path string
 }
 
 // Typed errors for specific exit codes
@@ -219,18 +233,35 @@ func (c *collectorContext) Progress(current, total int64, message string) {
 	defaultProgressWriter.writeProgress(current, total, message)
 }
 
-func (c *collectorContext) Emit(data any) error {
+func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 	if c.emitted {
 		return fmt.Errorf("Emit can only be called once")
 	}
+	if len(artifacts) == 0 {
+		return fmt.Errorf("at least one artifact is required")
+	}
 	c.emitted = true
 
-	// Wrap in protocol envelope (COL-002)
-	// Include "type" field for unified message format
+	// Build artifacts array for envelope
+	artifactEntries := make([]map[string]any, len(artifacts))
+	for i, a := range artifacts {
+		entry := map[string]any{
+			"data": a.Data,
+		}
+		if a.Schema != "" {
+			entry["schema"] = a.Schema
+		}
+		if a.Path != "" {
+			entry["path"] = a.Path
+		}
+		artifactEntries[i] = entry
+	}
+
+	// Wrap in protocol envelope with artifacts array
 	envelope := map[string]any{
 		"type":             "epack_result",
 		"protocol_version": componenttypes.CollectorProtocolVersion,
-		"data":             data,
+		"artifacts":        artifactEntries,
 	}
 
 	// Output to stdout (COL-001)

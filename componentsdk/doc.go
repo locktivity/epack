@@ -32,7 +32,7 @@
 //	        Version: "1.0.0",
 //	    }, func(ctx componentsdk.CollectorContext) error {
 //	        data := fetchFromAPI(ctx.Config(), ctx.Secret("API_TOKEN"))
-//	        return ctx.Emit(data)
+//	        return ctx.Emit([]componentsdk.CollectedArtifact{{Data: data}})
 //	    })
 //	}
 //

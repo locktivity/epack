@@ -954,11 +954,15 @@ func TestParseCollectorOutput_PreservesLargeIntegers(t *testing.T) {
 				t.Fatalf("ParseCollectorOutput() error: %v", err)
 			}
 
+			// These test cases all produce a single artifact
+			if len(output.Artifacts) != 1 {
+				t.Fatalf("expected 1 artifact, got %d", len(output.Artifacts))
+			}
 			// The RawData should contain the exact original bytes for the data field
 			// This means the large integer should be preserved exactly
-			if !bytes.Contains(output.RawData, []byte(largeInt)) {
+			if !bytes.Contains(output.Artifacts[0].RawData, []byte(largeInt)) {
 				t.Errorf("RawData does not contain exact large integer %s\nRawData: %s",
-					largeInt, string(output.RawData))
+					largeInt, string(output.Artifacts[0].RawData))
 			}
 		})
 	}
@@ -1009,11 +1013,96 @@ func TestParseCollectorOutput_EnvelopeExtraction(t *testing.T) {
 				t.Errorf("ProtocolVersion = %d, want %d", output.ProtocolVersion, tt.wantVersion)
 			}
 
-			if !bytes.Contains(output.RawData, []byte(tt.wantDataContain)) {
+			// These test cases all produce a single artifact
+			if len(output.Artifacts) != 1 {
+				t.Fatalf("expected 1 artifact, got %d", len(output.Artifacts))
+			}
+			if !bytes.Contains(output.Artifacts[0].RawData, []byte(tt.wantDataContain)) {
 				t.Errorf("RawData does not contain %q\nRawData: %s",
-					tt.wantDataContain, string(output.RawData))
+					tt.wantDataContain, string(output.Artifacts[0].RawData))
 			}
 		})
+	}
+}
+
+// TestParseCollectorOutput_BackwardsCompatibility verifies that old collectors using
+// the legacy "data" field format work correctly with the new parser that expects
+// the "artifacts" array format internally.
+func TestParseCollectorOutput_BackwardsCompatibility(t *testing.T) {
+	// Legacy format: single data field (what old collectors emit)
+	legacyOutput := `{"protocol_version":1,"data":{"collected_at":"2024-01-01T00:00:00Z","items":[1,2,3]}}`
+
+	// New format: artifacts array (what new collectors emit)
+	newOutput := `{"protocol_version":1,"artifacts":[{"data":{"collected_at":"2024-01-01T00:00:00Z","items":[1,2,3]}}]}`
+
+	legacy, err := ParseCollectorOutput([]byte(legacyOutput))
+	if err != nil {
+		t.Fatalf("ParseCollectorOutput(legacy) error: %v", err)
+	}
+
+	new, err := ParseCollectorOutput([]byte(newOutput))
+	if err != nil {
+		t.Fatalf("ParseCollectorOutput(new) error: %v", err)
+	}
+
+	// Both should produce exactly one artifact
+	if len(legacy.Artifacts) != 1 {
+		t.Errorf("legacy format: expected 1 artifact, got %d", len(legacy.Artifacts))
+	}
+	if len(new.Artifacts) != 1 {
+		t.Errorf("new format: expected 1 artifact, got %d", len(new.Artifacts))
+	}
+
+	// Both should have the same protocol version
+	if legacy.ProtocolVersion != new.ProtocolVersion {
+		t.Errorf("protocol version mismatch: legacy=%d, new=%d",
+			legacy.ProtocolVersion, new.ProtocolVersion)
+	}
+
+	// Both should have equivalent RawData content
+	if string(legacy.Artifacts[0].RawData) != string(new.Artifacts[0].RawData) {
+		t.Errorf("RawData mismatch:\nlegacy: %s\nnew:    %s",
+			legacy.Artifacts[0].RawData, new.Artifacts[0].RawData)
+	}
+}
+
+// TestParseCollectorOutput_MultipleArtifacts verifies the new multi-artifact format.
+func TestParseCollectorOutput_MultipleArtifacts(t *testing.T) {
+	input := `{
+		"protocol_version": 1,
+		"artifacts": [
+			{"data": {"type": "detailed"}, "path": "artifacts/detailed.json"},
+			{"data": {"type": "normalized"}, "schema": "example/schema@v1", "path": "artifacts/normalized.json"}
+		]
+	}`
+
+	output, err := ParseCollectorOutput([]byte(input))
+	if err != nil {
+		t.Fatalf("ParseCollectorOutput() error: %v", err)
+	}
+
+	if output.ProtocolVersion != 1 {
+		t.Errorf("ProtocolVersion = %d, want 1", output.ProtocolVersion)
+	}
+
+	if len(output.Artifacts) != 2 {
+		t.Fatalf("expected 2 artifacts, got %d", len(output.Artifacts))
+	}
+
+	// First artifact - no schema
+	if output.Artifacts[0].Path != "artifacts/detailed.json" {
+		t.Errorf("artifact[0].Path = %q, want %q", output.Artifacts[0].Path, "artifacts/detailed.json")
+	}
+	if output.Artifacts[0].Schema != "" {
+		t.Errorf("artifact[0].Schema = %q, want empty", output.Artifacts[0].Schema)
+	}
+
+	// Second artifact - with schema
+	if output.Artifacts[1].Path != "artifacts/normalized.json" {
+		t.Errorf("artifact[1].Path = %q, want %q", output.Artifacts[1].Path, "artifacts/normalized.json")
+	}
+	if output.Artifacts[1].Schema != "example/schema@v1" {
+		t.Errorf("artifact[1].Schema = %q, want %q", output.Artifacts[1].Schema, "example/schema@v1")
 	}
 }
 
