@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/locktivity/epack/cmd/epack/utilitycmd"
 	"github.com/locktivity/epack/internal/cli/output"
@@ -98,7 +97,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	workDir, err := resolveWorkDir()
+	workDir, err := resolveWorkDirFromConfigPath(installConfigPath)
 	if err != nil {
 		return err
 	}
@@ -128,7 +127,7 @@ func runInstallFrozen(ctx context.Context, cfg *config.JobConfig, workDir string
 
 	for _, r := range results {
 		if r.Verified {
-			out.Print("  verified %s@%s\n", r.Name, r.Version)
+			out.Print("  verified %s\n", r.DisplayName())
 		}
 	}
 
@@ -147,7 +146,7 @@ func runInstallAuto(ctx context.Context, cfg *config.JobConfig, workDir string, 
 	needsLock := false
 	lockfileUpdated := false
 
-	if cfg.HasSourceComponents() {
+	if cfg.NeedsLocking() {
 		lf, err := lockfile.Load(lockfilePath)
 		if os.IsNotExist(err) {
 			needsLock = true
@@ -157,8 +156,8 @@ func runInstallAuto(ctx context.Context, cfg *config.JobConfig, workDir string, 
 				Message: fmt.Sprintf("loading lockfile: %v", err),
 			}
 		} else {
-			// Check if lockfile needs updating (collectors and tools)
-			needsLock = lockfileNeedsUpdate(cfg, lf, platform)
+			// Check if lockfile needs updating (collectors, tools, remotes, profiles, overlays)
+			needsLock = lockfileNeedsUpdate(cfg, lf, platform, workDir)
 		}
 	}
 
@@ -195,7 +194,7 @@ func runInstallAuto(ctx context.Context, cfg *config.JobConfig, workDir string, 
 			} else if r.IsNew {
 				status = "added"
 			}
-			out.Print("  %s %s@%s (%s)\n", status, r.Name, r.Version, strings.Join(r.Platforms, ", "))
+			out.Print("  %s %s%s\n", status, r.DisplayName(), r.PlatformSuffix())
 		}
 		lockfileUpdated = true
 	}
@@ -217,9 +216,9 @@ func runInstallAuto(ctx context.Context, cfg *config.JobConfig, workDir string, 
 		if r.Skipped {
 			// External binary, skip output
 		} else if r.Installed {
-			out.Print("  installed %s@%s\n", r.Name, r.Version)
+			out.Print("  installed %s\n", r.DisplayName())
 		} else if r.Verified {
-			out.Print("  verified %s@%s\n", r.Name, r.Version)
+			out.Print("  verified %s\n", r.DisplayName())
 		}
 	}
 

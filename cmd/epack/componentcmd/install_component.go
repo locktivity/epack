@@ -540,7 +540,7 @@ func prepareInstallSync(newComponents []componentToInstall, out installOutput) (
 			Message: fmt.Sprintf("loading config: %v", err),
 		}
 	}
-	workDir, err := resolveWorkDir()
+	workDir, err := resolveWorkDirFromConfigPath(installComponentConfigPath)
 	if err != nil {
 		return nil, "", handleComponentError(err)
 	}

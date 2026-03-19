@@ -45,6 +45,8 @@ type Builder struct {
 	sources    []pack.Source
 	artifacts  []artifact
 	provenance *pack.Provenance
+	profiles   []pack.ProfileRef
+	overlays   []pack.ProfileRef
 }
 
 // artifact holds pending artifact data before building.
@@ -99,6 +101,34 @@ func (b *Builder) AddSourceWithOptions(name, version string, opts SourceOptions)
 // Use this when creating merged packs to document source packs.
 func (b *Builder) SetProvenance(prov pack.Provenance) *Builder {
 	b.provenance = &prov
+	return b
+}
+
+// SetProfiles sets the profile references for traceability.
+// These record which profiles were used when creating/validating the pack.
+// Note: For MVP, consumers provide profiles via tool config, not manifest.
+func (b *Builder) SetProfiles(profiles []pack.ProfileRef) *Builder {
+	// Defensive copy to prevent caller mutation
+	if len(profiles) > 0 {
+		b.profiles = make([]pack.ProfileRef, len(profiles))
+		copy(b.profiles, profiles)
+	} else {
+		b.profiles = nil
+	}
+	return b
+}
+
+// SetOverlays sets the overlay references for traceability.
+// These record which overlays were applied during validation.
+// Note: Consumers provide overlays via tool config, not manifest.
+func (b *Builder) SetOverlays(overlays []pack.ProfileRef) *Builder {
+	// Defensive copy to prevent caller mutation
+	if len(overlays) > 0 {
+		b.overlays = make([]pack.ProfileRef, len(overlays))
+		copy(b.overlays, overlays)
+	} else {
+		b.overlays = nil
+	}
 	return b
 }
 
@@ -345,6 +375,16 @@ func (b *Builder) buildManifest() ([]byte, error) {
 	// Add provenance if set
 	if b.provenance != nil {
 		manifest.Provenance = b.provenance
+	}
+
+	// Add profiles if set (traceability only)
+	if len(b.profiles) > 0 {
+		manifest.Profiles = b.profiles
+	}
+
+	// Add overlays if set (traceability only)
+	if len(b.overlays) > 0 {
+		manifest.Overlays = b.overlays
 	}
 
 	canonical := pack.BuildCanonicalArtifactList(&manifest)

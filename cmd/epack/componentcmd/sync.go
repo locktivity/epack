@@ -75,7 +75,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	workDir, err := resolveWorkDir()
+	workDir, err := resolveWorkDirFromConfigPath(syncConfigPath)
 	if err != nil {
 		return err
 	}
@@ -111,11 +111,11 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	for _, r := range results {
 		if r.Skipped {
-			out.Print("  external %s\n", r.Name)
+			out.Print("  external %s\n", r.DisplayName())
 		} else if r.Installed {
-			out.Print("  installed %s@%s\n", r.Name, r.Version)
+			out.Print("  installed %s\n", r.DisplayName())
 		} else if r.Verified {
-			out.Print("  verified %s@%s\n", r.Name, r.Version)
+			out.Print("  verified %s\n", r.DisplayName())
 		}
 	}
 

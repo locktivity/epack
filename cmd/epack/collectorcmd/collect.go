@@ -88,7 +88,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	workDir, err := resolveWorkDir()
+	workDir, err := resolveWorkDirFromConfigPath(collectConfigPath)
 	if err != nil {
 		return err
 	}

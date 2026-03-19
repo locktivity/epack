@@ -83,6 +83,10 @@ const (
 	// Component errors
 	AlreadyExists Code = "already_exists"
 	InvalidName   Code = "invalid_name"
+
+	// Profile errors
+	FileNotFound   Code = "file_not_found"
+	NotImplemented Code = "not_implemented"
 )
 
 // DocsBaseURL is the base URL for error documentation.

@@ -33,6 +33,7 @@ type (
 	Provenance          = packspec.Provenance
 	SourcePack          = packspec.SourcePack
 	EmbeddedAttestation = packspec.EmbeddedAttestation
+	ProfileRef          = packspec.ProfileRef
 )
 
 // ValidateManifestBytes validates raw manifest JSON without returning the parsed manifest.
@@ -102,6 +103,14 @@ func validateManifest(manifest *Manifest) error {
 		}
 	}
 
+	if err := validateProfileRefs(manifest.Profiles, "profiles"); err != nil {
+		return err
+	}
+
+	if err := validateProfileRefs(manifest.Overlays, "overlays"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -161,6 +170,24 @@ func validateSources(sources []Source) error {
 		}
 	}
 
+	return nil
+}
+
+// validateProfileRefs validates profile or overlay references.
+// The source field is required; digest is optional but must be valid if present.
+func validateProfileRefs(refs []ProfileRef, fieldName string) error {
+	for i, ref := range refs {
+		if ref.Source == "" {
+			return errors.E(errors.MissingRequiredField,
+				fmt.Sprintf("source is required for %s at index %d", fieldName, i), nil)
+		}
+		if ref.Digest != "" {
+			if err := digest.Validate(ref.Digest); err != nil {
+				return errors.E(errors.InvalidManifest,
+					fmt.Sprintf("invalid digest format for %s at index %d: %s", fieldName, i, ref.Digest), err)
+			}
+		}
+	}
 	return nil
 }
 

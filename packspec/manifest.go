@@ -11,6 +11,29 @@ type Manifest struct {
 	Sources     []Source    `json:"sources"`
 	Artifacts   []Artifact  `json:"artifacts"`
 	Provenance  *Provenance `json:"provenance,omitempty"`
+
+	// Profiles lists the profile configurations used to validate this pack.
+	// These are traceability references recorded by the producer for audit purposes.
+	// Note: For MVP, consumers provide profiles via tool config, not manifest.
+	Profiles []ProfileRef `json:"profiles,omitempty"`
+
+	// Overlays lists overlay configurations applied during validation.
+	// Recorded for traceability; consumers provide overlays via tool config.
+	Overlays []ProfileRef `json:"overlays,omitempty"`
+}
+
+// ProfileRef records a profile or overlay configuration for traceability.
+// This captures which profile was used when the pack was created/validated.
+type ProfileRef struct {
+	// Source is the original config path or source reference.
+	// For local paths: "profiles/hitrust.yaml"
+	// For remote sources: "evidencepack/soc2-basic@v1"
+	Source string `json:"source"`
+
+	// Digest is the SHA256 digest of the profile/overlay file content.
+	// Format: "sha256:<hex>" (64 hex characters after prefix).
+	// May be empty for older packs or if digest was not computed.
+	Digest string `json:"digest,omitempty"`
 }
 
 // Source represents a source collector that contributed artifacts.
@@ -93,6 +116,18 @@ func (m *Manifest) Copy() Manifest {
 	if m.Provenance != nil {
 		prov := m.Provenance.Copy()
 		cp.Provenance = &prov
+	}
+
+	// Deep copy Profiles slice
+	if m.Profiles != nil {
+		cp.Profiles = make([]ProfileRef, len(m.Profiles))
+		copy(cp.Profiles, m.Profiles)
+	}
+
+	// Deep copy Overlays slice
+	if m.Overlays != nil {
+		cp.Overlays = make([]ProfileRef, len(m.Overlays))
+		copy(cp.Overlays, m.Overlays)
 	}
 
 	return cp

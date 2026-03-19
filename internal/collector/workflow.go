@@ -14,6 +14,8 @@ import (
 	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/securitypolicy"
+	"github.com/locktivity/epack/internal/timestamp"
+	"github.com/locktivity/epack/pack"
 	"github.com/locktivity/epack/pack/builder"
 )
 
@@ -160,15 +162,15 @@ func collectAuto(ctx context.Context, cfg *config.JobConfig, workDir string, opt
 	// Check if we need to lock
 	needsLock := false
 
-	if cfg.HasSourceCollectors() {
+	if cfg.NeedsLocking() {
 		lf, err := lockfile.Load(lockfilePath)
 		if os.IsNotExist(err) {
 			needsLock = true
 		} else if err != nil {
 			return nil, fmt.Errorf("loading lockfile: %w", err)
 		} else {
-			// Check if lockfile needs updating
-			needsLock = lockfileNeedsUpdateWorkflow(cfg, lf, platform)
+			// Check if lockfile needs updating (including content drift)
+			needsLock = lockfileNeedsUpdateWorkflow(cfg, lf, platform, workDir)
 		}
 	}
 
@@ -301,10 +303,17 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 		})
 	}
 
+	// Record collection timestamp for all artifacts (freshness checking)
+	collectedAt := timestamp.Now().String()
+
 	// Add each collector's output as an artifact using shared helper
-	if err := addCollectorArtifacts(b, runResult.Results); err != nil {
+	if err := addCollectorArtifacts(b, runResult.Results, collectedAt); err != nil {
 		return nil, err
 	}
+
+	// Set profile and overlay refs for traceability (builder handles empty slices)
+	b.SetProfiles(buildProfileRefs(cfg, lf))
+	b.SetOverlays(buildOverlayRefs(cfg, lf))
 
 	if err := b.Build(outputPath); err != nil {
 		return nil, fmt.Errorf("building pack: %w", err)
@@ -312,6 +321,42 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 
 	result.PackPath = outputPath
 	return result, nil
+}
+
+// buildProfileRefs builds profile refs from config and lockfile for manifest traceability.
+func buildProfileRefs(cfg *config.JobConfig, lf *lockfile.LockFile) []pack.ProfileRef {
+	if len(cfg.Profiles) == 0 {
+		return nil
+	}
+
+	refs := make([]pack.ProfileRef, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		key := profile.Key()
+		ref := pack.ProfileRef{Source: key}
+		if lf != nil {
+			ref.Digest, _ = lf.GetProfileDigest(key)
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+// buildOverlayRefs builds overlay refs from config and lockfile for manifest traceability.
+func buildOverlayRefs(cfg *config.JobConfig, lf *lockfile.LockFile) []pack.ProfileRef {
+	if len(cfg.Overlays) == 0 {
+		return nil
+	}
+
+	refs := make([]pack.ProfileRef, 0, len(cfg.Overlays))
+	for _, overlay := range cfg.Overlays {
+		key := overlay.Key()
+		ref := pack.ProfileRef{Source: key}
+		if lf != nil {
+			ref.Digest, _ = lf.GetOverlayDigest(key)
+		}
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 // resolveOutputPath determines the output pack file path.
@@ -339,7 +384,9 @@ func defaultPackFilename() string {
 }
 
 // lockfileNeedsUpdateWorkflow checks if the lockfile needs updating for the given platform.
-func lockfileNeedsUpdateWorkflow(cfg *config.JobConfig, lf *lockfile.LockFile, platform string) bool {
+// This includes checking for missing entries AND content drift (profiles/overlays modified after locking).
+func lockfileNeedsUpdateWorkflow(cfg *config.JobConfig, lf *lockfile.LockFile, platform, workDir string) bool {
+	// Check source collectors
 	for name, collectorCfg := range cfg.Collectors {
 		// Skip external collectors
 		if collectorCfg.Source == "" {
@@ -356,6 +403,26 @@ func lockfileNeedsUpdateWorkflow(cfg *config.JobConfig, lf *lockfile.LockFile, p
 			return true // Platform not locked
 		}
 	}
+
+	// Check profiles (need lockfile entries with digest for verification)
+	for _, profile := range cfg.Profiles {
+		if _, ok := lf.GetProfileDigest(profile.Key()); !ok {
+			return true
+		}
+	}
+
+	// Check overlays (need lockfile entries with digest for verification)
+	for _, overlay := range cfg.Overlays {
+		if _, ok := lf.GetOverlayDigest(overlay.Key()); !ok {
+			return true
+		}
+	}
+
+	// Check for content drift (profiles/overlays modified after locking)
+	if sync.HasProfileDigestDrift(cfg, lf, workDir) {
+		return true
+	}
+
 	return false
 }
 
@@ -373,7 +440,9 @@ func lockfileNeedsUpdateWorkflow(cfg *config.JobConfig, lf *lockfile.LockFile, p
 //   - If artifact specifies a path, use it directly
 //   - Otherwise, default to "artifacts/{collector}.json" for first artifact
 //   - For additional artifacts without paths, use "artifacts/{collector}_{index}.json"
-func addCollectorArtifacts(b *builder.Builder, results []RunResult) error {
+//
+// The collectedAt timestamp is recorded on all artifacts for freshness checking by validators.
+func addCollectorArtifacts(b *builder.Builder, results []RunResult, collectedAt string) error {
 	for _, r := range results {
 		if !r.Success {
 			continue
@@ -389,7 +458,10 @@ func addCollectorArtifacts(b *builder.Builder, results []RunResult) error {
 		// Add each artifact
 		for i, artifact := range envelope.Artifacts {
 			artifactPath := artifact.PathOrDefault(r.Collector, i)
-			opts := builder.ArtifactOptions{Schema: artifact.Schema}
+			opts := builder.ArtifactOptions{
+				Schema:      artifact.Schema,
+				CollectedAt: collectedAt,
+			}
 			if err := b.AddBytesWithOptions(artifactPath, artifact.RawData, opts); err != nil {
 				return fmt.Errorf("adding artifact %s: %w", artifactPath, err)
 			}
@@ -486,10 +558,18 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 
 	b := builder.New(cfg.Stream)
 
+	// Record collection timestamp for all artifacts (freshness checking)
+	collectedAt := timestamp.Now().String()
+
 	// Add each collector's output as an artifact using shared helper
-	if err := addCollectorArtifacts(b, runResult.Results); err != nil {
+	if err := addCollectorArtifacts(b, runResult.Results, collectedAt); err != nil {
 		return nil, err
 	}
+
+	lockfilePath := filepath.Join(opts.WorkDir, lockfile.FileName)
+	lf, _ := lockfile.Load(lockfilePath)
+	b.SetProfiles(buildProfileRefs(cfg, lf))
+	b.SetOverlays(buildOverlayRefs(cfg, lf))
 
 	if err := b.Build(outputPath); err != nil {
 		return nil, fmt.Errorf("building pack: %w", err)

@@ -110,7 +110,7 @@ func TestAddCollectorArtifacts_OutputConsistency(t *testing.T) {
 				},
 			}
 
-			err := addCollectorArtifacts(b, results)
+			err := addCollectorArtifacts(b, results, "2024-01-15T10:30:00Z")
 			if err != nil {
 				t.Fatalf("addCollectorArtifacts failed: %v", err)
 			}
@@ -172,7 +172,7 @@ func TestAddCollectorArtifacts_SkipsFailedCollectors(t *testing.T) {
 		},
 	}
 
-	err := addCollectorArtifacts(b, results)
+	err := addCollectorArtifacts(b, results, "2024-01-15T10:30:00Z")
 	if err != nil {
 		t.Fatalf("addCollectorArtifacts failed: %v", err)
 	}

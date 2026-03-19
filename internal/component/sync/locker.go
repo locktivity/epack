@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/github"
@@ -51,11 +52,28 @@ type LockOpts struct {
 // LockResult contains the result of a lock operation.
 type LockResult struct {
 	Name      string // Component name (collector, tool, or remote)
-	Kind      string // "collector", "tool", or "remote"
+	Kind      string // "collector", "tool", "remote", "profile", or "overlay"
 	Version   string
 	Platforms []string
 	IsNew     bool
 	Updated   bool
+}
+
+// DisplayName returns the formatted component name for output.
+// Components with versions display as "name@version", others as just "name".
+func (r LockResult) DisplayName() string {
+	if r.Version != "" {
+		return r.Name + "@" + r.Version
+	}
+	return r.Name
+}
+
+// PlatformSuffix returns the platform list formatted for display, or empty string if none.
+func (r LockResult) PlatformSuffix() string {
+	if len(r.Platforms) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(r.Platforms, ", ") + ")"
 }
 
 // Lock resolves all source-based collectors and tools in config and updates lockfile.
@@ -81,15 +99,32 @@ func (l *Locker) Lock(ctx context.Context, cfg *config.JobConfig, opts LockOpts)
 		return nil, err
 	}
 
+	// Lock profiles and overlays (computes digests for local files)
+	profileResults, err := LockProfiles(cfg, lf, filepath.Dir(l.LockfilePath))
+	if err != nil {
+		return nil, fmt.Errorf("locking profiles: %w", err)
+	}
+
 	// Save lockfile
 	if err := lf.Save(l.LockfilePath); err != nil {
 		return nil, fmt.Errorf("saving lockfile: %w", err)
 	}
 
-	results := make([]LockResult, 0, len(collectorResults)+len(toolResults)+len(remoteResults))
+	results := make([]LockResult, 0, len(collectorResults)+len(toolResults)+len(remoteResults)+len(profileResults))
 	results = append(results, collectorResults...)
 	results = append(results, toolResults...)
 	results = append(results, remoteResults...)
+
+	// Convert profile results to LockResult format
+	for _, pr := range profileResults {
+		results = append(results, LockResult{
+			Name:    pr.Source,
+			Kind:    pr.Kind,
+			IsNew:   pr.IsNew,
+			Updated: pr.Updated,
+		})
+	}
+
 	return results, nil
 }
 

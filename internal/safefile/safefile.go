@@ -246,35 +246,78 @@ func ValidateRegularFile(root, relPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := checkRegularFile(root, abs, relPath); err != nil {
+		return "", err
+	}
+	return abs, nil
+}
 
-	// Check for symlinks in the path from root to abs
-	hasSymlink, err := ContainsSymlinkFrom(abs, root)
+// ValidateAbsoluteFile validates that absPath is a regular file contained within root.
+// Unlike ValidateRegularFile which takes a relative path, this takes an already-absolute path
+// and verifies it's contained within root. Use this when config normalization has already
+// resolved the path to absolute form.
+//
+// Returns the validated absolute path if valid. Rejects:
+// - Paths not contained within root
+// - Symlinks anywhere in the path
+// - Non-regular files
+func ValidateAbsoluteFile(root, absPath string) (string, error) {
+	rel, err := checkContainment(root, absPath)
 	if err != nil {
 		return "", err
 	}
+	if err := checkRegularFile(root, absPath, rel); err != nil {
+		return "", err
+	}
+	return absPath, nil
+}
+
+// checkContainment verifies absPath is contained within root.
+// Returns the relative path for use in error messages.
+func checkContainment(root, absPath string) (string, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolving root: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return "", errors.E(errors.PathTraversal,
+			fmt.Sprintf("path not relative to root: %s", absPath), err)
+	}
+	if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", errors.E(errors.PathTraversal,
+			fmt.Sprintf("path escapes root directory: %s", absPath), nil)
+	}
+	return rel, nil
+}
+
+// checkRegularFile verifies absPath has no symlinks and is a regular file.
+// displayPath is used in error messages (typically the relative or user-provided path).
+func checkRegularFile(root, absPath, displayPath string) error {
+	hasSymlink, err := ContainsSymlinkFrom(absPath, root)
+	if err != nil {
+		return err
+	}
 	if hasSymlink {
-		return "", errors.E(errors.SymlinkNotAllowed,
-			fmt.Sprintf("symlink in path: %s", relPath), nil)
+		return errors.E(errors.SymlinkNotAllowed,
+			fmt.Sprintf("symlink in path: %s", displayPath), nil)
 	}
 
-	// Check file type
-	info, err := os.Lstat(abs)
+	info, err := os.Lstat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("file does not exist: %s", relPath)
+			return fmt.Errorf("file does not exist: %s", displayPath)
 		}
-		return "", fmt.Errorf("cannot stat file: %w", err)
+		return fmt.Errorf("cannot stat file: %w", err)
 	}
-
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.E(errors.SymlinkNotAllowed,
+			fmt.Sprintf("path is a symlink: %s", displayPath), nil)
+	}
 	if !info.Mode().IsRegular() {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", errors.E(errors.SymlinkNotAllowed,
-				fmt.Sprintf("path is a symlink: %s", relPath), nil)
-		}
-		return "", fmt.Errorf("not a regular file: %s (mode: %s)", relPath, info.Mode())
+		return fmt.Errorf("not a regular file: %s (mode: %s)", displayPath, info.Mode())
 	}
-
-	return abs, nil
+	return nil
 }
 
 // Rename atomically moves a file, creating destination directories as needed.

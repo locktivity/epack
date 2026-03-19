@@ -25,6 +25,7 @@ type Syncer struct {
 	Registry     RegistryClient
 	LockfilePath string
 	BaseDir      string // .epack directory
+	WorkDir      string // Project root (parent of .epack)
 }
 
 // lockedComponent abstracts the common fields between LockedCollector and LockedTool.
@@ -105,6 +106,7 @@ func NewSyncer(workDir string) *Syncer {
 		Registry:     NewGitHubRegistry(),
 		LockfilePath: filepath.Join(workDir, lockfile.FileName),
 		BaseDir:      filepath.Join(workDir, ".epack"),
+		WorkDir:      workDir,
 	}
 }
 
@@ -115,6 +117,7 @@ func NewSyncerWithRegistry(registry RegistryClient, workDir string) *Syncer {
 		Registry:     registry,
 		LockfilePath: filepath.Join(workDir, lockfile.FileName),
 		BaseDir:      filepath.Join(workDir, ".epack"),
+		WorkDir:      workDir,
 	}
 }
 
@@ -142,12 +145,23 @@ type SyncUnsafeOverrides struct {
 // SyncResult contains the result of syncing a component.
 type SyncResult struct {
 	Name      string // Component name
-	Kind      string // "collector" or "tool"
+	Kind      string // "collector", "tool", "remote", "profile", or "overlay"
 	Version   string
 	Platform  string
 	Installed bool
 	Verified  bool
 	Skipped   bool // External binary, skipped
+}
+
+// DisplayName returns the formatted component name for output.
+// Components with versions display as "name@version".
+// File-based components (profile/overlay) display as "kind name".
+// External binaries display as just "name".
+func (r SyncResult) DisplayName() string {
+	if r.Version != "" {
+		return r.Name + "@" + r.Version
+	}
+	return r.Name
 }
 
 // Sync downloads and verifies all components for the current platform.
@@ -205,6 +219,36 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 	}
 	results = append(results, remoteResults...)
 
+	// Sync profiles (verify digests match lockfile)
+	profileResults, err := s.SyncProfiles(ctx, cfg, lf, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert profile results to SyncResult format
+	for _, pr := range profileResults {
+		results = append(results, SyncResult{
+			Name:     pr.Source,
+			Kind:     pr.Kind,
+			Verified: pr.Verified, // Only true if digest was verified against lockfile
+		})
+	}
+
+	// Sync overlays (verify digests match lockfile)
+	overlayResults, err := s.SyncOverlays(ctx, cfg, lf, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert overlay results to SyncResult format
+	for _, or := range overlayResults {
+		results = append(results, SyncResult{
+			Name:     or.Source,
+			Kind:     or.Kind,
+			Verified: or.Verified, // Only true if digest was verified against lockfile
+		})
+	}
+
 	return results, nil
 }
 
@@ -250,7 +294,80 @@ func (s *Syncer) validateAlignmentWithOpts(cfg *config.JobConfig, lf *lockfile.L
 	if err := s.validateCollectorAlignment(cfg, lf, opts.SkipStaleEntryCheck); err != nil {
 		return err
 	}
-	return s.validateRemoteAlignment(cfg, lf, opts.SkipStaleEntryCheck)
+	if err := s.validateToolAlignment(cfg, lf, opts.SkipStaleEntryCheck); err != nil {
+		return err
+	}
+	if err := s.validateRemoteAlignment(cfg, lf, opts.SkipStaleEntryCheck); err != nil {
+		return err
+	}
+	// Validate profile alignment (profiles in config must exist in lockfile)
+	return ValidateProfileAlignment(cfg, lf, opts.SkipStaleEntryCheck)
+}
+
+func (s *Syncer) validateToolAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skipStaleCheck bool) error {
+	for _, name := range sortedMapNames(cfg.Tools) {
+		if err := validateToolConfigEntry(name, cfg.Tools[name], lf); err != nil {
+			return err
+		}
+	}
+
+	// Skip the reverse check (lockfile entries must exist in config) when installing
+	// specific components with a filtered config.
+	if skipStaleCheck {
+		return nil
+	}
+
+	for _, name := range sortedMapNames(lf.Tools) {
+		locked := lf.Tools[name]
+		if locked.Kind == "external" {
+			continue
+		}
+		cfgTool, ok := cfg.Tools[name]
+		if !ok {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("lockfile has tool %q not found in config", name),
+				"Remove stale entries or add tool to config", nil)
+		}
+		if cfgTool.Source == "" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("lockfile has %q as source-based but config declares it as external", name),
+				"Run 'epack lock' to update the lockfile", nil)
+		}
+	}
+	return nil
+}
+
+func validateToolConfigEntry(name string, tool config.ToolConfig, lf *lockfile.LockFile) error {
+	locked, hasLock := lf.GetTool(name)
+
+	switch {
+	case tool.Source != "":
+		// Source-based tool: must exist in lockfile with matching source
+		if !hasLock {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares tool %q not found in lockfile", name),
+				"Run 'epack lock' to update the lockfile", nil)
+		}
+		if locked.Kind == "external" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares %q as source-based but lockfile has it as external", name),
+				"Run 'epack lock' to update the lockfile", nil)
+		}
+		return validateSourceAndSignerMatch("tool", name, tool.Source, locked.Source, locked.Signer, "epack lock")
+
+	case tool.Binary != "":
+		// External binary: if in lockfile, must be locked as external (not source-based)
+		if hasLock && locked.Kind != "external" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("config declares %q as external binary but lockfile has it as source-based", name),
+				"Run 'epack lock' to update the lockfile", nil)
+		}
+		return nil
+
+	default:
+		// Neither source nor binary - no validation needed
+		return nil
+	}
 }
 
 func (s *Syncer) validateCollectorAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skipStaleCheck bool) error {
@@ -370,6 +487,49 @@ func validateRemoteConfigEntry(name string, remote config.RemoteConfig, lf *lock
 
 	// Adapter-only remotes (no source or binary) don't need lockfile validation.
 	return nil
+}
+
+// ValidateToolAlignment checks that tool config matches lockfile entry.
+// SECURITY: This validates that:
+// 1. Source-based tools have matching source in lockfile
+// 2. Source-based tools have signer provenance from the same repository
+// 3. External binary tools are locked as external (not source-based)
+// 4. Source-based locked tools are not executed via external binary config
+//
+// This function is called by dispatch before tool execution, after GetTool succeeds.
+// It takes explicit parameters since dispatch has toolCfg and lockEntry available.
+func ValidateToolAlignment(toolName string, toolCfg config.ToolConfig, lockEntry lockfile.LockedTool) error {
+	// Case 1: Source-based tool
+	if toolCfg.Source != "" {
+		if lockEntry.Kind == "external" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("tool %q configured as source but locked as external", toolName),
+				"Run 'epack lock' to update the lockfile", nil)
+		}
+		// Reuse existing validateSourceAndSignerMatch which includes:
+		// - Source parsing and normalization
+		// - Config-to-lockfile source matching
+		// - Signer provenance verification (cryptographic check)
+		return validateSourceAndSignerMatch(
+			"tool", toolName,
+			toolCfg.Source,
+			lockEntry.Source,
+			lockEntry.Signer,
+			"epack lock",
+		)
+	}
+
+	// Case 2: External binary tool
+	if toolCfg.Binary != "" {
+		if lockEntry.Kind != "external" {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("tool %q configured as external binary but locked as source", toolName),
+				"Run 'epack lock' to update the lockfile", nil)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("tool %q has neither source nor binary configured", toolName)
 }
 
 func validateSourceAndSignerMatch(kind, name, configuredSource, lockedSource string, signer *componenttypes.LockedSigner, lockCmd string) error {

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	epackerrors "github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
+	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/spf13/cobra"
@@ -67,6 +69,31 @@ func ResolveWorkDir() (string, error) {
 		}
 	}
 	return workDir, nil
+}
+
+// ResolveWorkDirFromConfigPath derives the working directory from the config file path.
+// If configPath is empty or "epack.yaml" (default), returns the current working directory.
+// Otherwise, returns the directory containing the config file.
+// This ensures that when --config /other/epack.yaml is used, workDir is /other/,
+// matching the base directory used for path normalization in config.Load().
+func ResolveWorkDirFromConfigPath(configPath string) (string, error) {
+	// Default config name means use CWD
+	if configPath == "" || configPath == "epack.yaml" {
+		return ResolveWorkDir()
+	}
+
+	// Get absolute path of config file
+	absConfigPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return "", &epackerrors.Error{
+			Code:    epackerrors.InvalidInput,
+			Exit:    exitcode.General,
+			Message: fmt.Sprintf("resolving config path: %v", err),
+		}
+	}
+
+	// Return the directory containing the config
+	return filepath.Dir(absConfigPath), nil
 }
 
 // ParseCommaSeparated splits a comma-separated string into trimmed elements.
@@ -170,13 +197,26 @@ func FilterConfigComponents(cfg *config.JobConfig, names []string) (*config.JobC
 }
 
 // LockfileNeedsUpdate checks if the lockfile needs updating for the given config.
-// This checks both collectors and tools.
-func LockfileNeedsUpdate(cfg *config.JobConfig, lf *lockfile.LockFile, currentPlatform string) bool {
+// This checks collectors, tools, remotes, profiles, and overlays for:
+// - Missing lockfile entries (gap check)
+// - Missing platform entries
+// - Profile/overlay content drift (digest mismatch)
+func LockfileNeedsUpdate(cfg *config.JobConfig, lf *lockfile.LockFile, currentPlatform, workDir string) bool {
 	platforms := requiredPlatforms(cfg.Platforms, currentPlatform)
 	if hasCollectorLockfileGap(cfg, lf, platforms) {
 		return true
 	}
-	return hasToolLockfileGap(cfg, lf, platforms)
+	if hasToolLockfileGap(cfg, lf, platforms) {
+		return true
+	}
+	if hasRemoteLockfileGap(cfg, lf, platforms) {
+		return true
+	}
+	// Check for missing profile/overlay entries OR content drift
+	if sync.HasProfileLockfileGap(cfg, lf) {
+		return true
+	}
+	return sync.HasProfileDigestDrift(cfg, lf, workDir)
 }
 
 func requiredPlatforms(platforms []string, currentPlatform string) []string {
@@ -205,6 +245,19 @@ func hasToolLockfileGap(cfg *config.JobConfig, lf *lockfile.LockFile, platforms 
 			continue
 		}
 		locked, ok := lf.GetTool(name)
+		if !ok || missingRequiredPlatforms(locked.Platforms, platforms) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRemoteLockfileGap(cfg *config.JobConfig, lf *lockfile.LockFile, platforms []string) bool {
+	for name, r := range cfg.Remotes {
+		if r.Source == "" {
+			continue
+		}
+		locked, ok := lf.GetRemote(name)
 		if !ok || missingRequiredPlatforms(locked.Platforms, platforms) {
 			return true
 		}

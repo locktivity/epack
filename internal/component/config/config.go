@@ -3,10 +3,12 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/safefile"
 	"github.com/locktivity/epack/internal/safeyaml"
 )
 
@@ -19,6 +21,13 @@ type JobConfig struct {
 	Signing    SigningConfig              `yaml:"signing"`
 	Collectors map[string]CollectorConfig `yaml:"collectors"`
 	Tools      map[string]ToolConfig      `yaml:"tools,omitempty"`
+
+	// Profiles declares profiles to validate packs against.
+	// Profiles define requirements for artifacts (types, cardinality, freshness).
+	Profiles []ProfileConfig `yaml:"profiles,omitempty"`
+
+	// Overlays modify profile requirements (add or adjust constraints).
+	Overlays []OverlayConfig `yaml:"overlays,omitempty"`
 
 	// Remotes configures remote registries for push/pull operations.
 	// Each remote maps a name to its configuration.
@@ -99,6 +108,84 @@ type ToolConfig struct {
 	Binary  string         `yaml:"binary,omitempty"`
 	Config  map[string]any `yaml:"config,omitempty"`  // Config values passed as EPACK_CFG_* env vars
 	Secrets []string       `yaml:"secrets,omitempty"` // Env var names to pass as EPACK_SECRET_* vars
+}
+
+// ProfileConfig declares a profile to validate evidence packs against.
+// Profiles define requirements for artifacts (types, cardinality, freshness, metadata conditions).
+type ProfileConfig struct {
+	// Source is the profile source reference (e.g., "evidencepack/soc2-basic@v1").
+	// When set, the profile is fetched from a registry and locked via epack.lock.
+	// Mutually exclusive with Path.
+	Source string `yaml:"source,omitempty"`
+
+	// Path is a local file path to a profile YAML/JSON file.
+	// Use for project-local or custom profiles not published to a registry.
+	// Mutually exclusive with Source.
+	Path string `yaml:"path,omitempty"`
+
+	// ResolvedPath is the absolute path for file I/O operations.
+	// This is set by Normalize() when Path is non-empty.
+	// NOT stored in YAML - used only at runtime.
+	// INVARIANT: Lockfile keys and manifest sources use Path (project-relative),
+	// while file operations use ResolvedPath (absolute).
+	ResolvedPath string `yaml:"-" json:"-"`
+}
+
+// Key returns the identifier used for lockfile lookup and manifest references.
+// Returns Path if set, otherwise Source.
+func (p ProfileConfig) Key() string {
+	if p.Path != "" {
+		return p.Path
+	}
+	return p.Source
+}
+
+// FilePath returns the path for file I/O operations.
+// Returns ResolvedPath if set (absolute), otherwise falls back to Path.
+func (p ProfileConfig) FilePath() string {
+	if p.ResolvedPath != "" {
+		return p.ResolvedPath
+	}
+	return p.Path
+}
+
+// OverlayConfig declares an overlay that modifies profile requirements.
+// Overlays can add new requirements or modify existing ones (e.g., stricter freshness).
+type OverlayConfig struct {
+	// Source is the overlay source reference (e.g., "myorg/stricter-freshness@v1").
+	// When set, the overlay is fetched from a registry and locked via epack.lock.
+	// Mutually exclusive with Path.
+	Source string `yaml:"source,omitempty"`
+
+	// Path is a local file path to an overlay YAML/JSON file.
+	// Use for project-local overlays not published to a registry.
+	// Mutually exclusive with Source.
+	Path string `yaml:"path,omitempty"`
+
+	// ResolvedPath is the absolute path for file I/O operations.
+	// This is set by Normalize() when Path is non-empty.
+	// NOT stored in YAML - used only at runtime.
+	// INVARIANT: Lockfile keys and manifest sources use Path (project-relative),
+	// while file operations use ResolvedPath (absolute).
+	ResolvedPath string `yaml:"-" json:"-"`
+}
+
+// Key returns the identifier used for lockfile lookup and manifest references.
+// Returns Path if set, otherwise Source.
+func (o OverlayConfig) Key() string {
+	if o.Path != "" {
+		return o.Path
+	}
+	return o.Source
+}
+
+// FilePath returns the path for file I/O operations.
+// Returns ResolvedPath if set (absolute), otherwise falls back to Path.
+func (o OverlayConfig) FilePath() string {
+	if o.ResolvedPath != "" {
+		return o.ResolvedPath
+	}
+	return o.Path
 }
 
 // RemoteConfig configures a remote registry for push/pull operations.
@@ -311,12 +398,37 @@ type EnvironmentConfig struct {
 }
 
 // Load reads and validates an epack config file (collectors and tools).
+// Unlike Parse(), Load() also normalizes local profile/overlay paths to absolute paths.
 func Load(path string) (*JobConfig, error) {
 	data, err := loadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Parse(data)
+	cfg, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Normalize local paths relative to the config file's directory.
+	// Parse() alone cannot do this because it only receives raw bytes.
+	baseDir := filepath.Dir(path)
+	if baseDir == "" || baseDir == "." {
+		// Handle edge case where path is just a filename
+		baseDir, err = filepath.Abs(".")
+		if err != nil {
+			return nil, fmt.Errorf("resolving base directory: %w", err)
+		}
+	} else {
+		baseDir, err = filepath.Abs(baseDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolving base directory: %w", err)
+		}
+	}
+
+	if err := cfg.Normalize(baseDir); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 // LoadUnvalidated reads an epack config file without running semantic validation.
@@ -399,6 +511,18 @@ func (c *JobConfig) Validate() error {
 			len(c.Remotes), limits.MaxRemoteCount)
 	}
 
+	// SECURITY: Enforce profile count limit to prevent DoS
+	if len(c.Profiles) > limits.MaxProfileCount {
+		return fmt.Errorf("profiles: count %d exceeds limit of %d",
+			len(c.Profiles), limits.MaxProfileCount)
+	}
+
+	// SECURITY: Enforce overlay count limit to prevent DoS
+	if len(c.Overlays) > limits.MaxOverlayCount {
+		return fmt.Errorf("overlays: count %d exceeds limit of %d",
+			len(c.Overlays), limits.MaxOverlayCount)
+	}
+
 	if err := c.validatePlatforms(); err != nil {
 		return err
 	}
@@ -409,6 +533,12 @@ func (c *JobConfig) Validate() error {
 		return err
 	}
 	if err := c.validateRemotes(); err != nil {
+		return err
+	}
+	if err := c.validateProfiles(); err != nil {
+		return err
+	}
+	if err := c.validateOverlays(); err != nil {
 		return err
 	}
 	return c.validateEnvironmentOverrides()
@@ -502,6 +632,30 @@ func (c *JobConfig) validateRemotes() error {
 	return nil
 }
 
+func (c *JobConfig) validateProfiles() error {
+	for i, profile := range c.Profiles {
+		switch {
+		case profile.Source == "" && profile.Path == "":
+			return fmt.Errorf("profile[%d]: exactly one of source or path must be set", i)
+		case profile.Source != "" && profile.Path != "":
+			return fmt.Errorf("profile[%d]: source and path are mutually exclusive", i)
+		}
+	}
+	return nil
+}
+
+func (c *JobConfig) validateOverlays() error {
+	for i, overlay := range c.Overlays {
+		switch {
+		case overlay.Source == "" && overlay.Path == "":
+			return fmt.Errorf("overlay[%d]: exactly one of source or path must be set", i)
+		case overlay.Source != "" && overlay.Path != "":
+			return fmt.Errorf("overlay[%d]: source and path are mutually exclusive", i)
+		}
+	}
+	return nil
+}
+
 func (c *JobConfig) validateEnvironmentOverrides() error {
 	for envName, envCfg := range c.Environments {
 		if err := ValidateEnvironmentName(envName); err != nil {
@@ -552,9 +706,91 @@ func (c *JobConfig) HasSourceRemotes() bool {
 	return false
 }
 
-// HasSourceComponents returns true if any collectors, tools, or remotes use source.
+// HasSourceProfiles returns true if any profiles use source (not local path).
+func (c *JobConfig) HasSourceProfiles() bool {
+	for _, profile := range c.Profiles {
+		if profile.Source != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasSourceOverlays returns true if any overlays use source (not local path).
+func (c *JobConfig) HasSourceOverlays() bool {
+	for _, overlay := range c.Overlays {
+		if overlay.Source != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasSourceComponents returns true if any collectors, tools, remotes, profiles, or overlays use source.
 func (c *JobConfig) HasSourceComponents() bool {
-	return c.HasSourceCollectors() || c.HasSourceTools() || c.HasSourceRemotes()
+	return c.HasSourceCollectors() || c.HasSourceTools() || c.HasSourceRemotes() ||
+		c.HasSourceProfiles() || c.HasSourceOverlays()
+}
+
+// Normalize resolves local profile and overlay paths to absolute paths.
+// This must be called after Parse() succeeds. The baseDir should be the directory
+// containing the config file (e.g., project root).
+//
+// SECURITY: Uses safefile.ValidatePath() to ensure paths stay within baseDir.
+// Rejects absolute paths and path traversal (e.g., ../outside.yaml).
+//
+// INVARIANT: Only Path-based profiles/overlays are normalized. Source-based
+// entries are fetched from registries and don't have local paths.
+//
+// NOTE: Parse() alone returns ResolvedPath empty because it has no base dir.
+// Load() calls Normalize() automatically.
+func (c *JobConfig) Normalize(baseDir string) error {
+	for i := range c.Profiles {
+		if c.Profiles[i].Path != "" {
+			resolved, err := safefile.ValidatePath(baseDir, c.Profiles[i].Path)
+			if err != nil {
+				return fmt.Errorf("profiles[%d].path %q: %w", i, c.Profiles[i].Path, err)
+			}
+			c.Profiles[i].ResolvedPath = resolved
+		}
+	}
+	for i := range c.Overlays {
+		if c.Overlays[i].Path != "" {
+			resolved, err := safefile.ValidatePath(baseDir, c.Overlays[i].Path)
+			if err != nil {
+				return fmt.Errorf("overlays[%d].path %q: %w", i, c.Overlays[i].Path, err)
+			}
+			c.Overlays[i].ResolvedPath = resolved
+		}
+	}
+	return nil
+}
+
+// HasLocalProfiles returns true if any profiles use local path (not source).
+func (c *JobConfig) HasLocalProfiles() bool {
+	for _, profile := range c.Profiles {
+		if profile.Path != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasLocalOverlays returns true if any overlays use local path (not source).
+func (c *JobConfig) HasLocalOverlays() bool {
+	for _, overlay := range c.Overlays {
+		if overlay.Path != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// NeedsLocking returns true if any component requires a lockfile entry.
+// This includes source-based components (collectors, tools, remotes, profiles, overlays)
+// and local profiles/overlays (for digest tracking).
+func (c *JobConfig) NeedsLocking() bool {
+	return c.HasSourceComponents() || c.HasLocalProfiles() || c.HasLocalOverlays()
 }
 
 // EffectiveRegistry returns the registry to use for component resolution.

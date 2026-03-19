@@ -228,3 +228,129 @@ func TestValidateAlignment_MixedComponents(t *testing.T) {
 		t.Fatalf("expected no error with SkipStaleEntryCheck, got: %v", err)
 	}
 }
+
+// TestValidateToolAlignment_SourceBasedMatch tests that source-based tools
+// pass alignment validation when config and lockfile match.
+func TestValidateToolAlignment_SourceBasedMatch(t *testing.T) {
+	toolCfg := config.ToolConfig{
+		Source: "locktivity/epack-tool-ai@v1.0.0",
+	}
+	lockEntry := lockfile.LockedTool{
+		Source:  "github.com/locktivity/epack-tool-ai",
+		Version: "v1.0.0",
+		Signer: &componenttypes.LockedSigner{
+			SourceRepositoryURI: "https://github.com/locktivity/epack-tool-ai",
+		},
+	}
+
+	err := ValidateToolAlignment("ai", toolCfg, lockEntry)
+	if err != nil {
+		t.Fatalf("expected no error for matching source-based tool, got: %v", err)
+	}
+}
+
+// TestValidateToolAlignment_SourceConfiguredButLockedExternal tests that source-based
+// config with external lockfile entry fails validation.
+func TestValidateToolAlignment_SourceConfiguredButLockedExternal(t *testing.T) {
+	toolCfg := config.ToolConfig{
+		Source: "locktivity/epack-tool-ai@v1.0.0",
+	}
+	lockEntry := lockfile.LockedTool{
+		Kind: "external",
+		Platforms: map[string]componenttypes.LockedPlatform{
+			"linux/amd64": {Digest: "sha256:abc123"},
+		},
+	}
+
+	err := ValidateToolAlignment("ai", toolCfg, lockEntry)
+	if err == nil {
+		t.Fatal("expected error when source config but external lockfile, got nil")
+	}
+}
+
+// TestValidateToolAlignment_ExternalMatch tests that external binary tools
+// pass alignment validation when both config and lockfile are external.
+func TestValidateToolAlignment_ExternalMatch(t *testing.T) {
+	toolCfg := config.ToolConfig{
+		Binary: "/usr/local/bin/custom-tool",
+	}
+	lockEntry := lockfile.LockedTool{
+		Kind: "external",
+		Platforms: map[string]componenttypes.LockedPlatform{
+			"linux/amd64": {Digest: "sha256:abc123"},
+		},
+	}
+
+	err := ValidateToolAlignment("custom", toolCfg, lockEntry)
+	if err != nil {
+		t.Fatalf("expected no error for matching external tool, got: %v", err)
+	}
+}
+
+// TestValidateToolAlignment_ExternalConfiguredButLockedSource tests that external
+// binary config with source-based lockfile entry fails validation.
+func TestValidateToolAlignment_ExternalConfiguredButLockedSource(t *testing.T) {
+	toolCfg := config.ToolConfig{
+		Binary: "/usr/local/bin/custom-tool",
+	}
+	lockEntry := lockfile.LockedTool{
+		Source:  "github.com/locktivity/epack-tool-custom",
+		Version: "v1.0.0",
+	}
+
+	err := ValidateToolAlignment("custom", toolCfg, lockEntry)
+	if err == nil {
+		t.Fatal("expected error when external config but source lockfile, got nil")
+	}
+}
+
+// TestValidateToolAlignment_SourceMismatch tests that source-based tools
+// fail validation when the lockfile source doesn't match config.
+func TestValidateToolAlignment_SourceMismatch(t *testing.T) {
+	toolCfg := config.ToolConfig{
+		Source: "locktivity/epack-tool-ai@v1.0.0",
+	}
+	lockEntry := lockfile.LockedTool{
+		Source:  "github.com/otherorg/epack-tool-ai", // Different org!
+		Version: "v1.0.0",
+	}
+
+	err := ValidateToolAlignment("ai", toolCfg, lockEntry)
+	if err == nil {
+		t.Fatal("expected error when source doesn't match lockfile, got nil")
+	}
+}
+
+// TestValidateToolAlignment_SignerMismatch tests that source-based tools
+// fail validation when signer provenance doesn't match.
+func TestValidateToolAlignment_SignerMismatch(t *testing.T) {
+	toolCfg := config.ToolConfig{
+		Source: "locktivity/epack-tool-ai@v1.0.0",
+	}
+	lockEntry := lockfile.LockedTool{
+		Source:  "github.com/locktivity/epack-tool-ai",
+		Version: "v1.0.0",
+		Signer: &componenttypes.LockedSigner{
+			SourceRepositoryURI: "https://github.com/attackerorg/epack-tool-ai", // Signer from different repo!
+		},
+	}
+
+	err := ValidateToolAlignment("ai", toolCfg, lockEntry)
+	if err == nil {
+		t.Fatal("expected error when signer provenance doesn't match, got nil")
+	}
+}
+
+// TestValidateToolAlignment_NeitherSourceNorBinary tests that tools with
+// neither source nor binary fail validation.
+func TestValidateToolAlignment_NeitherSourceNorBinary(t *testing.T) {
+	toolCfg := config.ToolConfig{} // Neither source nor binary
+	lockEntry := lockfile.LockedTool{
+		Kind: "external",
+	}
+
+	err := ValidateToolAlignment("invalid", toolCfg, lockEntry)
+	if err == nil {
+		t.Fatal("expected error when tool has neither source nor binary, got nil")
+	}
+}

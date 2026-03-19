@@ -54,40 +54,45 @@ func execToolWithProtocol(ctx context.Context, binaryPath, binaryName string, ar
 
 // buildProtocolEnv builds the environment for protocol mode execution.
 // SECURITY: Uses BuildRestrictedEnvSafe to strip proxy credentials from untrusted tools.
-func buildProtocolEnv(toolName, runID, runDir, packPath, packDigest string, startedAt time.Time, toolCfg config.ToolConfig, configFilePath string, flags WrapperFlags) []string {
+func buildProtocolEnv(in protocolEnvInput) []string {
 	// Start with restricted base environment with proxy credentials stripped
 	// SECURITY: Tools are untrusted code and should not receive credentials embedded in proxy URLs.
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), false)
 
 	// Add protocol environment variables
 	env = append(env,
-		"EPACK_RUN_ID="+runID,
-		"EPACK_RUN_DIR="+runDir,
-		"EPACK_STARTED_AT="+toolprotocol.FormatTimestamp(startedAt),
-		"EPACK_TOOL_NAME="+toolName,
+		"EPACK_RUN_ID="+in.runID,
+		"EPACK_RUN_DIR="+in.runDir,
+		"EPACK_STARTED_AT="+toolprotocol.FormatTimestamp(in.startedAt),
+		"EPACK_TOOL_NAME="+in.toolName,
 		"EPACK_PROTOCOL_VERSION=1",
 		"EPACK_WRAPPER_VERSION="+version.Version,
 	)
 
+	// Add project root for profile path resolution
+	if in.projectRoot != "" {
+		env = append(env, "EPACK_PROJECT_ROOT="+in.projectRoot)
+	}
+
 	// Add pack-related env vars only if pack is provided
-	if packPath != "" {
-		env = append(env, "EPACK_PACK_PATH="+packPath)
-		if packDigest != "" {
-			env = append(env, "EPACK_PACK_DIGEST="+packDigest)
+	if in.packPath != "" {
+		env = append(env, "EPACK_PACK_PATH="+in.packPath)
+		if in.packDigest != "" {
+			env = append(env, "EPACK_PACK_DIGEST="+in.packDigest)
 		}
 	}
 
 	// Add config file path if config exists
 	// This is the primary config mechanism - tools read JSON from this file
-	if configFilePath != "" {
-		env = append(env, "EPACK_TOOL_CONFIG="+configFilePath)
+	if in.configFilePath != "" {
+		env = append(env, "EPACK_TOOL_CONFIG="+in.configFilePath)
 	}
 
 	// Propagate wrapper flags to tool environment
-	if flags.JSONMode {
+	if in.flags.JSONMode {
 		env = append(env, "EPACK_JSON=true")
 	}
-	if flags.QuietMode {
+	if in.flags.QuietMode {
 		env = append(env, "EPACK_QUIET=true")
 	}
 
@@ -99,9 +104,22 @@ func buildProtocolEnv(toolName, runID, runDir, packPath, packDigest string, star
 	// Pass through secrets listed in epack.yaml.
 	// Only explicitly configured secrets are passed to tools.
 	// Reserved prefixes (EPACK_, LD_, DYLD_, _) are blocked.
-	env = execsafe.AppendAllowedSecrets(env, toolCfg.Secrets, os.Getenv)
+	env = execsafe.AppendAllowedSecrets(env, in.toolCfg.Secrets, os.Getenv)
 
 	return env
+}
+
+type protocolEnvInput struct {
+	toolName       string
+	runID          string
+	runDir         string
+	packPath       string
+	packDigest     string
+	projectRoot    string
+	startedAt      time.Time
+	toolCfg        config.ToolConfig
+	configFilePath string
+	flags          WrapperFlags
 }
 
 // writeToolConfig writes tool config to a temporary JSON file.

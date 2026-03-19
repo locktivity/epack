@@ -1013,3 +1013,181 @@ func TestBuilder_AddAfterBuild(t *testing.T) {
 		t.Errorf("len(Artifacts) = %d, want 2", len(p.Manifest().Artifacts))
 	}
 }
+
+func TestBuilder_SetProfiles(t *testing.T) {
+	b := New("test/profiles")
+	_ = b.AddBytes("artifacts/test.json", []byte(`{}`))
+
+	profiles := []pack.ProfileRef{
+		{Source: "profiles/hitrust.yaml", Digest: "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"},
+		{Source: "profiles/soc2.yaml", Digest: "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"},
+	}
+	b.SetProfiles(profiles)
+
+	outputPath := filepath.Join(t.TempDir(), "profiles.zip")
+	if err := b.Build(outputPath); err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	p, err := pack.Open(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to open built pack: %v", err)
+	}
+	defer func() { _ = p.Close() }()
+
+	m := p.Manifest()
+	if len(m.Profiles) != 2 {
+		t.Fatalf("len(Profiles) = %d, want 2", len(m.Profiles))
+	}
+	if m.Profiles[0].Source != "profiles/hitrust.yaml" {
+		t.Errorf("Profiles[0].Source = %q, want %q", m.Profiles[0].Source, "profiles/hitrust.yaml")
+	}
+	if m.Profiles[1].Digest != "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" {
+		t.Errorf("Profiles[1].Digest = %q, want sha256:abcdef...", m.Profiles[1].Digest)
+	}
+}
+
+func TestBuilder_SetOverlays(t *testing.T) {
+	b := New("test/overlays")
+	_ = b.AddBytes("artifacts/test.json", []byte(`{}`))
+
+	overlays := []pack.ProfileRef{
+		{Source: "overlays/custom.yaml", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	}
+	b.SetOverlays(overlays)
+
+	outputPath := filepath.Join(t.TempDir(), "overlays.zip")
+	if err := b.Build(outputPath); err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	p, err := pack.Open(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to open built pack: %v", err)
+	}
+	defer func() { _ = p.Close() }()
+
+	m := p.Manifest()
+	if len(m.Overlays) != 1 {
+		t.Fatalf("len(Overlays) = %d, want 1", len(m.Overlays))
+	}
+	if m.Overlays[0].Source != "overlays/custom.yaml" {
+		t.Errorf("Overlays[0].Source = %q, want %q", m.Overlays[0].Source, "overlays/custom.yaml")
+	}
+}
+
+func TestBuilder_SetProfiles_DefensiveCopy(t *testing.T) {
+	b := New("test/profiles-defensive")
+	_ = b.AddBytes("artifacts/test.json", []byte(`{}`))
+
+	profiles := []pack.ProfileRef{
+		{Source: "profiles/original.yaml", Digest: "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"},
+	}
+	b.SetProfiles(profiles)
+
+	// Mutate the original slice after setting
+	profiles[0].Source = "profiles/mutated.yaml"
+
+	outputPath := filepath.Join(t.TempDir(), "profiles-defensive.zip")
+	if err := b.Build(outputPath); err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	p, err := pack.Open(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to open built pack: %v", err)
+	}
+	defer func() { _ = p.Close() }()
+
+	m := p.Manifest()
+	// Should have original value, not mutated
+	if m.Profiles[0].Source != "profiles/original.yaml" {
+		t.Errorf("Profiles[0].Source = %q, want %q (original value)", m.Profiles[0].Source, "profiles/original.yaml")
+	}
+}
+
+func TestBuilder_SetProfiles_Empty(t *testing.T) {
+	b := New("test/profiles-empty")
+	_ = b.AddBytes("artifacts/test.json", []byte(`{}`))
+
+	// Setting empty slice should result in no profiles in manifest
+	b.SetProfiles([]pack.ProfileRef{})
+
+	outputPath := filepath.Join(t.TempDir(), "profiles-empty.zip")
+	if err := b.Build(outputPath); err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	p, err := pack.Open(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to open built pack: %v", err)
+	}
+	defer func() { _ = p.Close() }()
+
+	m := p.Manifest()
+	if len(m.Profiles) != 0 {
+		t.Errorf("len(Profiles) = %d, want 0", len(m.Profiles))
+	}
+}
+
+func TestBuilder_SetProfiles_ChainedMethod(t *testing.T) {
+	profiles := []pack.ProfileRef{
+		{Source: "profiles/test.yaml"},
+	}
+	overlays := []pack.ProfileRef{
+		{Source: "overlays/test.yaml"},
+	}
+
+	// Test that SetProfiles and SetOverlays return *Builder for chaining
+	b := New("test/chained-profiles").
+		SetProfiles(profiles).
+		SetOverlays(overlays)
+
+	_ = b.AddBytes("artifacts/test.json", []byte(`{}`))
+
+	outputPath := filepath.Join(t.TempDir(), "chained-profiles.zip")
+	if err := b.Build(outputPath); err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	p, err := pack.Open(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to open built pack: %v", err)
+	}
+	defer func() { _ = p.Close() }()
+
+	m := p.Manifest()
+	if len(m.Profiles) != 1 || len(m.Overlays) != 1 {
+		t.Errorf("len(Profiles)=%d, len(Overlays)=%d, want 1, 1", len(m.Profiles), len(m.Overlays))
+	}
+}
+
+func TestBuilder_SetProfiles_WithoutDigest(t *testing.T) {
+	b := New("test/profiles-no-digest")
+	_ = b.AddBytes("artifacts/test.json", []byte(`{}`))
+
+	// Profile without digest (for older packs or when digest wasn't computed)
+	profiles := []pack.ProfileRef{
+		{Source: "profiles/hitrust.yaml"}, // No digest
+	}
+	b.SetProfiles(profiles)
+
+	outputPath := filepath.Join(t.TempDir(), "profiles-no-digest.zip")
+	if err := b.Build(outputPath); err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	p, err := pack.Open(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to open built pack: %v", err)
+	}
+	defer func() { _ = p.Close() }()
+
+	m := p.Manifest()
+	if len(m.Profiles) != 1 {
+		t.Fatalf("len(Profiles) = %d, want 1", len(m.Profiles))
+	}
+	if m.Profiles[0].Digest != "" {
+		t.Errorf("Profiles[0].Digest = %q, want empty", m.Profiles[0].Digest)
+	}
+}

@@ -1297,6 +1297,239 @@ func TestParseManifest_RejectsUnsafeArtifactPaths(t *testing.T) {
 	}
 }
 
+// Tests for ProfileRef validation
+
+func TestParseManifest_ProfilesValid(t *testing.T) {
+	t.Parallel()
+
+	manifest := `{
+		"spec_version": "1.0",
+		"stream": "test",
+		"generated_at": "2024-01-15T10:30:00Z",
+		"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		"sources": [],
+		"artifacts": [],
+		"profiles": [
+			{"source": "profiles/hitrust.yaml", "digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"},
+			{"source": "profiles/soc2.yaml"}
+		]
+	}`
+
+	m, err := ParseManifest([]byte(manifest))
+	if err != nil {
+		t.Fatalf("ParseManifest() unexpected error: %v", err)
+	}
+	if len(m.Profiles) != 2 {
+		t.Errorf("len(Profiles) = %d, want 2", len(m.Profiles))
+	}
+	if m.Profiles[0].Source != "profiles/hitrust.yaml" {
+		t.Errorf("Profiles[0].Source = %q, want %q", m.Profiles[0].Source, "profiles/hitrust.yaml")
+	}
+	if m.Profiles[1].Digest != "" {
+		t.Errorf("Profiles[1].Digest = %q, want empty", m.Profiles[1].Digest)
+	}
+}
+
+func TestParseManifest_OverlaysValid(t *testing.T) {
+	t.Parallel()
+
+	manifest := `{
+		"spec_version": "1.0",
+		"stream": "test",
+		"generated_at": "2024-01-15T10:30:00Z",
+		"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		"sources": [],
+		"artifacts": [],
+		"overlays": [
+			{"source": "overlays/custom.yaml", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+		]
+	}`
+
+	m, err := ParseManifest([]byte(manifest))
+	if err != nil {
+		t.Fatalf("ParseManifest() unexpected error: %v", err)
+	}
+	if len(m.Overlays) != 1 {
+		t.Errorf("len(Overlays) = %d, want 1", len(m.Overlays))
+	}
+	if m.Overlays[0].Source != "overlays/custom.yaml" {
+		t.Errorf("Overlays[0].Source = %q, want %q", m.Overlays[0].Source, "overlays/custom.yaml")
+	}
+}
+
+func TestParseManifest_ProfilesMissingSource(t *testing.T) {
+	t.Parallel()
+
+	manifest := `{
+		"spec_version": "1.0",
+		"stream": "test",
+		"generated_at": "2024-01-15T10:30:00Z",
+		"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		"sources": [],
+		"artifacts": [],
+		"profiles": [
+			{"digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"}
+		]
+	}`
+
+	_, err := ParseManifest([]byte(manifest))
+	if err == nil {
+		t.Fatal("ParseManifest() expected error for profile without source")
+	}
+	if errors.CodeOf(err) != errors.MissingRequiredField {
+		t.Errorf("error code = %s, want %s", errors.CodeOf(err), errors.MissingRequiredField)
+	}
+	if !containsString(err.Error(), "source is required for profiles") {
+		t.Errorf("error = %v, want message containing 'source is required for profiles'", err)
+	}
+}
+
+func TestParseManifest_OverlaysMissingSource(t *testing.T) {
+	t.Parallel()
+
+	manifest := `{
+		"spec_version": "1.0",
+		"stream": "test",
+		"generated_at": "2024-01-15T10:30:00Z",
+		"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		"sources": [],
+		"artifacts": [],
+		"overlays": [
+			{"digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"}
+		]
+	}`
+
+	_, err := ParseManifest([]byte(manifest))
+	if err == nil {
+		t.Fatal("ParseManifest() expected error for overlay without source")
+	}
+	if errors.CodeOf(err) != errors.MissingRequiredField {
+		t.Errorf("error code = %s, want %s", errors.CodeOf(err), errors.MissingRequiredField)
+	}
+	if !containsString(err.Error(), "source is required for overlays") {
+		t.Errorf("error = %v, want message containing 'source is required for overlays'", err)
+	}
+}
+
+func TestParseManifest_ProfilesInvalidDigest(t *testing.T) {
+	t.Parallel()
+
+	manifest := `{
+		"spec_version": "1.0",
+		"stream": "test",
+		"generated_at": "2024-01-15T10:30:00Z",
+		"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		"sources": [],
+		"artifacts": [],
+		"profiles": [
+			{"source": "profiles/test.yaml", "digest": "invalid-digest"}
+		]
+	}`
+
+	_, err := ParseManifest([]byte(manifest))
+	if err == nil {
+		t.Fatal("ParseManifest() expected error for profile with invalid digest")
+	}
+	if errors.CodeOf(err) != errors.InvalidManifest {
+		t.Errorf("error code = %s, want %s", errors.CodeOf(err), errors.InvalidManifest)
+	}
+	if !containsString(err.Error(), "invalid digest format for profiles") {
+		t.Errorf("error = %v, want message containing 'invalid digest format for profiles'", err)
+	}
+}
+
+func TestParseManifest_OverlaysInvalidDigest(t *testing.T) {
+	t.Parallel()
+
+	manifest := `{
+		"spec_version": "1.0",
+		"stream": "test",
+		"generated_at": "2024-01-15T10:30:00Z",
+		"pack_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		"sources": [],
+		"artifacts": [],
+		"overlays": [
+			{"source": "overlays/test.yaml", "digest": "sha256:tooshort"}
+		]
+	}`
+
+	_, err := ParseManifest([]byte(manifest))
+	if err == nil {
+		t.Fatal("ParseManifest() expected error for overlay with invalid digest")
+	}
+	if errors.CodeOf(err) != errors.InvalidManifest {
+		t.Errorf("error code = %s, want %s", errors.CodeOf(err), errors.InvalidManifest)
+	}
+}
+
+func TestManifest_Copy_WithProfilesAndOverlays(t *testing.T) {
+	t.Parallel()
+
+	original := &Manifest{
+		SpecVersion: "1.0",
+		Stream:      "test-stream",
+		GeneratedAt: "2024-01-15T10:30:00Z",
+		PackDigest:  "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		Sources:     []Source{},
+		Artifacts:   []Artifact{},
+		Profiles: []ProfileRef{
+			{Source: "profiles/hitrust.yaml", Digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+			{Source: "profiles/soc2.yaml"},
+		},
+		Overlays: []ProfileRef{
+			{Source: "overlays/custom.yaml", Digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+		},
+	}
+
+	copied := original.Copy()
+
+	// Verify values are equal
+	if len(copied.Profiles) != len(original.Profiles) {
+		t.Errorf("len(Profiles) = %d, want %d", len(copied.Profiles), len(original.Profiles))
+	}
+	if len(copied.Overlays) != len(original.Overlays) {
+		t.Errorf("len(Overlays) = %d, want %d", len(copied.Overlays), len(original.Overlays))
+	}
+	if copied.Profiles[0].Source != original.Profiles[0].Source {
+		t.Errorf("Profiles[0].Source = %q, want %q", copied.Profiles[0].Source, original.Profiles[0].Source)
+	}
+
+	// Verify deep copy - mutating copy shouldn't affect original
+	copied.Profiles[0].Source = "modified"
+	if original.Profiles[0].Source == "modified" {
+		t.Error("Mutating copy Profiles affected original")
+	}
+
+	copied.Overlays[0].Digest = "modified"
+	if original.Overlays[0].Digest == "modified" {
+		t.Error("Mutating copy Overlays affected original")
+	}
+}
+
+func TestManifest_Copy_NilProfilesAndOverlays(t *testing.T) {
+	t.Parallel()
+
+	original := &Manifest{
+		SpecVersion: "1.0",
+		Stream:      "test",
+		GeneratedAt: "2024-01-15T10:30:00Z",
+		PackDigest:  "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		Sources:     []Source{},
+		Artifacts:   []Artifact{},
+		Profiles:    nil,
+		Overlays:    nil,
+	}
+
+	copied := original.Copy()
+
+	if copied.Profiles != nil {
+		t.Error("Expected Profiles to be nil in copy")
+	}
+	if copied.Overlays != nil {
+		t.Error("Expected Overlays to be nil in copy")
+	}
+}
+
 // Test that safe artifact paths ARE accepted.
 func TestParseManifest_AcceptsSafeArtifactPaths(t *testing.T) {
 	t.Parallel()

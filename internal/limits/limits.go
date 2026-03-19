@@ -34,6 +34,9 @@ var (
 	// ConfigFile is the limit for epack.yaml and similar config files (1 MB).
 	ConfigFile SizeLimit = 1 * 1024 * 1024
 
+	// ProfileFile is the limit for profile and overlay YAML files (1 MB).
+	ProfileFile SizeLimit = 1 * 1024 * 1024
+
 	// LockFile is the limit for epack.lock.yaml (10 MB).
 	// Lockfiles can be larger due to multi-platform digests.
 	LockFile SizeLimit = 10 * 1024 * 1024
@@ -115,6 +118,12 @@ const (
 
 	// MaxRemoteCount is the maximum number of remotes in a config.
 	MaxRemoteCount int = 100
+
+	// MaxProfileCount is the maximum number of profiles in a config.
+	MaxProfileCount int = 100
+
+	// MaxOverlayCount is the maximum number of overlays in a config.
+	MaxOverlayCount int = 100
 
 	// MaxUtilityCount is the maximum number of utilities in a user lockfile.
 	MaxUtilityCount int = 100

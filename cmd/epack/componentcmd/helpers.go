@@ -24,8 +24,8 @@ func loadConfig(path string) (*config.JobConfig, error) {
 	return cmdutil.LoadConfig(path)
 }
 
-func resolveWorkDir() (string, error) {
-	return cmdutil.ResolveWorkDir()
+func resolveWorkDirFromConfigPath(configPath string) (string, error) {
+	return cmdutil.ResolveWorkDirFromConfigPath(configPath)
 }
 
 func parseCommaSeparated(s string) []string {
@@ -40,6 +40,6 @@ func filterConfigComponents(cfg *config.JobConfig, names []string) (*config.JobC
 	return cmdutil.FilterConfigComponents(cfg, names)
 }
 
-func lockfileNeedsUpdate(cfg *config.JobConfig, lf *lockfile.LockFile, currentPlatform string) bool {
-	return cmdutil.LockfileNeedsUpdate(cfg, lf, currentPlatform)
+func lockfileNeedsUpdate(cfg *config.JobConfig, lf *lockfile.LockFile, currentPlatform, workDir string) bool {
+	return cmdutil.LockfileNeedsUpdate(cfg, lf, currentPlatform, workDir)
 }

@@ -34,6 +34,12 @@ const (
 	DependencyMissing = 17 // Required tool dependency not satisfied
 )
 
+// General operational exit codes (20-29)
+const (
+	FileNotFound   = 20 // Required file not found
+	NotImplemented = 21 // Feature not yet implemented
+)
+
 // IsToolExitCode returns true if the exit code is in the tool wrapper range (10-19).
 func IsToolExitCode(code int) bool {
 	return code >= 10 && code <= 19

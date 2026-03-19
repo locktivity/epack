@@ -20,8 +20,8 @@ func loadConfig(path string) (*config.JobConfig, error) {
 	return cmdutil.LoadConfig(path)
 }
 
-func resolveWorkDir() (string, error) {
-	return cmdutil.ResolveWorkDir()
+func resolveWorkDirFromConfigPath(configPath string) (string, error) {
+	return cmdutil.ResolveWorkDirFromConfigPath(configPath)
 }
 
 func parseCommaSeparated(s string) []string {

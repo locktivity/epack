@@ -18,12 +18,14 @@ import (
 // FileName is the canonical lockfile filename for pinned collectors and tools.
 const FileName = "epack.lock.yaml"
 
-// LockFile is the v1 collector, tool, and remote adapter lockfile.
+// LockFile is the v1 collector, tool, remote adapter, profile, and overlay lockfile.
 type LockFile struct {
 	SchemaVersion int                        `yaml:"schema_version"`
 	Collectors    map[string]LockedCollector `yaml:"collectors,omitempty"`
 	Tools         map[string]LockedTool      `yaml:"tools,omitempty"`
 	Remotes       map[string]LockedRemote    `yaml:"remotes,omitempty"`
+	Profiles      map[string]LockedProfile   `yaml:"profiles,omitempty"`
+	Overlays      map[string]LockedOverlay   `yaml:"overlays,omitempty"`
 }
 
 // LockedCollector pins either a source-based or external collector entry.
@@ -68,6 +70,26 @@ type LockedRemote struct {
 	Platforms    map[string]componenttypes.LockedPlatform `yaml:"platforms"`
 }
 
+// LockedProfile pins a profile file by digest.
+// Profiles are JSON/YAML files (not platform-specific binaries).
+type LockedProfile struct {
+	Source   string                       `yaml:"source"`            // e.g., "evidencepack/soc2-basic@v1"
+	Version  string                       `yaml:"version,omitempty"` // Resolved version (e.g., "v1.2.0")
+	Digest   string                       `yaml:"digest"`            // SHA256 digest of the profile file
+	Signer   *componenttypes.LockedSigner `yaml:"signer,omitempty"`  // Sigstore verification info
+	LockedAt string                       `yaml:"locked_at,omitempty"`
+}
+
+// LockedOverlay pins an overlay file by digest.
+// Overlays are JSON/YAML files that modify profile requirements.
+type LockedOverlay struct {
+	Source   string                       `yaml:"source"`            // e.g., "myorg/stricter-freshness@v1"
+	Version  string                       `yaml:"version,omitempty"` // Resolved version
+	Digest   string                       `yaml:"digest"`            // SHA256 digest of the overlay file
+	Signer   *componenttypes.LockedSigner `yaml:"signer,omitempty"`  // Sigstore verification info
+	LockedAt string                       `yaml:"locked_at,omitempty"`
+}
+
 // New returns an empty lockfile model.
 func New() *LockFile {
 	return &LockFile{
@@ -75,6 +97,8 @@ func New() *LockFile {
 		Collectors:    make(map[string]LockedCollector),
 		Tools:         make(map[string]LockedTool),
 		Remotes:       make(map[string]LockedRemote),
+		Profiles:      make(map[string]LockedProfile),
+		Overlays:      make(map[string]LockedOverlay),
 	}
 }
 
@@ -110,6 +134,12 @@ func Parse(data []byte) (*LockFile, error) {
 	if lf.Remotes == nil {
 		lf.Remotes = make(map[string]LockedRemote)
 	}
+	if lf.Profiles == nil {
+		lf.Profiles = make(map[string]LockedProfile)
+	}
+	if lf.Overlays == nil {
+		lf.Overlays = make(map[string]LockedOverlay)
+	}
 	if lf.SchemaVersion == 0 {
 		lf.SchemaVersion = 1
 	}
@@ -126,6 +156,14 @@ func Parse(data []byte) (*LockFile, error) {
 	if len(lf.Remotes) > limits.MaxRemoteCount {
 		return nil, fmt.Errorf("lockfile remote count %d exceeds limit of %d",
 			len(lf.Remotes), limits.MaxRemoteCount)
+	}
+	if len(lf.Profiles) > limits.MaxProfileCount {
+		return nil, fmt.Errorf("lockfile profile count %d exceeds limit of %d",
+			len(lf.Profiles), limits.MaxProfileCount)
+	}
+	if len(lf.Overlays) > limits.MaxOverlayCount {
+		return nil, fmt.Errorf("lockfile overlay count %d exceeds limit of %d",
+			len(lf.Overlays), limits.MaxOverlayCount)
 	}
 
 	// Validate all component names and versions to prevent path traversal via malicious lockfile
@@ -184,6 +222,44 @@ func (lf *LockFile) validateComponentsForParse() error {
 			platforms:    r.Platforms,
 		}, config.ValidateRemoteName); err != nil {
 			return err
+		}
+	}
+
+	// Validate profiles
+	for source, p := range lf.Profiles {
+		if err := validateProfileForParse("profile", source, p.Version, p.LockedAt); err != nil {
+			return err
+		}
+	}
+
+	// Validate overlays
+	for source, o := range lf.Overlays {
+		if err := validateProfileForParse("overlay", source, o.Version, o.LockedAt); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateProfileForParse validates a profile or overlay entry during parsing.
+func validateProfileForParse(kindLabel, source, version, lockedAt string) error {
+	// Source is the key - validate it looks like a profile reference
+	if source == "" {
+		return fmt.Errorf("lockfile contains empty %s source", kindLabel)
+	}
+
+	// Validate version if present
+	if version != "" {
+		if err := config.ValidateVersion(version); err != nil {
+			return fmt.Errorf("lockfile contains invalid version for %s %q: %w", kindLabel, source, err)
+		}
+	}
+
+	// Validate timestamp if present
+	if lockedAt != "" {
+		if err := timestamp.Validate(lockedAt); err != nil {
+			return fmt.Errorf("lockfile %s %q has invalid locked_at timestamp: %w", kindLabel, source, err)
 		}
 	}
 
@@ -381,6 +457,33 @@ func (lf *LockFile) validateComponentsForSave() error {
 		}
 	}
 
+	// Validate profiles
+	for source, p := range lf.Profiles {
+		if err := validateProfileForSave("profile", source, p.Version); err != nil {
+			return err
+		}
+	}
+
+	// Validate overlays
+	for source, o := range lf.Overlays {
+		if err := validateProfileForSave("overlay", source, o.Version); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateProfileForSave validates a profile or overlay entry before saving.
+func validateProfileForSave(kindLabel, source, version string) error {
+	if source == "" {
+		return fmt.Errorf("cannot save lockfile with empty %s source", kindLabel)
+	}
+	if version != "" {
+		if err := config.ValidateVersion(version); err != nil {
+			return fmt.Errorf("cannot save lockfile with invalid version for %s %q: %w", kindLabel, source, err)
+		}
+	}
 	return nil
 }
 
@@ -596,4 +699,34 @@ func (lf *LockFile) GetComponentPlatformDigest(kind componenttypes.ComponentKind
 		return "", false
 	}
 	return entry.Digest, true
+}
+
+// GetProfile returns a profile entry by source.
+func (lf *LockFile) GetProfile(source string) (LockedProfile, bool) {
+	p, ok := lf.Profiles[source]
+	return p, ok
+}
+
+// GetProfileDigest returns the digest for a locked profile.
+func (lf *LockFile) GetProfileDigest(source string) (string, bool) {
+	p, ok := lf.Profiles[source]
+	if !ok || p.Digest == "" {
+		return "", false
+	}
+	return p.Digest, true
+}
+
+// GetOverlay returns an overlay entry by source.
+func (lf *LockFile) GetOverlay(source string) (LockedOverlay, bool) {
+	o, ok := lf.Overlays[source]
+	return o, ok
+}
+
+// GetOverlayDigest returns the digest for a locked overlay.
+func (lf *LockFile) GetOverlayDigest(source string) (string, bool) {
+	o, ok := lf.Overlays[source]
+	if !ok || o.Digest == "" {
+		return "", false
+	}
+	return o.Digest, true
 }

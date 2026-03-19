@@ -85,7 +85,7 @@ func ToolWithFlags(ctx context.Context, out Output, toolName string, toolArgs []
 		return fmt.Errorf("getting working directory: %w", err)
 	}
 
-	toolCfg, lf, loadErr := loadToolConfig(workDir, toolName)
+	toolCfg, lf, projectRoot, loadErr := loadToolConfig(workDir, toolName)
 	if loadErr != nil {
 		// Distinguish between "config not found" vs "config/lockfile parse error"
 		if cfgErr, ok := loadErr.(*configLoadError); ok && cfgErr.notFound {
@@ -99,13 +99,21 @@ func ToolWithFlags(ctx context.Context, out Output, toolName string, toolArgs []
 	}
 
 	// Tool is configured - use verified execution with full protocol
-	return dispatchVerifiedTool(ctx, out, toolName, toolArgs, workDir, toolCfg, lf, flags)
+	return dispatchVerifiedTool(ctx, out, verifiedDispatchInput{
+		toolName:    toolName,
+		toolArgs:    toolArgs,
+		workDir:     workDir,
+		projectRoot: projectRoot,
+		toolCfg:     toolCfg,
+		lockfile:    lf,
+		flags:       flags,
+	})
 }
 
 // dispatchVerifiedTool executes a tool with TOCTOU-safe digest verification
 // and full Tool Protocol v1 support.
-func dispatchVerifiedTool(ctx context.Context, out Output, toolName string, toolArgs []string, workDir string, toolCfg config.ToolConfig, lf *lockfile.LockFile, flags WrapperFlags) error {
-	prepared, err := prepareVerifiedToolDispatch(out, toolName, toolArgs, workDir, toolCfg, lf, flags)
+func dispatchVerifiedTool(ctx context.Context, out Output, in verifiedDispatchInput) error {
+	prepared, err := prepareVerifiedToolDispatch(out, in)
 	if err != nil {
 		return err
 	}
@@ -116,15 +124,25 @@ func dispatchVerifiedTool(ctx context.Context, out Output, toolName string, tool
 		defer prepared.configCleanup()
 	}
 
-	binaryName := componenttypes.BinaryName(componenttypes.KindTool, toolName)
+	binaryName := componenttypes.BinaryName(componenttypes.KindTool, in.toolName)
 	toolExitCode, execErr := execToolWithProtocol(ctx, prepared.execPath, binaryName, prepared.finalToolArgs, prepared.env, prepared.runDir)
 	completedAt := time.Now().UTC()
-	wrapperExitCode, result := processToolResult(out, toolName, prepared.runID, prepared.runDir, prepared.absPackPath, prepared.startedAt, completedAt, toolExitCode, prepared.toolVersion, execErr)
-	printRunSummary(out, result, prepared.runDir, flags.QuietMode)
+	wrapperExitCode, result := processToolResult(out, in.toolName, prepared.runID, prepared.runDir, prepared.absPackPath, prepared.startedAt, completedAt, toolExitCode, prepared.toolVersion, execErr)
+	printRunSummary(out, result, prepared.runDir, in.flags.QuietMode)
 	if wrapperExitCode != 0 {
 		return &errors.Error{Code: errors.InvalidInput, Exit: wrapperExitCode, Message: fmt.Sprintf("tool exited with code %d", wrapperExitCode)}
 	}
 	return nil
+}
+
+type verifiedDispatchInput struct {
+	toolName    string
+	toolArgs    []string
+	workDir     string
+	projectRoot string
+	toolCfg     config.ToolConfig
+	lockfile    *lockfile.LockFile
+	flags       WrapperFlags
 }
 
 type verifiedDispatchPrepared struct {
@@ -140,48 +158,69 @@ type verifiedDispatchPrepared struct {
 	configCleanup func()
 }
 
-func prepareVerifiedToolDispatch(out Output, toolName string, toolArgs []string, workDir string, toolCfg config.ToolConfig, lf *lockfile.LockFile, flags WrapperFlags) (*verifiedDispatchPrepared, error) {
+func prepareVerifiedToolDispatch(out Output, in verifiedDispatchInput) (*verifiedDispatchPrepared, error) {
 	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
-	packPath := flags.PackPath
-	absPackPath, runID, runDir, err := prepareDispatchRunContext(out, toolName, flags, packPath)
+	packPath := in.flags.PackPath
+	absPackPath, runID, runDir, err := prepareDispatchRunContext(out, in.toolName, in.flags, packPath)
 	if err != nil {
 		return nil, err
 	}
-	locked, platformEntry, err := resolveToolLockfileEntry(out, lf, toolName, platformKey, runID, runDir, absPackPath, flags)
+	locked, platformEntry, err := resolveToolLockfileEntry(out, in.lockfile, in.toolName, platformKey, runID, runDir, absPackPath, in.flags)
 	if err != nil {
 		return nil, err
 	}
-	execPath, cleanup, err := resolveToolExecPath(out, workDir, lf, toolName, toolCfg, locked.Version, platformEntry, runID, runDir, absPackPath, flags)
+
+	// SECURITY: Validate that tool config matches lockfile entry.
+	// This prevents "lockfile retargeting" attacks where config points to a different
+	// repository while reusing a valid lockfile entry. Also validates signer provenance.
+	if err := sync.ValidateToolAlignment(in.toolName, in.toolCfg, locked); err != nil {
+		return nil, writePreExecFailure(out, in.toolName, runID, runDir, absPackPath, locked.Version,
+			componenttypes.ExitLockfileMissing, componenttypes.ErrCodeLockfileError,
+			err.Error())
+	}
+
+	execPath, cleanup, err := resolveToolExecPath(out, in.workDir, in.lockfile, in.toolName, in.toolCfg, locked.Version, platformEntry, runID, runDir, absPackPath, in.flags)
 	if err != nil {
 		return nil, err
 	}
 	caps, requiresPack, toolVersion := resolveToolCapabilities(execPath, locked.Version)
-	if err := validateToolInputs(out, toolName, runID, runDir, packPath, absPackPath, toolVersion, requiresPack, caps); err != nil {
+	if err := validateToolInputs(out, in.toolName, runID, runDir, packPath, absPackPath, toolVersion, requiresPack, caps); err != nil {
 		return nil, err
 	}
-	packDigest, err := verifyPackAndGetDigest(out, toolName, runID, runDir, packPath, absPackPath, toolVersion)
+	packDigest, err := verifyPackAndGetDigest(out, in.toolName, runID, runDir, packPath, absPackPath, toolVersion)
 	if err != nil {
 		return nil, err
 	}
 	startedAt := time.Now().UTC()
-	configFilePath, configCleanup, err := writeToolConfig(toolCfg)
+	configFilePath, configCleanup, err := writeToolConfig(in.toolCfg)
 	if err != nil {
-		return nil, writePreExecFailure(out, toolName, runID, runDir, absPackPath, toolVersion,
+		return nil, writePreExecFailure(out, in.toolName, runID, runDir, absPackPath, toolVersion,
 			componenttypes.ExitConfigFailed, componenttypes.ErrCodeConfigFailed,
 			fmt.Sprintf("writing tool config: %v", err))
 	}
-	finalToolArgs := toolArgs
-	if flags.PackPath != "" && absPackPath != "" {
-		finalToolArgs = append([]string{absPackPath}, toolArgs...)
+	finalToolArgs := in.toolArgs
+	if in.flags.PackPath != "" && absPackPath != "" {
+		finalToolArgs = append([]string{absPackPath}, in.toolArgs...)
 	}
 	return &verifiedDispatchPrepared{
-		runID:         runID,
-		runDir:        runDir,
-		absPackPath:   absPackPath,
-		execPath:      execPath,
-		toolVersion:   toolVersion,
-		startedAt:     startedAt,
-		env:           buildProtocolEnv(toolName, runID, runDir, absPackPath, packDigest, startedAt, toolCfg, configFilePath, flags),
+		runID:       runID,
+		runDir:      runDir,
+		absPackPath: absPackPath,
+		execPath:    execPath,
+		toolVersion: toolVersion,
+		startedAt:   startedAt,
+		env: buildProtocolEnv(protocolEnvInput{
+			toolName:       in.toolName,
+			runID:          runID,
+			runDir:         runDir,
+			packPath:       absPackPath,
+			packDigest:     packDigest,
+			projectRoot:    in.projectRoot,
+			startedAt:      startedAt,
+			toolCfg:        in.toolCfg,
+			configFilePath: configFilePath,
+			flags:          in.flags,
+		}),
 		finalToolArgs: finalToolArgs,
 		cleanup:       cleanup,
 		configCleanup: configCleanup,

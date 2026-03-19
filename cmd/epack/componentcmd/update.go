@@ -56,7 +56,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	workDir, err := resolveWorkDir()
+	workDir, err := resolveWorkDirFromConfigPath(updateConfigPath)
 	if err != nil {
 		return err
 	}

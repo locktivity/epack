@@ -3,8 +3,6 @@
 package componentcmd
 
 import (
-	"strings"
-
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/spf13/cobra"
@@ -67,7 +65,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 
 	platforms := parseCommaSeparated(lockPlatforms)
 
-	workDir, err := resolveWorkDir()
+	workDir, err := resolveWorkDirFromConfigPath(lockConfigPath)
 	if err != nil {
 		return err
 	}
@@ -100,7 +98,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 		} else if r.IsNew {
 			status = "added"
 		}
-		out.Print("  %s %s@%s (%s)\n", status, r.Name, r.Version, strings.Join(r.Platforms, ", "))
+		out.Print("  %s %s%s\n", status, r.DisplayName(), r.PlatformSuffix())
 	}
 
 	out.Print("\nLockfile written to %s\n", lockfile.FileName)
