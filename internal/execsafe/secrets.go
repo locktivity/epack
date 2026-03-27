@@ -2,6 +2,7 @@ package execsafe
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -64,6 +65,28 @@ func AppendAllowedSecrets(dst []string, names []string, getenv func(string) stri
 		}
 		if value := getenv(name); value != "" {
 			dst = append(dst, name+"="+value)
+		}
+	}
+	return dst
+}
+
+// AppendExplicitEnv appends a trusted env bundle directly to dst.
+// Keys are sorted for deterministic output in tests.
+func AppendExplicitEnv(dst []string, env map[string]string) []string {
+	if len(env) == 0 {
+		return dst
+	}
+	keys := make([]string, 0, len(env))
+	for key, value := range env {
+		if key == "" || value == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if value := env[key]; value != "" {
+			dst = append(dst, key+"="+value)
 		}
 	}
 	return dst

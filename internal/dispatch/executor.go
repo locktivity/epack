@@ -105,6 +105,7 @@ func buildProtocolEnv(in protocolEnvInput) []string {
 	// Only explicitly configured secrets are passed to tools.
 	// Reserved prefixes (EPACK_, LD_, DYLD_, _) are blocked.
 	env = execsafe.AppendAllowedSecrets(env, in.toolCfg.Secrets, os.Getenv)
+	env = execsafe.AppendExplicitEnv(env, in.managedEnv)
 
 	return env
 }
@@ -118,6 +119,7 @@ type protocolEnvInput struct {
 	projectRoot    string
 	startedAt      time.Time
 	toolCfg        config.ToolConfig
+	managedEnv     map[string]string
 	configFilePath string
 	flags          WrapperFlags
 }

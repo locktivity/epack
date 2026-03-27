@@ -2,11 +2,17 @@ package sign
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/locktivity/epack/internal/broker"
 	"github.com/locktivity/epack/sign/sigstore"
 )
+
+var ambientOIDCTokenResolver = func(ctx context.Context, audience string) (string, error) {
+	return broker.GitHubActionsTokenSource{}.Token(ctx, audience)
+}
 
 // SignPackOptions configures high-level pack signing.
 // Simplified interface over sigstore.Options that handles key loading
@@ -121,9 +127,9 @@ func NewSignerFromOptions(ctx context.Context, opts SignPackOptions) (Signer, er
 		sigOpts.PrivateKey = key
 	} else {
 		// OIDC/keyless signing
-		token := opts.OIDCToken
-		if token == "" {
-			token = os.Getenv("EPACK_OIDC_TOKEN")
+		token, err := resolveOIDCToken(ctx, opts)
+		if err != nil {
+			return nil, err
 		}
 		sigOpts.OIDC = &sigstore.OIDCOptions{
 			Token:       token,
@@ -139,4 +145,23 @@ func NewSignerFromOptions(ctx context.Context, opts SignPackOptions) (Signer, er
 	}
 
 	return sigstore.NewSigner(ctx, sigOpts)
+}
+
+func resolveOIDCToken(ctx context.Context, opts SignPackOptions) (string, error) {
+	token := opts.OIDCToken
+	if token == "" {
+		token = os.Getenv("EPACK_OIDC_TOKEN")
+	}
+	if token != "" || opts.Interactive {
+		return token, nil
+	}
+
+	token, err := ambientOIDCTokenResolver(ctx, sigstore.SigstoreClientID)
+	if err != nil {
+		if errors.Is(err, broker.ErrOIDCUnavailable) {
+			return "", fmt.Errorf("no OIDC token provided and GitHub Actions ambient OIDC is unavailable")
+		}
+		return "", fmt.Errorf("requesting GitHub Actions OIDC token: %w", err)
+	}
+	return token, nil
 }

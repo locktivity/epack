@@ -3,6 +3,7 @@ package component
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/locktivity/epack/internal/component/config"
@@ -385,6 +386,143 @@ remotes:
 	_, err := config.Load(configPath)
 	if err == nil {
 		t.Fatal("config.Load() expected error for reserved remote secret names, got nil")
+	}
+}
+
+func TestLoadConfig_CredentialSetsAndComponentCredentials(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+credential_sets:
+  github_repo: credset_abc123
+  locktivity_push: credset_def456
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+    credentials:
+      - github_repo
+tools:
+  validate:
+    binary: /usr/bin/true
+    credentials:
+      - github_repo
+remotes:
+  locktivity:
+    source: locktivity/epack-remote-locktivity@v1
+    credentials:
+      - locktivity_push
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+
+	if got := cfg.CredentialSets["github_repo"]; got != "credset_abc123" {
+		t.Fatalf("CredentialSets[github_repo] = %q, want %q", got, "credset_abc123")
+	}
+	if got := cfg.Collectors["github"].Credentials; len(got) != 1 || got[0] != "github_repo" {
+		t.Fatalf("collector credentials = %v, want [github_repo]", got)
+	}
+	if got := cfg.Tools["validate"].Credentials; len(got) != 1 || got[0] != "github_repo" {
+		t.Fatalf("tool credentials = %v, want [github_repo]", got)
+	}
+	if got := cfg.Remotes["locktivity"].Credentials; len(got) != 1 || got[0] != "locktivity_push" {
+		t.Fatalf("remote credentials = %v, want [locktivity_push]", got)
+	}
+
+	ids, err := cfg.ResolveCredentialSetIDs([]string{"github_repo", "locktivity_push", "github_repo"})
+	if err != nil {
+		t.Fatalf("ResolveCredentialSetIDs() error: %v", err)
+	}
+	want := []string{"credset_abc123", "credset_def456"}
+	if len(ids) != len(want) {
+		t.Fatalf("ResolveCredentialSetIDs() len = %d, want %d", len(ids), len(want))
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("ResolveCredentialSetIDs()[%d] = %q, want %q", i, ids[i], want[i])
+		}
+	}
+}
+
+func TestLoadConfig_CredentialsRejectUnknownRef(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+credential_sets:
+  github_repo: credset_abc123
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+    credentials:
+      - missing_ref
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	if _, err := config.Load(configPath); err == nil {
+		t.Fatal("config.Load() expected error for missing credential ref, got nil")
+	}
+}
+
+func TestLoadConfig_CredentialsRejectRawOIDCPassthroughForManagedCredentials(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+credential_sets:
+  github_repo: credset_abc123
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+    credentials:
+      - github_repo
+    secrets:
+      - ACTIONS_ID_TOKEN_REQUEST_URL
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	_, err := config.Load(configPath)
+	if err == nil {
+		t.Fatal("config.Load() expected error for raw OIDC passthrough with managed credentials, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot forward raw GitHub OIDC env var") {
+		t.Fatalf("config.Load() error = %v, want managed credential isolation error", err)
+	}
+}
+
+func TestLoadConfig_AllowsRawOIDCPassthroughWithoutManagedCredentials(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+    secrets:
+      - ACTIONS_ID_TOKEN_REQUEST_URL
+      - ACTIONS_ID_TOKEN_REQUEST_TOKEN
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+	got := cfg.Collectors["github"].Secrets
+	if len(got) != 2 || got[0] != "ACTIONS_ID_TOKEN_REQUEST_URL" || got[1] != "ACTIONS_ID_TOKEN_REQUEST_TOKEN" {
+		t.Fatalf("collector secrets = %v, want raw OIDC passthrough preserved", got)
 	}
 }
 

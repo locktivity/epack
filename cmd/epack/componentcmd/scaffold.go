@@ -38,7 +38,9 @@ const (
 const (
 	gitignoreBlockStart = "# >>> epack (managed) >>>"
 	gitignoreBlockEnd   = "# <<< epack (managed) <<<"
-	gitignoreContent    = `.epack/
+	gitignoreContent    = `.epack/*
+!.epack/hooks/
+!.epack/hooks/**
 packs/*.epack
 !packs/.gitkeep`
 )

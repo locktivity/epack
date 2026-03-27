@@ -15,12 +15,15 @@ import (
 // JobConfig is the top-level epack.yaml model for collector and tool configuration.
 // Note: The file may be named collectors.yaml (legacy) or epack.yaml (preferred).
 type JobConfig struct {
-	Stream     string                     `yaml:"stream"`
-	Output     string                     `yaml:"output,omitempty"`
-	Platforms  []string                   `yaml:"platforms,omitempty"`
-	Signing    SigningConfig              `yaml:"signing"`
-	Collectors map[string]CollectorConfig `yaml:"collectors"`
-	Tools      map[string]ToolConfig      `yaml:"tools,omitempty"`
+	Stream    string        `yaml:"stream"`
+	Output    string        `yaml:"output,omitempty"`
+	Platforms []string      `yaml:"platforms,omitempty"`
+	Signing   SigningConfig `yaml:"signing"`
+	// CredentialSets maps local refs to opaque Locktivity-managed credential-set IDs.
+	// In v1, this surface is intended for Locktivity-managed workflows.
+	CredentialSets map[string]string          `yaml:"credential_sets,omitempty"`
+	Collectors     map[string]CollectorConfig `yaml:"collectors"`
+	Tools          map[string]ToolConfig      `yaml:"tools,omitempty"`
 
 	// Profiles declares profiles to validate packs against.
 	// Profiles define requirements for artifacts (types, cardinality, freshness).
@@ -99,6 +102,8 @@ type CollectorConfig struct {
 	Binary  string         `yaml:"binary,omitempty"`
 	Config  map[string]any `yaml:"config,omitempty"`
 	Secrets []string       `yaml:"secrets,omitempty"` // Env var names to pass through to collector
+	// Credentials references Locktivity-managed credential set refs declared in credential_sets.
+	Credentials []string `yaml:"credentials,omitempty"`
 }
 
 // ToolConfig declares a source-based tool.
@@ -108,6 +113,8 @@ type ToolConfig struct {
 	Binary  string         `yaml:"binary,omitempty"`
 	Config  map[string]any `yaml:"config,omitempty"`  // Config values passed as EPACK_CFG_* env vars
 	Secrets []string       `yaml:"secrets,omitempty"` // Env var names to pass as EPACK_SECRET_* vars
+	// Credentials references Locktivity-managed credential set refs declared in credential_sets.
+	Credentials []string `yaml:"credentials,omitempty"`
 }
 
 // ProfileConfig declares a profile to validate evidence packs against.
@@ -234,6 +241,9 @@ type RemoteConfig struct {
 	// Secrets is a list of env var names to pass through to the remote adapter.
 	// These are passed as-is (not renamed) to allow adapter-specific auth.
 	Secrets []string `yaml:"secrets,omitempty"`
+
+	// Credentials is a list of Locktivity-managed credential set refs declared in credential_sets.
+	Credentials []string `yaml:"credentials,omitempty"`
 }
 
 // RemoteTarget specifies the target workspace/environment.
@@ -248,7 +258,8 @@ type RemoteTarget struct {
 // RemoteAuth configures authentication preferences.
 type RemoteAuth struct {
 	// Mode is the authentication mode.
-	// Values: "device_code", "oidc", "api_key"
+	// Common values for the Locktivity adapter are "device_code", "access_token",
+	// and "client_credentials".
 	Mode string `yaml:"mode,omitempty"`
 
 	// Profile is an optional named credential profile (adapter-specific).
@@ -526,6 +537,9 @@ func (c *JobConfig) Validate() error {
 	if err := c.validatePlatforms(); err != nil {
 		return err
 	}
+	if err := c.validateCredentialSets(); err != nil {
+		return err
+	}
 	if err := c.validateCollectors(); err != nil {
 		return err
 	}
@@ -553,6 +567,18 @@ func (c *JobConfig) validatePlatforms() error {
 	return nil
 }
 
+func (c *JobConfig) validateCredentialSets() error {
+	for name, id := range c.CredentialSets {
+		if err := ValidateCredentialSetName(name); err != nil {
+			return fmt.Errorf("credential_sets %q: %w", name, err)
+		}
+		if strings.TrimSpace(id) == "" {
+			return fmt.Errorf("credential_sets %q: id cannot be empty", name)
+		}
+	}
+	return nil
+}
+
 func (c *JobConfig) validateCollectors() error {
 	for name, collector := range c.Collectors {
 		// Validate collector name to prevent path traversal
@@ -571,6 +597,12 @@ func (c *JobConfig) validateCollectors() error {
 		// like PATH, LD_PRELOAD, or EPACK_* protocol variables.
 		if err := execsafe.ValidateSecretNames(collector.Secrets); err != nil {
 			return fmt.Errorf("collector %q: %w", name, err)
+		}
+		if err := validateManagedCredentialIsolation("collector", name, collector.Secrets, collector.Credentials); err != nil {
+			return err
+		}
+		if err := c.validateCredentialRefs("collector", name, collector.Credentials); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -594,6 +626,12 @@ func (c *JobConfig) validateTools() error {
 		// like PATH, LD_PRELOAD, or EPACK_* protocol variables.
 		if err := execsafe.ValidateSecretNames(tool.Secrets); err != nil {
 			return fmt.Errorf("tool %q: %w", name, err)
+		}
+		if err := validateManagedCredentialIsolation("tool", name, tool.Secrets, tool.Credentials); err != nil {
+			return err
+		}
+		if err := c.validateCredentialRefs("tool", name, tool.Credentials); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -628,8 +666,62 @@ func (c *JobConfig) validateRemotes() error {
 		if err := execsafe.ValidateSecretNames(remote.Secrets); err != nil {
 			return fmt.Errorf("remote %q: %w", name, err)
 		}
+		if err := validateManagedCredentialIsolation("remote", name, remote.Secrets, remote.Credentials); err != nil {
+			return err
+		}
+		if err := c.validateCredentialRefs("remote", name, remote.Credentials); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func validateManagedCredentialIsolation(kind, name string, secrets, refs []string) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	for _, secret := range secrets {
+		if strings.HasPrefix(strings.ToUpper(secret), "ACTIONS_ID_TOKEN_REQUEST_") {
+			return fmt.Errorf(
+				"%s %q cannot forward raw GitHub OIDC env var %q while using Locktivity-managed credentials; use either secrets: or credentials: for workload identity",
+				kind, name, secret,
+			)
+		}
+	}
+	return nil
+}
+
+func (c *JobConfig) validateCredentialRefs(kind, name string, refs []string) error {
+	for _, ref := range refs {
+		if err := ValidateCredentialSetName(ref); err != nil {
+			return fmt.Errorf("%s %q: invalid credential ref %q: %w", kind, name, ref, err)
+		}
+		if _, ok := c.CredentialSets[ref]; !ok {
+			return fmt.Errorf("%s %q: credential ref %q not found in credential_sets", kind, name, ref)
+		}
+	}
+	return nil
+}
+
+// ResolveCredentialSetIDs resolves logical credential refs to opaque server-issued IDs.
+func (c *JobConfig) ResolveCredentialSetIDs(refs []string) ([]string, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		id, ok := c.CredentialSets[ref]
+		if !ok {
+			return nil, fmt.Errorf("credential ref %q not found in credential_sets", ref)
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (c *JobConfig) validateProfiles() error {

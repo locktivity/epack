@@ -29,6 +29,8 @@ func TestValidateSecretName(t *testing.T) {
 		{"denied LD_CUSTOM", "LD_CUSTOM", true},
 		{"denied DYLD_ prefix", "DYLD_INSERT_LIBRARIES", true},
 		{"denied DYLD_CUSTOM", "DYLD_CUSTOM", true},
+		{"allowed github oidc request url", "ACTIONS_ID_TOKEN_REQUEST_URL", false},
+		{"allowed github oidc request token", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", false},
 		{"denied _ prefix", "_INTERNAL", true},
 
 		// Edge cases - similar prefixes that are NOT denied
@@ -48,6 +50,24 @@ func TestValidateSecretName(t *testing.T) {
 				t.Errorf("ValidateSecretName(%q) error = %v, wantErr %v", tt.secret, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestAppendExplicitEnv(t *testing.T) {
+	got := AppendExplicitEnv(nil, map[string]string{
+		"LOCKTIVITY_ACCESS_TOKEN": "ltk_test",
+		"GITHUB_TOKEN":            "ghs_test",
+		"EMPTY":                   "",
+	})
+
+	if len(got) != 2 {
+		t.Fatalf("AppendExplicitEnv() len = %d, want 2", len(got))
+	}
+	if got[0] != "GITHUB_TOKEN=ghs_test" {
+		t.Fatalf("AppendExplicitEnv()[0] = %q, want %q", got[0], "GITHUB_TOKEN=ghs_test")
+	}
+	if got[1] != "LOCKTIVITY_ACCESS_TOKEN=ltk_test" {
+		t.Fatalf("AppendExplicitEnv()[1] = %q, want %q", got[1], "LOCKTIVITY_ACCESS_TOKEN=ltk_test")
 	}
 }
 

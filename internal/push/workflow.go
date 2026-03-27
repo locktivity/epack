@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/locktivity/epack/internal/buildcontext"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/netpolicy"
 	"github.com/locktivity/epack/internal/netpolicy/adapterurl"
@@ -440,6 +441,11 @@ func writePushReceipt(projectRoot, remoteName string, target remote.TargetConfig
 // buildBuildContext builds build context from environment variables.
 func buildBuildContext(src *config.RemoteReleaseSource) map[string]string {
 	ctx := make(map[string]string)
+	if built := buildcontext.Build(os.Getenv); built != nil {
+		if releaseFields := built.ReleaseFields(); releaseFields != nil {
+			ctx = releaseFields
+		}
+	}
 
 	if src.Git != nil {
 		if src.Git.SHAEnv != "" {

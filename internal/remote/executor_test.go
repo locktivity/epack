@@ -424,6 +424,39 @@ esac
 	}
 }
 
+func TestExecutor_ManagedEnvPassthrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows - no shell scripts")
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "adapter")
+	content := `#!/bin/sh
+case "$1" in
+  --capabilities)
+    echo '{"name":"test","kind":"remote_adapter","deploy_protocol_version":1,"features":{"prepare_finalize":true,"whoami":true}}'
+    ;;
+  auth.whoami)
+    printf '{"ok":true,"type":"auth.whoami.result","identity":{"authenticated":true,"subject":"GITHUB_TOKEN=%s"}}\n' "${GITHUB_TOKEN:-unset}"
+    ;;
+esac
+`
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatalf("creating test script: %v", err)
+	}
+
+	exec := remote.NewExecutor(script, "test")
+	exec.ManagedEnv = map[string]string{"GITHUB_TOKEN": "ghs_test"}
+
+	resp, err := exec.AuthWhoami(context.Background())
+	if err != nil {
+		t.Fatalf("AuthWhoami failed: %v", err)
+	}
+	if !contains(resp.Identity.Subject, "GITHUB_TOKEN=ghs_test") {
+		t.Fatalf("managed env should be passed through, got: %s", resp.Identity.Subject)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
 }

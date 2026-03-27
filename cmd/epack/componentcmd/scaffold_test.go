@@ -227,6 +227,15 @@ func TestScaffold(t *testing.T) {
 	if !strings.Contains(string(gitignoreContent), "packs/*.epack") {
 		t.Error(".gitignore should ignore generated .epack files")
 	}
+	if !strings.Contains(string(gitignoreContent), ".epack/*") {
+		t.Error(".gitignore should ignore runtime .epack state by default")
+	}
+	if !strings.Contains(string(gitignoreContent), "!.epack/hooks/") {
+		t.Error(".gitignore should keep .epack/hooks tracked")
+	}
+	if !strings.Contains(string(gitignoreContent), "!.epack/hooks/**") {
+		t.Error(".gitignore should keep hook files under .epack/hooks tracked")
+	}
 
 	// Check README quickstart uses .epack extension
 	readmeContent, err := os.ReadFile(filepath.Join(projectDir, readmeFile))

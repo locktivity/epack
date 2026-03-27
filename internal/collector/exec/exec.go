@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -39,14 +40,37 @@ type ProgressMessage struct {
 	Total           int64  `json:"total,omitempty"`
 }
 
-// RunOptions configures collector process execution.
-type RunOptions struct {
-	// Timeout for collector execution. 0 uses DefaultCollectorTimeout.
-	Timeout time.Duration
+// EnvInput configures collector environment construction.
+type EnvInput struct {
+	BaseEnv []string
+
+	// Name is exposed to the collector as EPACK_COLLECTOR_NAME.
+	Name string
+
+	// ConfigPath is exposed as EPACK_COLLECTOR_CONFIG when present.
+	ConfigPath string
+
+	// Secrets lists explicit env var names to pass through.
+	Secrets []string
+
+	// ManagedEnv is the trusted env bundle resolved by the runtime.
+	ManagedEnv map[string]string
+
+	// Getenv reads ambient environment variables like EPACK_IDENTITY.
+	Getenv func(string) string
 
 	// InsecureInheritPath allows inheriting PATH from the environment.
-	// When false (default), collectors run with a safe, deterministic PATH.
 	InsecureInheritPath bool
+}
+
+// Invocation is a prepared collector execution request.
+type Invocation struct {
+	Name     string
+	ExecPath string
+	Env      []string
+
+	// Timeout for collector execution. 0 uses DefaultCollectorTimeout.
+	Timeout time.Duration
 
 	// OnProgress is called for each progress message parsed from stdout.
 	// If nil, progress messages are silently discarded.
@@ -141,21 +165,19 @@ func parseProgressLine(line []byte) (ProgressMessage, bool) {
 	return msg, true
 }
 
-// Run executes a collector binary and returns its output.
+// Run executes a prepared collector invocation and returns its output.
 //
-// SECURITY: execPath must be a verified path from execsafe.VerifiedBinaryFD
+// SECURITY: Invocation.ExecPath must be a verified path from execsafe.VerifiedBinaryFD
 // or an explicitly opted-in unverified path. This function does not perform
 // verification - callers must verify before calling.
 //
 // The function:
-//   - Writes config to a secure temp file
-//   - Builds a restricted environment with protocol variables
 //   - Executes with timeout and output limits
 //   - Streams stdout to parse progress messages in real-time
 //   - Sanitizes stderr before returning errors
-func Run(ctx context.Context, name, execPath, configPath string, env []string, opts RunOptions) RunResult {
+func Run(ctx context.Context, inv Invocation) RunResult {
 	// Apply timeout to prevent DoS from collectors that hang
-	timeout := opts.Timeout
+	timeout := inv.Timeout
 	if timeout == 0 {
 		timeout = limits.DefaultCollectorTimeout
 	}
@@ -164,7 +186,7 @@ func Run(ctx context.Context, name, execPath, configPath string, env []string, o
 
 	// Execute collector
 	// Use streaming writer for stdout to parse progress messages in real-time
-	streamingStdout := newStreamingStdoutWriter(opts.OnProgress)
+	streamingStdout := newStreamingStdoutWriter(inv.OnProgress)
 	stdoutWriter := limits.NewLimitedWriter(streamingStdout, limits.CollectorOutput.Bytes())
 
 	// Capture stderr with size limit to prevent memory exhaustion
@@ -172,8 +194,8 @@ func Run(ctx context.Context, name, execPath, configPath string, env []string, o
 	stderrWriter := limits.NewLimitedWriter(&stderr, limits.CollectorOutput.Bytes())
 
 	err := procexec.Run(execCtx, procexec.Spec{
-		Path:   execPath,
-		Env:    env,
+		Path:   inv.ExecPath,
+		Env:    inv.Env,
 		Stdout: stdoutWriter,
 		Stderr: stderrWriter,
 	})
@@ -183,7 +205,7 @@ func Run(ctx context.Context, name, execPath, configPath string, env []string, o
 			return RunResult{
 				Stderr: stderr.String(),
 				Err: errors.WithHint(errors.Timeout, exitcode.Timeout,
-					fmt.Sprintf("collector %q timed out after %s", name, timeout),
+					fmt.Sprintf("collector %q timed out after %s", inv.Name, timeout),
 					"Increase timeout or check collector for hanging operations", nil),
 			}
 		}
@@ -213,19 +235,20 @@ func Run(ctx context.Context, name, execPath, configPath string, env []string, o
 // SECURITY: Uses BuildRestrictedEnvSafe to strip proxy credentials.
 // Collectors are untrusted code and should not receive credentials
 // embedded in proxy URLs.
-func BuildEnv(baseEnv []string, name, configPath string, secrets []string, getenv func(string) string, insecureInheritPath bool) []string {
-	env := execsafe.BuildRestrictedEnvSafe(baseEnv, insecureInheritPath)
+func BuildEnv(input EnvInput) []string {
+	getenv := input.getenv()
+	env := execsafe.BuildRestrictedEnvSafe(input.BaseEnv, input.InsecureInheritPath)
 
 	// Add protocol environment variables
 	env = append(env,
-		fmt.Sprintf("EPACK_COLLECTOR_NAME=%s", name),
+		fmt.Sprintf("EPACK_COLLECTOR_NAME=%s", input.Name),
 		fmt.Sprintf("EPACK_PROTOCOL_VERSION=%d", CollectorProtocolVersion),
 		"EPACK_WRAPPER_VERSION="+version.Version,
 	)
 
 	// Add config file path if config exists
-	if configPath != "" {
-		env = append(env, "EPACK_COLLECTOR_CONFIG="+configPath)
+	if input.ConfigPath != "" {
+		env = append(env, "EPACK_COLLECTOR_CONFIG="+input.ConfigPath)
 	}
 
 	// Pass through EPACK_IDENTITY if set (for authenticated/CI contexts)
@@ -236,9 +259,17 @@ func BuildEnv(baseEnv []string, name, configPath string, secrets []string, geten
 	// Pass through secrets listed in epack.yaml.
 	// Only explicitly configured secrets are passed to collectors.
 	// Reserved prefixes (EPACK_, LD_, DYLD_, _) are blocked.
-	env = execsafe.AppendAllowedSecrets(env, secrets, getenv)
+	env = execsafe.AppendAllowedSecrets(env, input.Secrets, getenv)
+	env = execsafe.AppendExplicitEnv(env, input.ManagedEnv)
 
 	return env
+}
+
+func (i EnvInput) getenv() func(string) string {
+	if i.Getenv != nil {
+		return i.Getenv
+	}
+	return os.Getenv
 }
 
 // WriteConfig writes collector config to a temporary JSON file.

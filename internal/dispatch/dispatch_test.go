@@ -152,9 +152,12 @@ func TestLoadToolConfigReturnsProjectRoot(t *testing.T) {
 		t.Fatalf("failed to write lockfile: %v", err)
 	}
 
-	toolCfg, loadedLockfile, projectRoot, err := loadToolConfig(subDir, "validate")
+	jobCfg, toolCfg, loadedLockfile, projectRoot, err := loadToolConfig(subDir, "validate")
 	if err != nil {
 		t.Fatalf("loadToolConfig() error = %v", err)
+	}
+	if jobCfg == nil {
+		t.Fatal("jobCfg is nil")
 	}
 	if projectRoot != tmpDir {
 		t.Fatalf("projectRoot = %q, want %q", projectRoot, tmpDir)
@@ -180,12 +183,16 @@ func TestBuildProtocolEnvIncludesProjectRoot(t *testing.T) {
 		projectRoot:    "/repo/root",
 		startedAt:      testTime(t),
 		toolCfg:        config.ToolConfig{},
+		managedEnv:     map[string]string{"GITHUB_TOKEN": "ghs_test"},
 		configFilePath: "/tmp/config.json",
 		flags:          WrapperFlags{},
 	})
 
 	if !containsEnv(env, "EPACK_PROJECT_ROOT=/repo/root") {
 		t.Fatalf("EPACK_PROJECT_ROOT not found in env: %v", env)
+	}
+	if !containsEnv(env, "GITHUB_TOKEN=ghs_test") {
+		t.Fatalf("GITHUB_TOKEN not found in env: %v", env)
 	}
 }
 

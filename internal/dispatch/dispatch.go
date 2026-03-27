@@ -13,6 +13,7 @@ import (
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/credentials"
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
@@ -85,7 +86,7 @@ func ToolWithFlags(ctx context.Context, out Output, toolName string, toolArgs []
 		return fmt.Errorf("getting working directory: %w", err)
 	}
 
-	toolCfg, lf, projectRoot, loadErr := loadToolConfig(workDir, toolName)
+	jobCfg, toolCfg, lf, projectRoot, loadErr := loadToolConfig(workDir, toolName)
 	if loadErr != nil {
 		// Distinguish between "config not found" vs "config/lockfile parse error"
 		if cfgErr, ok := loadErr.(*configLoadError); ok && cfgErr.notFound {
@@ -102,6 +103,7 @@ func ToolWithFlags(ctx context.Context, out Output, toolName string, toolArgs []
 	return dispatchVerifiedTool(ctx, out, verifiedDispatchInput{
 		toolName:    toolName,
 		toolArgs:    toolArgs,
+		jobCfg:      jobCfg,
 		workDir:     workDir,
 		projectRoot: projectRoot,
 		toolCfg:     toolCfg,
@@ -113,7 +115,7 @@ func ToolWithFlags(ctx context.Context, out Output, toolName string, toolArgs []
 // dispatchVerifiedTool executes a tool with TOCTOU-safe digest verification
 // and full Tool Protocol v1 support.
 func dispatchVerifiedTool(ctx context.Context, out Output, in verifiedDispatchInput) error {
-	prepared, err := prepareVerifiedToolDispatch(out, in)
+	prepared, err := prepareVerifiedToolDispatch(ctx, out, in)
 	if err != nil {
 		return err
 	}
@@ -138,6 +140,7 @@ func dispatchVerifiedTool(ctx context.Context, out Output, in verifiedDispatchIn
 type verifiedDispatchInput struct {
 	toolName    string
 	toolArgs    []string
+	jobCfg      *config.JobConfig
 	workDir     string
 	projectRoot string
 	toolCfg     config.ToolConfig
@@ -158,7 +161,7 @@ type verifiedDispatchPrepared struct {
 	configCleanup func()
 }
 
-func prepareVerifiedToolDispatch(out Output, in verifiedDispatchInput) (*verifiedDispatchPrepared, error) {
+func prepareVerifiedToolDispatch(ctx context.Context, out Output, in verifiedDispatchInput) (*verifiedDispatchPrepared, error) {
 	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
 	packPath := in.flags.PackPath
 	absPackPath, runID, runDir, err := prepareDispatchRunContext(out, in.toolName, in.flags, packPath)
@@ -198,6 +201,12 @@ func prepareVerifiedToolDispatch(out Output, in verifiedDispatchInput) (*verifie
 			componenttypes.ExitConfigFailed, componenttypes.ErrCodeConfigFailed,
 			fmt.Sprintf("writing tool config: %v", err))
 	}
+	managedEnv, err := credentials.Resolver{}.ResolveComponentEnv(ctx, in.jobCfg, in.toolCfg.Credentials)
+	if err != nil {
+		return nil, writePreExecFailure(out, in.toolName, runID, runDir, absPackPath, toolVersion,
+			componenttypes.ExitConfigFailed, componenttypes.ErrCodeConfigFailed,
+			fmt.Sprintf("resolving Locktivity-managed credentials: %v", err))
+	}
 	finalToolArgs := in.toolArgs
 	if in.flags.PackPath != "" && absPackPath != "" {
 		finalToolArgs = append([]string{absPackPath}, in.toolArgs...)
@@ -218,6 +227,7 @@ func prepareVerifiedToolDispatch(out Output, in verifiedDispatchInput) (*verifie
 			projectRoot:    in.projectRoot,
 			startedAt:      startedAt,
 			toolCfg:        in.toolCfg,
+			managedEnv:     managedEnv,
 			configFilePath: configFilePath,
 			flags:          in.flags,
 		}),

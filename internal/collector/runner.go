@@ -19,6 +19,7 @@ import (
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/credentials"
 	"github.com/locktivity/epack/internal/execsafe"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/limits"
@@ -315,7 +316,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions
 		Stream:  cfg.Stream,
 		Results: make([]RunResult, 0, len(collectors)),
 	}
-	r.runCollectors(ctx, collectorNames, collectors, lf, platform, opts, aggregateBudget, result)
+	r.runCollectors(ctx, cfg, collectorNames, collectors, lf, platform, opts, aggregateBudget, result)
 	return result, nil
 }
 
@@ -383,6 +384,7 @@ func effectiveParallelism(configured int, collectorCount int) int {
 // runCollectors dispatches to sequential or parallel execution based on configuration.
 func (r *Runner) runCollectors(
 	ctx context.Context,
+	jobCfg *config.JobConfig,
 	collectorNames []string,
 	collectors map[string]config.CollectorConfig,
 	lf *lockfile.LockFile,
@@ -393,15 +395,16 @@ func (r *Runner) runCollectors(
 ) {
 	parallelism := effectiveParallelism(opts.Secure.Parallel, len(collectorNames))
 	if parallelism <= 1 {
-		r.runCollectorsSequential(ctx, collectorNames, collectors, lf, platformKey, opts, aggregateBudget, result)
+		r.runCollectorsSequential(ctx, jobCfg, collectorNames, collectors, lf, platformKey, opts, aggregateBudget, result)
 		return
 	}
-	r.runCollectorsParallel(ctx, collectorNames, collectors, lf, platformKey, opts, aggregateBudget, parallelism, result)
+	r.runCollectorsParallel(ctx, jobCfg, collectorNames, collectors, lf, platformKey, opts, aggregateBudget, parallelism, result)
 }
 
 // runCollectorsSequential executes collectors one at a time.
 func (r *Runner) runCollectorsSequential(
 	ctx context.Context,
+	jobCfg *config.JobConfig,
 	collectorNames []string,
 	collectors map[string]config.CollectorConfig,
 	lf *lockfile.LockFile,
@@ -425,7 +428,12 @@ func (r *Runner) runCollectorsSequential(
 			Total:     len(collectorNames),
 		})
 		started := time.Now()
-		runResult := r.runOne(ctx, name, collectorCfg, lf, platformKey, opts, idx, len(collectorNames))
+		runResult := r.runOne(ctx, jobCfg, singleCollectorRun{
+			Name:           name,
+			Config:         collectorCfg,
+			CollectorIndex: idx,
+			CollectorTotal: len(collectorNames),
+		}, lf, platformKey, opts)
 		aggregateUsed = enforceCollectorBudget(&runResult, aggregateUsed, aggregateBudget)
 		result.Results = append(result.Results, runResult)
 		emitCollectorEvent(opts.Progress.OnCollectorEvent, CollectorEvent{
@@ -446,6 +454,7 @@ func (r *Runner) runCollectorsSequential(
 // runCollectorsParallel executes collectors concurrently with bounded parallelism.
 func (r *Runner) runCollectorsParallel(
 	ctx context.Context,
+	jobCfg *config.JobConfig,
 	collectorNames []string,
 	collectors map[string]config.CollectorConfig,
 	lf *lockfile.LockFile,
@@ -503,7 +512,12 @@ func (r *Runner) runCollectorsParallel(
 			})
 
 			started := time.Now()
-			runResult := r.runOne(gctx, name, collectorCfg, lf, platformKey, opts, idx+1, total)
+			runResult := r.runOne(gctx, jobCfg, singleCollectorRun{
+				Name:           name,
+				Config:         collectorCfg,
+				CollectorIndex: idx + 1,
+				CollectorTotal: total,
+			}, lf, platformKey, opts)
 
 			// Enforce budget atomically after execution
 			if runResult.Success {
@@ -589,32 +603,39 @@ func emitCollectorEvent(fn func(CollectorEvent), evt CollectorEvent) {
 	}
 }
 
+type singleCollectorRun struct {
+	Name           string
+	Config         config.CollectorConfig
+	CollectorIndex int
+	CollectorTotal int
+}
+
 // runOne executes a single collector.
-func (r *Runner) runOne(ctx context.Context, name string, cfg config.CollectorConfig, lf *lockfile.LockFile, platform string, opts RunOptions, collectorIndex, collectorTotal int) RunResult {
-	result := RunResult{Collector: name}
+func (r *Runner) runOne(ctx context.Context, jobCfg *config.JobConfig, run singleCollectorRun, lf *lockfile.LockFile, platform string, opts RunOptions) RunResult {
+	result := RunResult{Collector: run.Name}
 
 	// Resolve binary path
-	binaryPath, err := r.resolveBinaryPath(name, cfg, lf)
+	binaryPath, err := r.resolveBinaryPath(run.Name, run.Config, lf)
 	if err != nil {
 		result.Error = err
 		return result
 	}
 
 	// Get expected digest for TOCTOU-safe execution
-	dinfo := r.getExpectedDigest(name, lf, platform, opts)
+	dinfo := r.getExpectedDigest(run.Name, lf, platform, opts)
 
-	if err := validateCollectorDigestPolicy(name, dinfo, opts); err != nil {
+	if err := validateCollectorDigestPolicy(run.Name, dinfo, opts); err != nil {
 		result.Error = err
 		return result
 	}
 
 	// Check for insecure install marker before execution
-	if err := r.checkInsecureMarker(name, binaryPath, opts); err != nil {
+	if err := r.checkInsecureMarker(run.Name, binaryPath, opts); err != nil {
 		result.Error = err
 		return result
 	}
 
-	execPath, cleanup, err := resolveCollectorExecPath(name, binaryPath, cfg, dinfo, opts)
+	execPath, cleanup, err := resolveCollectorExecPath(run.Name, binaryPath, run.Config, dinfo, opts)
 	if err != nil {
 		result.Error = err
 		return result
@@ -624,7 +645,20 @@ func (r *Runner) runOne(ctx context.Context, name string, cfg config.CollectorCo
 	}
 
 	// Execute the collector
-	output, err := r.executeCollector(ctx, name, execPath, cfg.Config, cfg.Secrets, opts, collectorIndex, collectorTotal)
+	managedEnv, err := credentials.Resolver{}.ResolveComponentEnv(ctx, jobCfg, run.Config.Credentials)
+	if err != nil {
+		result.Error = err
+		return result
+	}
+	output, err := r.executeCollector(ctx, ExecutionRequest{
+		Name:           run.Name,
+		ExecPath:       execPath,
+		Config:         run.Config.Config,
+		Secrets:        run.Config.Secrets,
+		ManagedEnv:     managedEnv,
+		CollectorIndex: run.CollectorIndex,
+		CollectorTotal: run.CollectorTotal,
+	}, opts)
 	if err != nil {
 		result.Error = err
 		return result
@@ -705,14 +739,14 @@ func resolveCollectorExecPath(name, binaryPath string, cfg config.CollectorConfi
 
 // executeCollector runs a collector binary and returns its output.
 // SECURITY: execPath must be a verified path from verifiedBinaryFD or explicit opt-in.
-func (r *Runner) executeCollector(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions, collectorIndex, collectorTotal int) ([]byte, error) {
+func (r *Runner) executeCollector(ctx context.Context, req ExecutionRequest, opts RunOptions) ([]byte, error) {
 	// Write config to temporary file
 	// NOTE: We intentionally do NOT pass config via stdin JSON. Having a single
 	// config source (file-based) is more secure than dual sources because:
 	// 1. File-based config uses secure temp directories with proper permissions
 	// 2. Eliminates confusion about which source takes precedence
 	// 3. Matches the tool protocol pattern
-	configPath, configCleanup, err := collectorexec.WriteConfig(config)
+	configPath, configCleanup, err := collectorexec.WriteConfig(req.Config)
 	if err != nil {
 		return nil, fmt.Errorf("writing collector config: %w", err)
 	}
@@ -721,16 +755,24 @@ func (r *Runner) executeCollector(ctx context.Context, name, execPath string, co
 	}
 
 	// Build restricted environment with protocol variables
-	env := collectorexec.BuildEnv(os.Environ(), name, configPath, secrets, os.Getenv, opts.Unsafe.InheritPath)
+	env := collectorexec.BuildEnv(collectorexec.EnvInput{
+		BaseEnv:             os.Environ(),
+		Name:                req.Name,
+		ConfigPath:          configPath,
+		Secrets:             req.Secrets,
+		ManagedEnv:          req.ManagedEnv,
+		Getenv:              os.Getenv,
+		InsecureInheritPath: opts.Unsafe.InheritPath,
+	})
 
 	// Create progress callback that forwards to the progress hooks
 	var onProgress func(collectorexec.ProgressMessage)
 	if opts.Progress.OnCollectorEvent != nil {
 		onProgress = func(msg collectorexec.ProgressMessage) {
 			evt := CollectorEvent{
-				Collector: name,
-				Index:     collectorIndex,
-				Total:     collectorTotal,
+				Collector: req.Name,
+				Index:     req.CollectorIndex,
+				Total:     req.CollectorTotal,
 				Message:   msg.Message,
 			}
 			switch msg.Kind {
@@ -748,10 +790,12 @@ func (r *Runner) executeCollector(ctx context.Context, name, execPath string, co
 	}
 
 	// Execute collector with timeout and output limits
-	result := collectorexec.Run(ctx, name, execPath, configPath, env, collectorexec.RunOptions{
-		Timeout:             opts.Secure.Timeout,
-		InsecureInheritPath: opts.Unsafe.InheritPath,
-		OnProgress:          onProgress,
+	result := collectorexec.Run(ctx, collectorexec.Invocation{
+		Name:       req.Name,
+		ExecPath:   req.ExecPath,
+		Env:        env,
+		Timeout:    opts.Secure.Timeout,
+		OnProgress: onProgress,
 	})
 
 	if result.Err != nil {

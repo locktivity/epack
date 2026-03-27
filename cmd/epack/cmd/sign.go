@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/securityaudit"
@@ -42,7 +43,8 @@ var signCmd = &cobra.Command{
 	Long: `Sign an evidence pack with Sigstore using keyless or key-based signing.
 
 By default, keyless signing opens a browser for OIDC authentication.
-In CI/CD environments, use --oidc-token or EPACK_OIDC_TOKEN.
+In GitHub Actions, ambient OIDC credentials are used automatically when available.
+In other CI/CD environments, use --oidc-token or EPACK_OIDC_TOKEN.
 
 The attestation is written to attestations/{sha256(identity)}.sigstore.json
 inside the pack.
@@ -143,7 +145,7 @@ func signOptionsFromFlags() sign.SignPackOptions {
 	return sign.SignPackOptions{
 		KeyPath:                      signKey,
 		OIDCToken:                    signOIDCToken,
-		Interactive:                  signOIDCToken == "" && os.Getenv("EPACK_OIDC_TOKEN") == "",
+		Interactive:                  !usingExplicitOIDCToken() && !hasAmbientGitHubActionsOIDC(),
 		SkipTlog:                     signNoTlog,
 		TSAURLs:                      signTSAURLs,
 		InsecureAllowCustomEndpoints: signInsecureAllowCustomEndpoints,
@@ -153,8 +155,10 @@ func signOptionsFromFlags() sign.SignPackOptions {
 func logSignMode(out *output.Writer, opts sign.SignPackOptions) {
 	if opts.KeyPath != "" {
 		out.Verbose("Using key-based signing from %s\n", opts.KeyPath)
-	} else if opts.OIDCToken != "" || os.Getenv("EPACK_OIDC_TOKEN") != "" {
+	} else if usingExplicitOIDCToken() {
 		out.Verbose("Using OIDC token from environment\n")
+	} else if hasAmbientGitHubActionsOIDC() {
+		out.Verbose("Using ambient GitHub Actions OIDC credentials\n")
 	} else {
 		out.Verbose("Using browser-based OIDC authentication\n")
 	}
@@ -181,7 +185,7 @@ func confirmSignIfNeeded(out *output.Writer, packPath string, opts sign.SignPack
 		return
 	}
 	out.Print("Sign %s?\n", packPath)
-	if opts.KeyPath == "" && opts.OIDCToken == "" && os.Getenv("EPACK_OIDC_TOKEN") == "" {
+	if opts.KeyPath == "" && !usingExplicitOIDCToken() && !hasAmbientGitHubActionsOIDC() {
 		out.Print("  This will open your browser for authentication.\n")
 	}
 	out.Print("\nPress Enter to continue or Ctrl+C to cancel...")
@@ -235,4 +239,14 @@ func validateSignFlags() error {
 		})
 	}
 	return nil
+}
+
+func usingExplicitOIDCToken() bool {
+	return signOIDCToken != "" || strings.TrimSpace(os.Getenv("EPACK_OIDC_TOKEN")) != ""
+}
+
+func hasAmbientGitHubActionsOIDC() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("GITHUB_ACTIONS")), "true") &&
+		strings.TrimSpace(os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")) != "" &&
+		strings.TrimSpace(os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")) != ""
 }

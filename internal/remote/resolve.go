@@ -16,6 +16,7 @@ import (
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/credentials"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/securityaudit"
 	"github.com/locktivity/epack/internal/securitypolicy"
@@ -146,6 +147,10 @@ func PrepareAdapterExecutor(
 	if err != nil {
 		return nil, nil, err
 	}
+	managedEnv, err := credentials.Resolver{}.ResolveComponentEnv(ctx, cfg, remoteCfg.Credentials)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving Locktivity-managed credentials: %w", err)
+	}
 
 	lockfilePath := filepath.Join(projectRoot, lockfile.FileName)
 	lf, err := lockfile.Load(lockfilePath)
@@ -183,6 +188,7 @@ func PrepareAdapterExecutor(
 	}
 	exec.Stderr = opts.Stderr
 	exec.Secrets = remoteCfg.Secrets
+	exec.ManagedEnv = managedEnv
 
 	caps, err := QueryCapabilities(ctx, exec.BinaryPath)
 	if err != nil {

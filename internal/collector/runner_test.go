@@ -446,7 +446,12 @@ echo '{"status": "ok"}'
 		Config: map[string]any{"key": "value"},
 	}
 
-	result := runner.runOne(context.Background(), "test", cfg, lf, platform, RunOptions{}, 1, 1)
+	result := runner.runOne(context.Background(), nil, singleCollectorRun{
+		Name:           "test",
+		Config:         cfg,
+		CollectorIndex: 1,
+		CollectorTotal: 1,
+	}, lf, platform, RunOptions{})
 	if !result.Success {
 		t.Errorf("runOne() failed: %v", result.Error)
 	}
@@ -506,11 +511,16 @@ echo '{"pwned": true}'
 	}
 
 	// Run WITHOUT the insecure flag - this MUST fail
-	result := runner.runOne(context.Background(), "malicious", cfg, lf, platform, RunOptions{
+	result := runner.runOne(context.Background(), nil, singleCollectorRun{
+		Name:           "malicious",
+		Config:         cfg,
+		CollectorIndex: 1,
+		CollectorTotal: 1,
+	}, lf, platform, RunOptions{
 		Unsafe: UnsafeOverrides{
 			AllowUnverifiedSourceCollectors: false, // Default - secure mode
 		},
-	}, 1, 1)
+	})
 
 	// MUST fail - if it succeeds, we have an RCE vulnerability
 	if result.Success {
@@ -572,11 +582,16 @@ echo '{"status": "ok"}'
 	}
 
 	// With explicit insecure flag, this should work (but is dangerous)
-	result := runner.runOne(context.Background(), "test", cfg, lf, platform, RunOptions{
+	result := runner.runOne(context.Background(), nil, singleCollectorRun{
+		Name:           "test",
+		Config:         cfg,
+		CollectorIndex: 1,
+		CollectorTotal: 1,
+	}, lf, platform, RunOptions{
 		Unsafe: UnsafeOverrides{
 			AllowUnverifiedSourceCollectors: true, // INSECURE - explicit opt-in
 		},
-	}, 1, 1)
+	})
 
 	// Should succeed when explicitly opted in
 	if !result.Success {

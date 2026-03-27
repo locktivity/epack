@@ -45,6 +45,9 @@ var (
 	// Use for HTTP responses, adapter outputs, etc.
 	JSONResponse SizeLimit = 10 * 1024 * 1024
 
+	// BrokerResponse is the limit for credential broker and GitHub OIDC JSON responses (1 MB).
+	BrokerResponse SizeLimit = 1 * 1024 * 1024
+
 	// Manifest is the limit for manifest.json in packs (10 MB).
 	Manifest SizeLimit = 10 * 1024 * 1024
 
@@ -156,6 +159,9 @@ const (
 
 	// DefaultCollectorTimeout is the default timeout for collector execution (10 minutes).
 	DefaultCollectorTimeout = 10 * time.Minute
+
+	// DefaultHookTimeout is the default timeout for portable hook execution (10 minutes).
+	DefaultHookTimeout = 10 * time.Minute
 
 	// DefaultToolTimeout is the default timeout for tool execution (5 minutes).
 	DefaultToolTimeout = 5 * time.Minute

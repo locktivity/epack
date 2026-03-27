@@ -57,6 +57,9 @@ type Executor struct {
 	// These are passed as-is (not renamed) to allow adapter-specific auth.
 	Secrets []string
 
+	// ManagedEnv is the trusted env bundle resolved from Locktivity-managed credential sets.
+	ManagedEnv map[string]string
+
 	// cleanup is called when the executor is closed to remove verified binary copies.
 	cleanup func()
 }
@@ -361,6 +364,7 @@ func runAdapterCommand(ctx context.Context, e *Executor, command string, reqJSON
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), true)
 	env = append(env, "EPACK_REMOTE_PROTOCOL_VERSION=1")
 	env = execsafe.AppendAllowedSecrets(env, e.Secrets, os.Getenv)
+	env = execsafe.AppendExplicitEnv(env, e.ManagedEnv)
 
 	stderrWriter := io.Writer(&stderr)
 	if e.Stderr != nil {

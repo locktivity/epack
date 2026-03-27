@@ -18,6 +18,13 @@ stream: myorg/prod
 #   - darwin/amd64
 #   - darwin/arm64
 
+# Locktivity-managed credential sets resolve to short-lived env bundles at runtime.
+# In v1, credential_sets are for the Locktivity managed workflow path.
+# Use secrets: for portable manual auth outside that flow.
+# credential_sets:
+#   github_repo: credset_abc123
+#   locktivity_push: credset_def456
+
 collectors:
   # GitHub organization security posture
   github:
@@ -29,7 +36,11 @@ collectors:
       # exclude_patterns:
       #   - "*-archive"
       #   - "test-*"
-    # Secrets are env vars passed to the collector.
+    # Either declare Locktivity-managed credentials:
+    # credentials:
+    #   - github_repo
+    #
+    # Or pass through manual env vars:
     # Only listed secrets are passed - collectors can't access other env vars.
     # Reserved prefixes (EPACK_, LD_, DYLD_, _) are blocked.
     secrets:
@@ -78,8 +89,10 @@ remotes:
     # Endpoint is optional - adapter uses default if not specified.
     # endpoint: https://registry.locktivity.com
     auth:
-      mode: device_code  # Options: device_code, oidc, api_key
+      mode: device_code  # Options: device_code, access_token, client_credentials
       # profile: default  # Optional named credential profile
+    # credentials:
+    #   - locktivity_push
     # verify:
     #   pack: true      # Verify pack integrity before upload
     #   strict: true    # Fail on warnings

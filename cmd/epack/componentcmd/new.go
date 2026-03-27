@@ -29,7 +29,7 @@ This command scaffolds a complete project structure with:
   - sample.epack     Demo pack to explore (verify, inspect, list)
   - packs/          Output directory for generated packs
   - README.md       Quick reference
-  - .gitignore      Ignores .epack/ and generated packs
+  - .gitignore      Ignores runtime .epack state while tracking .epack/hooks/ and generated packs
 
 The stream name is automatically inferred from your git remote,
 or uses a placeholder that you can edit in epack.yaml.

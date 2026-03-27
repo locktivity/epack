@@ -14,13 +14,33 @@ type CollectorRunner interface {
 	Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions) (*CollectResult, error)
 }
 
+// ExecutionRequest describes a single collector execution.
+type ExecutionRequest struct {
+	// Name is the collector name from epack.yaml.
+	Name string
+
+	// ExecPath is the resolved binary path. It must already be verified or explicitly allowed.
+	ExecPath string
+
+	// Config is written to the collector config file.
+	Config map[string]interface{}
+
+	// Secrets lists explicit env var names to pass through.
+	Secrets []string
+
+	// ManagedEnv is the trusted env bundle resolved at runtime.
+	ManagedEnv map[string]string
+
+	// CollectorIndex and CollectorTotal provide progress event context.
+	CollectorIndex int
+	CollectorTotal int
+}
+
 // CollectorExecutor abstracts single collector binary execution for testability.
 // This is a lower-level interface than CollectorRunner.
 type CollectorExecutor interface {
 	// Execute runs a single collector binary and returns its output.
-	// The execPath must be a verified path (from execsafe.VerifiedBinaryFD or explicit opt-in).
-	// collectorIndex and collectorTotal are used for progress event context (use 0 if not in a batch).
-	Execute(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions, collectorIndex, collectorTotal int) ([]byte, error)
+	Execute(ctx context.Context, req ExecutionRequest, opts RunOptions) ([]byte, error)
 }
 
 // BinaryResolver abstracts collector binary path resolution for testability.
@@ -45,6 +65,6 @@ func NewDefaultCollectorExecutor(runner *Runner) *DefaultCollectorExecutor {
 }
 
 // Execute implements CollectorExecutor using the runner's executeCollector method.
-func (e *DefaultCollectorExecutor) Execute(ctx context.Context, name, execPath string, config map[string]interface{}, secrets []string, opts RunOptions, collectorIndex, collectorTotal int) ([]byte, error) {
-	return e.runner.executeCollector(ctx, name, execPath, config, secrets, opts, collectorIndex, collectorTotal)
+func (e *DefaultCollectorExecutor) Execute(ctx context.Context, req ExecutionRequest, opts RunOptions) ([]byte, error) {
+	return e.runner.executeCollector(ctx, req, opts)
 }

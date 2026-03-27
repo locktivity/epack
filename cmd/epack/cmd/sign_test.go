@@ -264,3 +264,35 @@ func TestSignCmd_SecurityFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestSignOptionsFromFlags_UsesAmbientGitHubActionsOIDC(t *testing.T) {
+	originalOIDCToken := signOIDCToken
+	defer func() { signOIDCToken = originalOIDCToken }()
+	signOIDCToken = ""
+
+	t.Setenv("EPACK_OIDC_TOKEN", "")
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.actions.example.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-token")
+
+	opts := signOptionsFromFlags()
+	if opts.Interactive {
+		t.Fatal("signOptionsFromFlags() should disable interactive mode when ambient GitHub Actions OIDC is available")
+	}
+}
+
+func TestSignOptionsFromFlags_UsesInteractiveOIDCWithoutAmbientCredentials(t *testing.T) {
+	originalOIDCToken := signOIDCToken
+	defer func() { signOIDCToken = originalOIDCToken }()
+	signOIDCToken = ""
+
+	t.Setenv("EPACK_OIDC_TOKEN", "")
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+
+	opts := signOptionsFromFlags()
+	if !opts.Interactive {
+		t.Fatal("signOptionsFromFlags() should use interactive OIDC when no token or ambient credentials are available")
+	}
+}

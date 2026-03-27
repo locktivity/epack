@@ -65,3 +65,11 @@ func ValidateUtilityName(name string) error {
 	}
 	return nil
 }
+
+// ValidateCredentialSetName checks if a credential set ref is safe for use in config.
+func ValidateCredentialSetName(name string) error {
+	if ok, reason := validate.ComponentName(name, "credential set"); !ok {
+		return fmt.Errorf("invalid credential set name %q: %s", name, reason)
+	}
+	return nil
+}
