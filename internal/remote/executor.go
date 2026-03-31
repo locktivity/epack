@@ -60,6 +60,9 @@ type Executor struct {
 	// ManagedEnv is the trusted env bundle resolved from Locktivity-managed credential sets.
 	ManagedEnv map[string]string
 
+	// ExplicitEnv is trusted adapter-specific configuration that epack passes directly.
+	ExplicitEnv map[string]string
+
 	// cleanup is called when the executor is closed to remove verified binary copies.
 	cleanup func()
 }
@@ -363,6 +366,7 @@ func runAdapterCommand(ctx context.Context, e *Executor, command string, reqJSON
 	var stdout, stderr bytes.Buffer
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), true)
 	env = append(env, "EPACK_REMOTE_PROTOCOL_VERSION=1")
+	env = execsafe.AppendExplicitEnv(env, e.ExplicitEnv)
 	env = execsafe.AppendAllowedSecrets(env, e.Secrets, os.Getenv)
 	env = execsafe.AppendExplicitEnv(env, e.ManagedEnv)
 

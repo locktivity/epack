@@ -107,6 +107,7 @@ func runCollect(cmd *cobra.Command, args []string) error {
 			Parallel: collectParallel,
 		},
 		WorkDir:    workDir,
+		Stderr:     os.Stderr,
 		OutputPath: outputPath,
 	}
 

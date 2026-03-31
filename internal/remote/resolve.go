@@ -147,9 +147,21 @@ func PrepareAdapterExecutor(
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := credentials.ValidateManagedCredentialBrokerOverride(opts.Stderr, remoteCfg.Credentials, credentials.BrokerOverridePolicy{
+		StrictProductionComponent: "remote_adapter",
+		AuditComponent:            string(componenttypes.KindRemote),
+		AuditName:                 remoteName,
+		AuditDescription:          "remote adapter running with insecure custom credential broker override",
+	}); err != nil {
+		return nil, nil, err
+	}
 	managedEnv, err := credentials.Resolver{}.ResolveComponentEnv(ctx, cfg, remoteCfg.Credentials)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving Locktivity-managed credentials: %w", err)
+	}
+	customEndpoints, err := ResolveCustomEndpointOverride(remoteCfg)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	lockfilePath := filepath.Join(projectRoot, lockfile.FileName)
@@ -189,6 +201,7 @@ func PrepareAdapterExecutor(
 	exec.Stderr = opts.Stderr
 	exec.Secrets = remoteCfg.Secrets
 	exec.ManagedEnv = managedEnv
+	exec.ExplicitEnv = customEndpoints.ExplicitEnv()
 
 	caps, err := QueryCapabilities(ctx, exec.BinaryPath)
 	if err != nil {
@@ -293,6 +306,7 @@ func mergeRemoteConfig(baseCfg, envRemoteCfg config.RemoteConfig) config.RemoteC
 		merged.Adapter = envRemoteCfg.Adapter
 	}
 	mergeRemoteTargetOverrides(&merged, envRemoteCfg)
+	mergeRemoteAuthOverrides(&merged, envRemoteCfg)
 	mergeRemoteReleaseOverrides(&merged, envRemoteCfg)
 	mergeRemoteRunOverrides(&merged, envRemoteCfg)
 	return merged
@@ -305,8 +319,20 @@ func mergeRemoteTargetOverrides(merged *config.RemoteConfig, envRemoteCfg config
 	if envRemoteCfg.Target.Environment != "" {
 		merged.Target.Environment = envRemoteCfg.Target.Environment
 	}
-	if envRemoteCfg.Endpoint != "" {
-		merged.Endpoint = envRemoteCfg.Endpoint
+	if envRemoteCfg.InsecureEndpoint != "" {
+		merged.InsecureEndpoint = envRemoteCfg.InsecureEndpoint
+	}
+}
+
+func mergeRemoteAuthOverrides(merged *config.RemoteConfig, envRemoteCfg config.RemoteConfig) {
+	if envRemoteCfg.Auth.Mode != "" {
+		merged.Auth.Mode = envRemoteCfg.Auth.Mode
+	}
+	if envRemoteCfg.Auth.Profile != "" {
+		merged.Auth.Profile = envRemoteCfg.Auth.Profile
+	}
+	if envRemoteCfg.Auth.InsecureEndpoint != "" {
+		merged.Auth.InsecureEndpoint = envRemoteCfg.Auth.InsecureEndpoint
 	}
 }
 

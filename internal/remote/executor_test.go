@@ -457,6 +457,45 @@ esac
 	}
 }
 
+func TestExecutor_ExplicitEnvPassthrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows - no shell scripts")
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "adapter")
+	content := `#!/bin/sh
+case "$1" in
+  --capabilities)
+    echo '{"name":"test","kind":"remote_adapter","deploy_protocol_version":1,"features":{"prepare_finalize":true,"whoami":true}}'
+    ;;
+  auth.whoami)
+    printf '{"ok":true,"type":"auth.whoami.result","identity":{"authenticated":true,"subject":"EPACK_REMOTE_ENDPOINT=%s,EPACK_REMOTE_AUTH_ENDPOINT=%s"}}\n' "${EPACK_REMOTE_ENDPOINT:-unset}" "${EPACK_REMOTE_AUTH_ENDPOINT:-unset}"
+    ;;
+esac
+`
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatalf("creating test script: %v", err)
+	}
+
+	exec := remote.NewExecutor(script, "test")
+	exec.ExplicitEnv = map[string]string{
+		remote.RemoteEndpointEnvVar:     "https://api.dev.example",
+		remote.RemoteAuthEndpointEnvVar: "https://auth.dev.example",
+	}
+
+	resp, err := exec.AuthWhoami(context.Background())
+	if err != nil {
+		t.Fatalf("AuthWhoami failed: %v", err)
+	}
+	if !contains(resp.Identity.Subject, "EPACK_REMOTE_ENDPOINT=https://api.dev.example") {
+		t.Fatalf("explicit endpoint should be passed through, got: %s", resp.Identity.Subject)
+	}
+	if !contains(resp.Identity.Subject, "EPACK_REMOTE_AUTH_ENDPOINT=https://auth.dev.example") {
+		t.Fatalf("explicit auth endpoint should be passed through, got: %s", resp.Identity.Subject)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
 }

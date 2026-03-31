@@ -262,3 +262,37 @@ func TestPrepareAdapterExecutor_SecretsPassedThrough(t *testing.T) {
 		t.Errorf("Secrets = %v, want [MY_SECRET OTHER_TOKEN]", exec.Secrets)
 	}
 }
+
+func TestPrepareAdapterExecutor_CustomEndpointEnvPassedThrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	projectRoot := t.TempDir()
+	adapter := writeAdapterScript(t, projectRoot, `{"name":"test","kind":"remote_adapter","deploy_protocol_version":1,"features":{"prepare_finalize":true}}`)
+	digest := sha256Digest(t, adapter)
+	writeLockfile(t, projectRoot, "origin", digest)
+
+	cfg := &config.JobConfig{}
+	remoteCfg := &config.RemoteConfig{
+		Adapter:          "test",
+		Binary:           adapter,
+		InsecureEndpoint: "https://api.dev.example",
+		Auth: config.RemoteAuth{
+			InsecureEndpoint: "https://auth.dev.example",
+		},
+	}
+
+	exec, _, err := remote.PrepareAdapterExecutor(context.Background(), projectRoot, "origin", cfg, remoteCfg, remote.AdapterExecutorOptions{})
+	if err != nil {
+		t.Fatalf("PrepareAdapterExecutor() error = %v", err)
+	}
+	defer exec.Close()
+
+	if exec.ExplicitEnv[remote.RemoteEndpointEnvVar] != "https://api.dev.example" {
+		t.Fatalf("explicit endpoint env = %q", exec.ExplicitEnv[remote.RemoteEndpointEnvVar])
+	}
+	if exec.ExplicitEnv[remote.RemoteAuthEndpointEnvVar] != "https://auth.dev.example" {
+		t.Fatalf("explicit auth endpoint env = %q", exec.ExplicitEnv[remote.RemoteAuthEndpointEnvVar])
+	}
+}

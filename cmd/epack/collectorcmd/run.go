@@ -126,6 +126,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			AllowUnpinned:          runInsecureAllowUnpinned,
 		},
 		WorkDir:    workDir,
+		Stderr:     os.Stderr,
 		OutputPath: runOutput,
 	}
 
@@ -181,15 +182,16 @@ func validateRunFlags() error {
 		return err
 	}
 	if hasUnsafeOverrides {
+		attrs := map[string]string{
+			"allow_unverified_install": fmt.Sprintf("%t", runInsecureAllowUnverified),
+			"allow_unpinned":           fmt.Sprintf("%t", runInsecureAllowUnpinned),
+		}
 		securityaudit.Emit(securityaudit.Event{
 			Type:        securityaudit.EventInsecureBypass,
 			Component:   "collector_run",
 			Name:        "run",
 			Description: "collector run command running with insecure execution override",
-			Attrs: map[string]string{
-				"allow_unverified_install": fmt.Sprintf("%t", runInsecureAllowUnverified),
-				"allow_unpinned":           fmt.Sprintf("%t", runInsecureAllowUnpinned),
-			},
+			Attrs:       attrs,
 		})
 	}
 	return nil

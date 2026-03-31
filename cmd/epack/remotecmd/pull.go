@@ -4,6 +4,7 @@ package remotecmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -120,13 +121,18 @@ func runPull(cmd *cobra.Command, args []string) error {
 	remoteName := args[0]
 	out := outputWriter()
 	ctx := cmdContext(cmd)
-	if err := validatePullFlags(); err != nil {
-		return exitError("pull failed: %v", err)
-	}
 
 	ref := buildPullRef(args)
 	if handled, err := handlePullModes(cmd, args, remoteName, ref, out); handled || err != nil {
 		return err
+	}
+
+	resolvedRemoteCfg, err := resolveRemoteConfigForCommand(remoteName, pullEnv)
+	if err != nil {
+		return exitError("pull failed: %v", err)
+	}
+	if err := validatePullFlags(os.Stderr, resolvedRemoteCfg); err != nil {
+		return exitError("pull failed: %v", err)
 	}
 
 	out.Verbose("Pulling from remote %q\n", remoteName)
@@ -243,25 +249,36 @@ func outputPullResult(out *output.Writer, remoteName string, result *pull.Result
 	return nil
 }
 
-func validatePullFlags() error {
+func validatePullFlags(stderr io.Writer, remoteCfg *config.RemoteConfig) error {
 	if err := (securitypolicy.ExecutionPolicy{
 		Frozen:        false,
 		AllowUnpinned: pullInsecureAllowUnpinned,
 	}).Enforce(); err != nil {
 		return err
 	}
-	if err := securitypolicy.EnforceStrictProduction("pull_cli", pullInsecureAllowUnpinned); err != nil {
+
+	state, err := inspectRemoteInsecureState(remoteCfg)
+	if err != nil {
 		return err
 	}
-	if pullInsecureAllowUnpinned {
+	warnRemoteCustomEndpoints(stderr, state.override)
+
+	hasUnsafeOverrides := pullInsecureAllowUnpinned || state.override.Active()
+	if err := securitypolicy.EnforceStrictProduction("pull_cli", hasUnsafeOverrides); err != nil {
+		return err
+	}
+	if hasUnsafeOverrides {
+		attrs := map[string]string{}
+		if pullInsecureAllowUnpinned {
+			attrs["insecure_allow_unpinned"] = "true"
+		}
+		mergeAuditAttrs(attrs, state.attrs)
 		securityaudit.Emit(securityaudit.Event{
 			Type:        securityaudit.EventInsecureBypass,
 			Component:   "pull",
 			Name:        "pull",
-			Description: "pull command running with insecure unpinned override",
-			Attrs: map[string]string{
-				"insecure_allow_unpinned": "true",
-			},
+			Description: "pull command running with insecure execution override",
+			Attrs:       attrs,
 		})
 	}
 	return nil

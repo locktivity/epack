@@ -201,6 +201,16 @@ func prepareVerifiedToolDispatch(ctx context.Context, out Output, in verifiedDis
 			componenttypes.ExitConfigFailed, componenttypes.ErrCodeConfigFailed,
 			fmt.Sprintf("writing tool config: %v", err))
 	}
+	if err := credentials.ValidateManagedCredentialBrokerOverride(out.Stderr(), in.toolCfg.Credentials, credentials.BrokerOverridePolicy{
+		StrictProductionComponent: "dispatch_cli",
+		AuditComponent:            "dispatch",
+		AuditName:                 "dispatch",
+		AuditDescription:          "dispatch command running with insecure custom credential broker override",
+	}); err != nil {
+		return nil, writePreExecFailure(out, in.toolName, runID, runDir, absPackPath, toolVersion,
+			componenttypes.ExitConfigFailed, componenttypes.ErrCodeConfigFailed,
+			fmt.Sprintf("resolving Locktivity-managed credentials: %v", err))
+	}
 	managedEnv, err := credentials.Resolver{}.ResolveComponentEnv(ctx, in.jobCfg, in.toolCfg.Credentials)
 	if err != nil {
 		return nil, writePreExecFailure(out, in.toolName, runID, runDir, absPackPath, toolVersion,

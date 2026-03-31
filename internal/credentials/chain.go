@@ -65,7 +65,12 @@ func (r Resolver) broker() broker.CredentialBroker {
 	if r.Broker != nil {
 		return r.Broker
 	}
-	return broker.NewClient("")
+
+	apiBase, _, err := broker.ResolveCustomCredentialBrokerURL(r.getenv())
+	if err != nil {
+		return errorBroker{err: err}
+	}
+	return broker.NewClient(apiBase)
 }
 
 func (r Resolver) getenv() func(string) string {
@@ -84,4 +89,12 @@ func cloneEnv(src map[string]string) map[string]string {
 		dst[key] = value
 	}
 	return dst
+}
+
+type errorBroker struct {
+	err error
+}
+
+func (b errorBroker) Resolve(context.Context, broker.ResolveRequest, broker.RuntimeContext) (broker.ResolvedEnv, error) {
+	return broker.ResolvedEnv{}, b.err
 }

@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
+	"github.com/locktivity/epack/internal/credentials"
 	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/securitypolicy"
@@ -28,6 +30,9 @@ type CollectOpts struct {
 
 	// WorkDir is the working directory (defaults to cwd).
 	WorkDir string
+
+	// Stderr receives runtime security warnings.
+	Stderr io.Writer
 
 	// OutputPath is the output pack file path.
 	// If empty, defaults to "evidence-<timestamp>.epack".
@@ -99,6 +104,17 @@ func Collect(ctx context.Context, cfg *config.JobConfig, opts CollectOpts) (*Col
 		return nil, err
 	}
 	if err := securitypolicy.EnforceStrictProduction("collector_workflow", opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnpinned); err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("job config is required")
+	}
+	if err := credentials.ValidateManagedCredentialBrokerOverride(opts.Stderr, managedCredentialRefsForCollectors(cfg.Collectors), credentials.BrokerOverridePolicy{
+		StrictProductionComponent: "collect_cli",
+		AuditComponent:            "collect",
+		AuditName:                 "collect",
+		AuditDescription:          "collect command running with insecure custom credential broker override",
+	}); err != nil {
 		return nil, err
 	}
 
@@ -480,6 +496,9 @@ type RunAndBuildOpts struct {
 	// WorkDir is the working directory (required).
 	WorkDir string
 
+	// Stderr receives runtime security warnings.
+	Stderr io.Writer
+
 	// OutputPath is the output pack file path.
 	// If empty, defaults to "evidence-<timestamp>.epack".
 	OutputPath string
@@ -517,6 +536,9 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 	if err := securitypolicy.EnforceStrictProduction("collector_run", opts.Unsafe.AllowUnverifiedInstall || opts.Unsafe.AllowUnpinned); err != nil {
 		return nil, err
 	}
+	if cfg == nil {
+		return nil, fmt.Errorf("job config is required")
+	}
 
 	result := &RunAndBuildResult{
 		Stream: cfg.Stream,
@@ -537,6 +559,14 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 		Progress: ProgressHooks{
 			OnCollectorEvent: opts.OnCollectorEvent,
 		},
+	}
+	if err := credentials.ValidateManagedCredentialBrokerOverride(opts.Stderr, managedCredentialRefsForCollectors(runner.selectCollectors(cfg, runOpts)), credentials.BrokerOverridePolicy{
+		StrictProductionComponent: "collector_run_cli",
+		AuditComponent:            "collector_run",
+		AuditName:                 "run",
+		AuditDescription:          "collector run command running with insecure custom credential broker override",
+	}); err != nil {
+		return nil, err
 	}
 
 	runResult, err := runner.Run(ctx, cfg, runOpts)
@@ -577,4 +607,22 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 
 	result.PackPath = outputPath
 	return result, nil
+}
+
+func managedCredentialRefsForCollectors(collectors map[string]config.CollectorConfig) []string {
+	if len(collectors) == 0 {
+		return nil
+	}
+	refs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, collectorCfg := range collectors {
+		for _, ref := range collectorCfg.Credentials {
+			if _, ok := seen[ref]; ok {
+				continue
+			}
+			seen[ref] = struct{}{}
+			refs = append(refs, ref)
+		}
+	}
+	return refs
 }

@@ -81,13 +81,11 @@ collectors:
 remotes:
   # Locktivity remote (primary registry) - managed via source
   locktivity:
-    source: locktivity/epack-remote-locktivity@v1
+    source: locktivity/epack-remote-locktivity@^0.1.0
     # adapter: locktivity  # Optional - inferred from source if not set
     target:
       workspace: myorg
       environment: prod
-    # Endpoint is optional - adapter uses default if not specified.
-    # endpoint: https://registry.locktivity.com
     auth:
       mode: device_code  # Options: device_code, access_token, client_credentials
       # profile: default  # Optional named credential profile

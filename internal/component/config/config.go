@@ -215,9 +215,14 @@ type RemoteConfig struct {
 	// Target specifies the default target workspace/environment.
 	Target RemoteTarget `yaml:"target,omitempty"`
 
-	// Endpoint is an optional endpoint URL override.
+	// InsecureEndpoint is an optional endpoint URL override.
+	// SECURITY: Setting this redirects API requests to a custom endpoint.
 	// Useful for enterprise deployments or regional control planes.
-	Endpoint string `yaml:"endpoint,omitempty"`
+	InsecureEndpoint string `yaml:"insecure_endpoint,omitempty"`
+
+	// DeprecatedEndpoint accepts the legacy endpoint field for backward compatibility.
+	// Parse() normalizes this into InsecureEndpoint.
+	DeprecatedEndpoint string `yaml:"endpoint,omitempty"`
 
 	// Auth configures authentication preferences.
 	Auth RemoteAuth `yaml:"auth,omitempty"`
@@ -264,6 +269,11 @@ type RemoteAuth struct {
 
 	// Profile is an optional named credential profile (adapter-specific).
 	Profile string `yaml:"profile,omitempty"`
+
+	// InsecureEndpoint is an optional authentication endpoint override for adapters
+	// that split API and auth hosts.
+	// SECURITY: Setting this redirects auth requests to a custom endpoint.
+	InsecureEndpoint string `yaml:"insecure_endpoint,omitempty"`
 
 	// OIDC contains OIDC-specific settings.
 	OIDC *RemoteAuthOIDC `yaml:"oidc,omitempty"`
@@ -455,6 +465,9 @@ func LoadUnvalidated(path string) (*JobConfig, error) {
 	if err := safeyaml.Unmarshal(data, limits.ConfigFile, &cfg); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
+	if err := cfg.normalizeDeprecatedRemoteFields(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -483,6 +496,9 @@ func Parse(data []byte) (*JobConfig, error) {
 	var cfg JobConfig
 	if err := safeyaml.Unmarshal(data, limits.ConfigFile, &cfg); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
+	}
+	if err := cfg.normalizeDeprecatedRemoteFields(); err != nil {
+		return nil, err
 	}
 
 	// NOTE: We intentionally do NOT expand ${VAR} patterns in config values.
@@ -556,6 +572,43 @@ func (c *JobConfig) Validate() error {
 		return err
 	}
 	return c.validateEnvironmentOverrides()
+}
+
+func (c *JobConfig) normalizeDeprecatedRemoteFields() error {
+	for name, remoteCfg := range c.Remotes {
+		if err := normalizeDeprecatedRemoteEndpoint(&remoteCfg); err != nil {
+			return fmt.Errorf("remote %q: %w", name, err)
+		}
+		c.Remotes[name] = remoteCfg
+	}
+	for envName, envCfg := range c.Environments {
+		for remoteName, remoteCfg := range envCfg.Remotes {
+			if err := normalizeDeprecatedRemoteEndpoint(&remoteCfg); err != nil {
+				return fmt.Errorf("environment %q remote %q: %w", envName, remoteName, err)
+			}
+			envCfg.Remotes[remoteName] = remoteCfg
+		}
+		c.Environments[envName] = envCfg
+	}
+	return nil
+}
+
+func normalizeDeprecatedRemoteEndpoint(remoteCfg *RemoteConfig) error {
+	if remoteCfg == nil {
+		return nil
+	}
+	legacy := strings.TrimSpace(remoteCfg.DeprecatedEndpoint)
+	current := strings.TrimSpace(remoteCfg.InsecureEndpoint)
+	switch {
+	case legacy == "":
+		return nil
+	case current == "":
+		remoteCfg.InsecureEndpoint = legacy
+	case current != legacy:
+		return fmt.Errorf("endpoint and insecure_endpoint cannot both be set with different values")
+	}
+	remoteCfg.DeprecatedEndpoint = ""
+	return nil
 }
 
 func (c *JobConfig) validatePlatforms() error {

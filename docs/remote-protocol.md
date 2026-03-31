@@ -64,9 +64,11 @@ stream: myorg/evidence
 remotes:
   locktivity:
     adapter: locktivity                              # Adapter name (binary: epack-remote-locktivity)
-    source: locktivity/epack-remote-locktivity@v1   # Optional: source with version constraint
+    source: locktivity/epack-remote-locktivity@^0.1.0   # Optional: source with version constraint
     binary: /path/to/binary                          # Optional: external binary path
-    endpoint: https://api.locktivity.com
+    insecure_endpoint: https://registry.example.com  # Optional custom API endpoint (SECURITY: use with caution)
+    auth:
+      insecure_endpoint: https://auth.example.com    # Optional custom auth endpoint (SECURITY: use with caution)
     target:
       workspace: acme
       environment: prod
@@ -85,12 +87,35 @@ remotes:
 | `adapter` | Yes | Adapter name (used to find `epack-remote-<adapter>` binary) |
 | `source` | No | Source repository with version constraint (enables lockfile verification) |
 | `binary` | No | Explicit path to adapter binary (overrides discovery) |
-| `endpoint` | No | Remote endpoint URL (passed to adapter) |
+| `insecure_endpoint` | No | Custom API endpoint override (SECURITY: use with caution) |
+| `auth.insecure_endpoint` | No | Custom auth endpoint override (SECURITY: use with caution) |
 | `target` | No | Target configuration (workspace, environment) |
 | `release` | No | Release metadata (labels, notes) |
 | `runs.sync` | No | Whether to sync run ledgers after push |
 | `runs.paths` | No | Glob patterns for run results to sync |
 | `transport` | No | Transport-level security settings (see below) |
+
+### Custom Endpoint Overrides
+
+Custom remote endpoints are declared in `epack.yaml` using the `insecure_` prefix as acknowledgement:
+
+```yaml
+remotes:
+  locktivity:
+    source: locktivity/epack-remote-locktivity@^0.1.0
+    insecure_endpoint: https://dev-tunnel.ngrok-free.app
+    auth:
+      insecure_endpoint: https://dev-tunnel.ngrok-free.app
+```
+
+`epack` validates these fields, blocks them when `EPACK_STRICT_PRODUCTION=true`, emits an insecure-bypass
+audit event, and passes the resolved values to the adapter as trusted explicit env:
+
+- `EPACK_REMOTE_ENDPOINT`
+- `EPACK_REMOTE_AUTH_ENDPOINT`
+
+Adapters should treat these env vars as explicit base-URL overrides provided by `epack`.
+If set, use them for API and auth requests instead of built-in defaults or ambient config.
 
 ### Transport Configuration
 

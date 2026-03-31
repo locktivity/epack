@@ -3,7 +3,9 @@
 package toolcmd
 
 import (
+	"context"
 	"fmt"
+	"io"
 
 	"github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/dispatch"
@@ -43,7 +45,7 @@ func dispatchTool(cmd *cobra.Command, toolName string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateDispatchFlags(cliFlags.InsecureAllowUnpinned); err != nil {
+	if err := validateDispatchFlags(cmd.Context(), cmd.ErrOrStderr(), cliFlags.InsecureAllowUnpinned); err != nil {
 		return err
 	}
 
@@ -69,7 +71,9 @@ func dispatchTool(cmd *cobra.Command, toolName string, args []string) error {
 	return err
 }
 
-func validateDispatchFlags(insecureAllowUnpinned bool) error {
+func validateDispatchFlags(ctx context.Context, stderr io.Writer, insecureAllowUnpinned bool) error {
+	_ = ctx
+	_ = stderr
 	if err := (securitypolicy.ExecutionPolicy{
 		Frozen:        false,
 		AllowUnpinned: insecureAllowUnpinned,
@@ -80,14 +84,15 @@ func validateDispatchFlags(insecureAllowUnpinned bool) error {
 		return err
 	}
 	if insecureAllowUnpinned {
+		attrs := map[string]string{
+			"insecure_allow_unpinned": fmt.Sprintf("%t", insecureAllowUnpinned),
+		}
 		securityaudit.Emit(securityaudit.Event{
 			Type:        securityaudit.EventInsecureBypass,
 			Component:   "dispatch",
 			Name:        "dispatch",
 			Description: "dispatch command running with insecure unpinned override",
-			Attrs: map[string]string{
-				"insecure_allow_unpinned": "true",
-			},
+			Attrs:       attrs,
 		})
 	}
 	return nil

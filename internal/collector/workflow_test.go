@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/pack/builder"
 )
 
@@ -42,6 +44,26 @@ func TestRunAndBuild_RejectsIncompatibleSecurityFlags(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--insecure-allow-unpinned cannot be used with --frozen") {
 		t.Fatalf("RunAndBuild() wrong error: %v", err)
+	}
+}
+
+func TestManagedCredentialRefsForCollectors(t *testing.T) {
+	collectors := map[string]config.CollectorConfig{
+		"github": {
+			Credentials: []string{"github_repo", "shared"},
+		},
+		"okta": {
+			Credentials: []string{"shared", "okta_admin"},
+		},
+		"aws": {},
+	}
+
+	got := managedCredentialRefsForCollectors(collectors)
+	want := []string{"github_repo", "shared", "okta_admin"}
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("managedCredentialRefsForCollectors() = %v, want %v", got, want)
 	}
 }
 

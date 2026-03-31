@@ -60,7 +60,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		out.Print("\nTo add a remote, edit epack.yaml:\n")
 		out.Print("  remotes:\n")
 		out.Print("    locktivity:\n")
-		out.Print("      source: locktivity/epack-remote-locktivity@v1\n")
+			out.Print("      source: locktivity/epack-remote-locktivity@^0.1.0\n")
 		out.Print("      target:\n")
 		out.Print("        workspace: my-workspace\n")
 		return nil
@@ -75,26 +75,26 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	// Build output
 	type remoteInfo struct {
-		Name        string `json:"name"`
-		Adapter     string `json:"adapter"`
-		Source      string `json:"source,omitempty"`
-		Binary      string `json:"binary,omitempty"`
-		Workspace   string `json:"workspace,omitempty"`
-		Environment string `json:"environment,omitempty"`
-		Endpoint    string `json:"endpoint,omitempty"`
+		Name             string `json:"name"`
+		Adapter          string `json:"adapter"`
+		Source           string `json:"source,omitempty"`
+		Binary           string `json:"binary,omitempty"`
+		Workspace        string `json:"workspace,omitempty"`
+		Environment      string `json:"environment,omitempty"`
+		InsecureEndpoint string `json:"insecure_endpoint,omitempty"`
 	}
 
 	remotes := make([]remoteInfo, 0, len(names))
 	for _, name := range names {
 		remoteCfg := cfg.Remotes[name]
 		info := remoteInfo{
-			Name:        name,
-			Adapter:     remoteCfg.EffectiveAdapter(),
-			Source:      remoteCfg.Source,
-			Binary:      remoteCfg.Binary,
-			Workspace:   remoteCfg.Target.Workspace,
-			Environment: remoteCfg.Target.Environment,
-			Endpoint:    remoteCfg.Endpoint,
+			Name:             name,
+			Adapter:          remoteCfg.EffectiveAdapter(),
+			Source:           remoteCfg.Source,
+			Binary:           remoteCfg.Binary,
+			Workspace:        remoteCfg.Target.Workspace,
+			Environment:      remoteCfg.Target.Environment,
+			InsecureEndpoint: remoteCfg.InsecureEndpoint,
 		}
 		remotes = append(remotes, info)
 	}
@@ -129,8 +129,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		if r.Environment != "" {
 			out.Print("  Environment: %s\n", r.Environment)
 		}
-		if r.Endpoint != "" {
-			out.Print("  Endpoint:  %s\n", r.Endpoint)
+		if r.InsecureEndpoint != "" {
+			out.Print("  Endpoint:  %s (insecure override)\n", r.InsecureEndpoint)
 		}
 
 		out.Print("\n")

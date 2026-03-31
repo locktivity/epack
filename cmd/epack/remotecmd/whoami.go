@@ -3,6 +3,7 @@
 package remotecmd
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,6 +12,8 @@ import (
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/remote"
+	"github.com/locktivity/epack/internal/securityaudit"
+	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -105,6 +108,19 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 	}
 
 	identities := make([]identityInfo, 0, len(remoteNames))
+	resolvedRemoteCfgs := make(map[string]*config.RemoteConfig, len(remoteNames))
+
+	for _, remoteName := range remoteNames {
+		resolvedCfg, err := remote.ResolveRemoteConfig(cfg, remoteName, "")
+		if err != nil {
+			return exitError("loading remote %q: %v", remoteName, err)
+		}
+		resolvedRemoteCfgs[remoteName] = resolvedCfg
+	}
+
+	if err := validateWhoamiFlags(os.Stderr, resolvedRemoteCfgs); err != nil {
+		return exitError("whoami failed: %v", err)
+	}
 
 	for _, remoteName := range remoteNames {
 		info := identityInfo{
@@ -112,14 +128,7 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 			Supported: true,
 		}
 
-		// Resolve remote config (no environment override for whoami)
-		resolvedCfg, err := remote.ResolveRemoteConfig(cfg, remoteName, "")
-		if err != nil {
-			info.Error = err.Error()
-			info.Supported = false
-			identities = append(identities, info)
-			continue
-		}
+		resolvedCfg := resolvedRemoteCfgs[remoteName]
 
 		// Prepare adapter executor
 		opts := remote.AdapterExecutorOptions{
@@ -227,5 +236,39 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	return nil
+}
+
+func validateWhoamiFlags(stderr io.Writer, remoteCfgs map[string]*config.RemoteConfig) error {
+	hasUnsafeOverrides := whoamiInsecureAllowUnpinned
+	attrs := map[string]string{}
+	if whoamiInsecureAllowUnpinned {
+		attrs["insecure_allow_unpinned"] = "true"
+	}
+
+	for _, remoteCfg := range remoteCfgs {
+		state, err := inspectRemoteInsecureState(remoteCfg)
+		if err != nil {
+			continue
+		}
+		warnRemoteCustomEndpoints(stderr, state.override)
+		if state.override.Active() {
+			hasUnsafeOverrides = true
+			mergeAuditAttrs(attrs, state.attrs)
+		}
+	}
+
+	if err := securitypolicy.EnforceStrictProduction("whoami_cli", hasUnsafeOverrides); err != nil {
+		return err
+	}
+	if hasUnsafeOverrides {
+		securityaudit.Emit(securityaudit.Event{
+			Type:        securityaudit.EventInsecureBypass,
+			Component:   "whoami",
+			Name:        "whoami",
+			Description: "whoami command running with insecure execution override",
+			Attrs:       attrs,
+		})
+	}
 	return nil
 }

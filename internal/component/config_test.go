@@ -331,6 +331,65 @@ remotes:
 	}
 }
 
+func TestLoadConfig_RemoteLegacyEndpointAlias(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+remotes:
+  locktivity:
+    source: locktivity/epack-remote-locktivity@v1
+    endpoint: https://api.example.com
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+
+	remote, ok := cfg.Remotes["locktivity"]
+	if !ok {
+		t.Fatal("missing locktivity remote")
+	}
+	if remote.InsecureEndpoint != "https://api.example.com" {
+		t.Fatalf("InsecureEndpoint = %q, want %q", remote.InsecureEndpoint, "https://api.example.com")
+	}
+	if remote.DeprecatedEndpoint != "" {
+		t.Fatalf("DeprecatedEndpoint = %q, want empty", remote.DeprecatedEndpoint)
+	}
+}
+
+func TestLoadConfig_RemoteLegacyEndpointConflict(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "epack.yaml")
+
+	content := `stream: test/stream
+collectors:
+  github:
+    source: owner/repo@v1.0.0
+remotes:
+  locktivity:
+    source: locktivity/epack-remote-locktivity@v1
+    endpoint: https://legacy.example.com
+    insecure_endpoint: https://api.example.com
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	if _, err := config.Load(configPath); err == nil {
+		t.Fatal("config.Load() expected conflict error, got nil")
+	} else if !strings.Contains(err.Error(), "endpoint and insecure_endpoint cannot both be set") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadConfig_RemoteEmptySecrets(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "epack.yaml")

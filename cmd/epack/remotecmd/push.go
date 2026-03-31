@@ -4,6 +4,7 @@ package remotecmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -111,9 +112,6 @@ func runPush(cmd *cobra.Command, args []string) error {
 	packPath := args[1]
 	out := outputWriter()
 	ctx := cmdContext(cmd)
-	if err := validatePushFlags(); err != nil {
-		return exitError("push failed: %v", err)
-	}
 
 	packInfo, err := os.Stat(packPath)
 	if os.IsNotExist(err) {
@@ -125,6 +123,14 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	if handled, err := handlePushModes(cmd, args, remoteName, packPath, packInfo.Size(), out); handled || err != nil {
 		return err
+	}
+
+	resolvedRemoteCfg, err := resolveRemoteConfigForCommand(remoteName, pushEnv)
+	if err != nil {
+		return exitError("push failed: %v", err)
+	}
+	if err := validatePushFlags(os.Stderr, resolvedRemoteCfg); err != nil {
+		return exitError("push failed: %v", err)
 	}
 
 	out.Verbose("Pushing to remote %q\n", remoteName)
@@ -228,25 +234,36 @@ func outputPushResult(out *output.Writer, remoteName, packPath string, result *p
 	return nil
 }
 
-func validatePushFlags() error {
+func validatePushFlags(stderr io.Writer, remoteCfg *config.RemoteConfig) error {
 	if err := (securitypolicy.ExecutionPolicy{
 		Frozen:        false,
 		AllowUnpinned: pushInsecureAllowUnpinned,
 	}).Enforce(); err != nil {
 		return err
 	}
-	if err := securitypolicy.EnforceStrictProduction("push_cli", pushInsecureAllowUnpinned); err != nil {
+
+	state, err := inspectRemoteInsecureState(remoteCfg)
+	if err != nil {
 		return err
 	}
-	if pushInsecureAllowUnpinned {
+	warnRemoteCustomEndpoints(stderr, state.override)
+
+	hasUnsafeOverrides := pushInsecureAllowUnpinned || state.override.Active()
+	if err := securitypolicy.EnforceStrictProduction("push_cli", hasUnsafeOverrides); err != nil {
+		return err
+	}
+	if hasUnsafeOverrides {
+		attrs := map[string]string{}
+		if pushInsecureAllowUnpinned {
+			attrs["insecure_allow_unpinned"] = "true"
+		}
+		mergeAuditAttrs(attrs, state.attrs)
 		securityaudit.Emit(securityaudit.Event{
 			Type:        securityaudit.EventInsecureBypass,
 			Component:   "push",
 			Name:        "push",
-			Description: "push command running with insecure unpinned override",
-			Attrs: map[string]string{
-				"insecure_allow_unpinned": "true",
-			},
+			Description: "push command running with insecure execution override",
+			Attrs:       attrs,
 		})
 	}
 	return nil

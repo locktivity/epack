@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -279,7 +280,7 @@ func TestValidateDispatchFlags_EmitsInsecureBypassWhenAllowed(t *testing.T) {
 	securityaudit.SetSink(sink)
 	t.Cleanup(func() { securityaudit.SetSink(nil) })
 
-	if err := validateDispatchFlags(true); err != nil {
+	if err := validateDispatchFlags(context.Background(), io.Discard, true); err != nil {
 		t.Fatalf("validateDispatchFlags(true) error = %v", err)
 	}
 	for _, evt := range sink.Snapshot() {
@@ -293,7 +294,7 @@ func TestValidateDispatchFlags_EmitsInsecureBypassWhenAllowed(t *testing.T) {
 func TestValidateDispatchFlags_StrictProductionBlocksInsecure(t *testing.T) {
 	t.Setenv(securitypolicy.StrictProductionEnvVar, "1")
 
-	err := validateDispatchFlags(true)
+	err := validateDispatchFlags(context.Background(), io.Discard, true)
 	if err == nil {
 		t.Fatal("expected strict production enforcement error")
 	}
@@ -305,7 +306,7 @@ func TestValidateDispatchFlags_StrictProductionBlocksInsecure(t *testing.T) {
 func TestValidateDispatchFlags_AllowsSecure(t *testing.T) {
 	t.Setenv(securitypolicy.StrictProductionEnvVar, "1")
 
-	if err := validateDispatchFlags(false); err != nil {
+	if err := validateDispatchFlags(context.Background(), io.Discard, false); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
