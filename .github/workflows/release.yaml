@@ -94,6 +94,7 @@ jobs:
       go-version-file: go.mod
       config-file: .slsa-goreleaser/epack-${{ matrix.os }}-${{ matrix.arch }}.yml
       evaluated-envs: "VERSION:${{ needs.args.outputs.version }},COMMIT:${{ needs.args.outputs.commit }}"
+      upload-assets: false
 
   # Build epack-core (minimal version: no components) - SLSA Level 3
   build-epack-core:
@@ -119,6 +120,7 @@ jobs:
       go-version-file: go.mod
       config-file: .slsa-goreleaser/epack-core-${{ matrix.os }}-${{ matrix.arch }}.yml
       evaluated-envs: "VERSION:${{ needs.args.outputs.version }},COMMIT:${{ needs.args.outputs.commit }}"
+      upload-assets: false
 
   # Create GitHub Release with all artifacts
   release:
