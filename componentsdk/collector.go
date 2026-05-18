@@ -49,6 +49,11 @@ type CollectorContext interface {
 	// Config returns the parsed configuration, or nil if none provided.
 	Config() map[string]any
 
+	// Level returns the requested collection level from config.
+	// Defaults to LevelTrust when absent or unrecognized; see Level for the
+	// trust / audit / internal scheme.
+	Level() Level
+
 	// Secret returns the value of an environment variable.
 	// Use this for secrets listed in epack.yaml secrets array.
 	Secret(name string) string
@@ -66,6 +71,36 @@ type CollectorContext interface {
 	// Emit outputs collected artifacts wrapped in the protocol envelope.
 	// Each artifact contains data and optional schema/path metadata.
 	Emit(artifacts []CollectedArtifact) error
+}
+
+// Level represents the depth of collection a collector should perform.
+//
+// Levels are cumulative: audit is a superset of trust, internal is a superset
+// of audit. Collectors gate optional field collection on AtLeast(LevelAudit) or
+// AtLeast(LevelInternal); fields present at lower levels remain present at
+// higher levels.
+//
+// Unknown values must downgrade to LevelTrust rather than fail open: a typo
+// or future-level value in config must never silently promote collection to
+// data the customer didn't ask to gather.
+type Level string
+
+const (
+	LevelTrust    Level = "trust"
+	LevelAudit    Level = "audit"
+	LevelInternal Level = "internal"
+)
+
+var levelRank = map[Level]int{
+	LevelTrust:    0,
+	LevelAudit:    1,
+	LevelInternal: 2,
+}
+
+// AtLeast returns true if the receiver is at or above the given level in the
+// trust < audit < internal ordering.
+func (l Level) AtLeast(other Level) bool {
+	return levelRank[l] >= levelRank[other]
 }
 
 // CollectedArtifact represents a single output artifact from a collector.
@@ -224,6 +259,26 @@ func (c *collectorContext) Context() context.Context  { return c.ctx }
 func (c *collectorContext) Name() string              { return c.name }
 func (c *collectorContext) Config() map[string]any    { return c.config }
 func (c *collectorContext) Secret(name string) string { return os.Getenv(name) }
+
+// Level reads the "level" key from config and returns the requested
+// collection level. Absent, empty, non-string, or unrecognized values produce
+// LevelTrust; unrecognized values also emit a one-line warning to stderr.
+func (c *collectorContext) Level() Level {
+	raw, ok := c.config["level"]
+	if !ok {
+		return LevelTrust
+	}
+	s, ok := raw.(string)
+	if !ok || s == "" {
+		return LevelTrust
+	}
+	lvl := Level(s)
+	if _, known := levelRank[lvl]; !known {
+		fmt.Fprintf(os.Stderr, "warning: unknown collection level %q in config; falling back to %q\n", s, LevelTrust)
+		return LevelTrust
+	}
+	return lvl
+}
 
 func (c *collectorContext) Status(message string) {
 	defaultProgressWriter.writeStatus(message)

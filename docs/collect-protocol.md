@@ -171,6 +171,57 @@ If the collector has a `config` section in `epack.yaml`, a temporary JSON file i
 }
 ```
 
+## Collection Levels
+
+Collectors that support graduated collection (gathering more or less detail depending on the caller's intent) read a reserved top-level config key named `level`.
+
+```yaml
+collectors:
+  aws:
+    source: locktivity/epack-collector-aws@^1
+    config:
+      level: audit
+      auth_mode: oidc
+      role_arn: arn:aws:iam::123:role/epack
+```
+
+### Vocabulary
+
+The `level` value is one of three strings:
+
+| Level | Meaning |
+|-------|---------|
+| `trust` | Pass/fail posture only. The minimum a collector needs to answer "do they pass?" |
+| `audit` | Adds per-resource breakdowns, policy details, and alert counts. Enough for an auditor to answer "where is the gap?" |
+| `internal` | Adds raw inventory (user lists, group rosters, audit-log slices). Enough for an investigator to answer "who or what specifically?" |
+
+Levels are **cumulative**: `audit` is a strict superset of `trust`, and `internal` is a strict superset of `audit`. No level removes a field that a lower level included.
+
+### Defaults and safety
+
+- `level` is **optional**. When absent, empty, or not a string, the collector treats the value as `trust`.
+- **Unknown values downgrade to `trust`** and emit a one-line warning to stderr. A typo or future-level value must never silently promote collection to data the caller didn't ask to gather. Collectors must never fail open.
+
+### Artifact convention
+
+Collectors that honor `level` should record the level they ran at on their top-level output as `collected_at_level: "<level>"`. Downstream tools rely on this to interpret missing fields: a profile evaluator needs to know whether the absence of `iam_users` means "no IAM users exist" or "this pack was collected at trust level."
+
+### SDK helpers
+
+Collectors built on `componentsdk` read the level with the typed helper:
+
+```go
+level := ctx.Level()
+if level.AtLeast(componentsdk.LevelAudit) {
+    // gate audit-only field collection
+}
+if level.AtLeast(componentsdk.LevelInternal) {
+    // gate internal-only field collection
+}
+```
+
+`componentsdk.Level` is a string type with constants `LevelTrust`, `LevelAudit`, and `LevelInternal`. `Level.AtLeast(other)` implements the ordinal `trust < audit < internal` comparison. The SDK's `ctx.Level()` reader applies the default-and-downgrade rules above so individual collectors do not reimplement them.
+
 ## Output Convention
 
 ### Output Format
