@@ -846,6 +846,7 @@ printf '"}\n'
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
+	defer func() { _ = result.Close() }()
 
 	// Some collectors should have succeeded
 	successCount := 0

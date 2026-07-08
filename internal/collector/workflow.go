@@ -13,8 +13,10 @@ import (
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/credentials"
+	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
+	"github.com/locktivity/epack/internal/safefile"
 	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/internal/timestamp"
 	"github.com/locktivity/epack/pack"
@@ -270,6 +272,7 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 	if err != nil {
 		return nil, fmt.Errorf("running collectors: %w", err)
 	}
+	defer func() { _ = runResult.Close() }()
 
 	// Copy collector results
 	result.CollectorResults = runResult.Results
@@ -464,24 +467,44 @@ func addCollectorArtifacts(b *builder.Builder, results []RunResult, collectedAt 
 			continue
 		}
 
-		// Parse collector output using the canonical parser.
-		// This handles protocol envelopes, plain JSON, and non-JSON output uniformly.
 		envelope, err := ParseCollectorOutput(r.Output)
 		if err != nil {
 			return fmt.Errorf("parsing collector output for %s: %w", r.Collector, err)
 		}
 
-		// Add each artifact
 		for i, artifact := range envelope.Artifacts {
 			artifactPath := artifact.PathOrDefault(r.Collector, i)
 			opts := builder.ArtifactOptions{
 				Schema:      artifact.Schema,
 				CollectedAt: collectedAt,
 			}
+			if artifact.File != "" {
+				if err := addStagedFileArtifact(b, r, artifact, artifactPath, opts); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := b.AddBytesWithOptions(artifactPath, artifact.RawData, opts); err != nil {
 				return fmt.Errorf("adding artifact %s: %w", artifactPath, err)
 			}
 		}
+	}
+	return nil
+}
+
+// SECURITY: artifact.File is collector-controlled; ReadFileBeneath pins
+// traversal so post-exit symlink swaps cannot alias host files into the pack.
+func addStagedFileArtifact(b *builder.Builder, r RunResult, artifact CollectorArtifact, artifactPath string, opts builder.ArtifactOptions) error {
+	if r.OutputDir == "" {
+		return fmt.Errorf("collector %s emitted file artifact %s but no staging directory was provided", r.Collector, artifact.File)
+	}
+
+	data, err := safefile.ReadFileBeneath(r.OutputDir, artifact.File, limits.Artifact)
+	if err != nil {
+		return fmt.Errorf("collector %s file artifact %s: %w", r.Collector, artifact.File, err)
+	}
+	if err := b.AddBytesWithOptions(artifactPath, data, opts); err != nil {
+		return fmt.Errorf("adding artifact %s: %w", artifactPath, err)
 	}
 	return nil
 }
@@ -573,6 +596,7 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 	if err != nil {
 		return nil, fmt.Errorf("running collectors: %w", err)
 	}
+	defer func() { _ = runResult.Close() }()
 
 	// Copy collector results
 	result.CollectorResults = runResult.Results

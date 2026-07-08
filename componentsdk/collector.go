@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/stagedartifact"
 )
 
 // CollectorSpec defines the collector's metadata.
@@ -73,6 +76,26 @@ type CollectorContext interface {
 	Emit(artifacts []CollectedArtifact) error
 }
 
+// StagingContext exposes file-artifact staging helpers.
+type StagingContext interface {
+	// OutputDir returns the staging directory, or "" when unavailable.
+	OutputDir() string
+
+	// WriteStagedFile writes data beneath OutputDir and returns the file path
+	// for CollectedArtifact.File.
+	WriteStagedFile(relPath string, data []byte) (string, error)
+
+	// StageFile opens a new file beneath OutputDir for streaming. The caller
+	// must close the returned handle.
+	StageFile(relPath string) (*os.File, string, error)
+}
+
+// Staging returns the file-artifact capability when this context has one.
+func Staging(ctx CollectorContext) (StagingContext, bool) {
+	s, ok := ctx.(StagingContext)
+	return s, ok
+}
+
 // Level represents the depth of collection a collector should perform.
 //
 // Levels are cumulative: audit is a superset of trust, internal is a superset
@@ -105,16 +128,19 @@ func (l Level) AtLeast(other Level) bool {
 
 // CollectedArtifact represents a single output artifact from a collector.
 type CollectedArtifact struct {
-	// Data is the artifact content (will be JSON-encoded).
+	// Data is JSON-encoded artifact content. Mutually exclusive with File.
 	Data any
 
 	// Schema is the semantic schema type (e.g., "evidencepack/cloud-posture@v1").
 	// Optional - if empty, the artifact has no schema type.
 	Schema string
 
-	// Path is the path within the pack (e.g., "posture/cloud.json").
-	// Optional - if empty, defaults to "artifacts/{collector}.json".
+	// Path is the path within the pack; required for File artifacts.
 	Path string
+
+	// File references staged bytes for binary evidence. Use the path returned
+	// by WriteStagedFile or StageFile. Mutually exclusive with Data.
+	File string
 }
 
 // Typed errors for specific exit codes
@@ -190,9 +216,10 @@ func buildCollectorContext(spec CollectorSpec) (*collectorContext, context.Cance
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	handleCollectorSignals(cancel)
 	collectorCtx := &collectorContext{
-		ctx:  ctx,
-		name: os.Getenv("EPACK_COLLECTOR_NAME"),
-		spec: spec,
+		ctx:       ctx,
+		name:      os.Getenv("EPACK_COLLECTOR_NAME"),
+		outputDir: os.Getenv("EPACK_COLLECTOR_OUTPUT_DIR"),
+		spec:      spec,
 	}
 	if err := loadCollectorConfig(collectorCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "error parsing config: %v\n", err)
@@ -248,17 +275,52 @@ func finalizeCollectorRun(ctx *collectorContext) int {
 
 // collectorContext implements CollectorContext
 type collectorContext struct {
-	ctx     context.Context
-	name    string
-	config  map[string]any
-	spec    CollectorSpec
-	emitted bool
+	ctx       context.Context
+	name      string
+	outputDir string
+	config    map[string]any
+	spec      CollectorSpec
+	emitted   bool
 }
+
+var (
+	_ CollectorContext = (*collectorContext)(nil)
+	_ StagingContext   = (*collectorContext)(nil)
+)
 
 func (c *collectorContext) Context() context.Context  { return c.ctx }
 func (c *collectorContext) Name() string              { return c.name }
 func (c *collectorContext) Config() map[string]any    { return c.config }
 func (c *collectorContext) Secret(name string) string { return os.Getenv(name) }
+func (c *collectorContext) OutputDir() string         { return c.outputDir }
+
+func (c *collectorContext) WriteStagedFile(relPath string, data []byte) (string, error) {
+	if err := c.checkStagingPath(relPath); err != nil {
+		return "", err
+	}
+	if err := safefile.WriteFilePrivate(c.outputDir, relPath, data); err != nil {
+		return "", fmt.Errorf("writing staged file: %w", err)
+	}
+	return filepath.ToSlash(relPath), nil
+}
+
+func (c *collectorContext) StageFile(relPath string) (*os.File, string, error) {
+	if err := c.checkStagingPath(relPath); err != nil {
+		return nil, "", err
+	}
+	f, err := safefile.OpenForWriteBeneath(c.outputDir, relPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("creating staged file: %w", err)
+	}
+	return f, filepath.ToSlash(relPath), nil
+}
+
+func (c *collectorContext) checkStagingPath(relPath string) error {
+	if c.outputDir == "" {
+		return fmt.Errorf("file artifacts require epack with EPACK_COLLECTOR_OUTPUT_DIR support; upgrade epack")
+	}
+	return stagedartifact.LocalPath(relPath)
+}
 
 // Level reads the "level" key from config and returns the requested
 // collection level. Absent, empty, non-string, or unrecognized values produce
@@ -295,31 +357,23 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 	if len(artifacts) == 0 {
 		return fmt.Errorf("at least one artifact is required")
 	}
-	c.emitted = true
-
-	// Build artifacts array for envelope
+	// Validate before marking emitted, so callers can retry after a rejected artifact.
 	artifactEntries := make([]map[string]any, len(artifacts))
 	for i, a := range artifacts {
-		entry := map[string]any{
-			"data": a.Data,
-		}
-		if a.Schema != "" {
-			entry["schema"] = a.Schema
-		}
-		if a.Path != "" {
-			entry["path"] = a.Path
+		entry, err := c.collectorArtifactEntry(a)
+		if err != nil {
+			return fmt.Errorf("artifact %d: %w", i, err)
 		}
 		artifactEntries[i] = entry
 	}
+	c.emitted = true
 
-	// Wrap in protocol envelope with artifacts array
 	envelope := map[string]any{
 		"type":             "epack_result",
 		"protocol_version": componenttypes.CollectorProtocolVersion,
 		"artifacts":        artifactEntries,
 	}
 
-	// Output to stdout (COL-001)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(envelope); err != nil {
@@ -327,6 +381,55 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 	}
 
 	return nil
+}
+
+func (c *collectorContext) collectorArtifactEntry(a CollectedArtifact) (map[string]any, error) {
+	var entry map[string]any
+	if a.File != "" {
+		relPath, err := c.stagedFileRel(a)
+		if err != nil {
+			return nil, err
+		}
+		entry = map[string]any{
+			"file": relPath,
+			"path": a.Path,
+		}
+	} else {
+		entry = map[string]any{
+			"data": a.Data,
+		}
+		if a.Path != "" {
+			entry["path"] = a.Path
+		}
+	}
+	if a.Schema != "" {
+		entry["schema"] = a.Schema
+	}
+	return entry, nil
+}
+
+func (c *collectorContext) stagedFileRel(a CollectedArtifact) (string, error) {
+	if c.outputDir == "" {
+		return "", fmt.Errorf("file artifacts require epack with EPACK_COLLECTOR_OUTPUT_DIR support; upgrade epack")
+	}
+
+	file := a.File
+	if filepath.IsAbs(file) {
+		rel, err := filepath.Rel(c.outputDir, file)
+		if err != nil {
+			return "", fmt.Errorf("file artifact %q is outside the staging directory", a.File)
+		}
+		file = rel
+	}
+
+	relPath, err := stagedartifact.Entry{HasData: a.Data != nil, File: file, Path: a.Path}.Validate()
+	if err != nil {
+		return "", fmt.Errorf("file artifact %q: %w", a.File, err)
+	}
+	if err := safefile.ValidateFileBeneath(c.outputDir, relPath); err != nil {
+		return "", fmt.Errorf("file artifact %q: %w", a.File, err)
+	}
+	return relPath, nil
 }
 
 // outputCollectorCapabilities outputs the collector's capabilities as JSON.

@@ -89,6 +89,10 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-004 | MAY | Output plain text (quoted as JSON string, protocol version 0) |
 | COL-005 | MUST NOT | Output size exceed 64 MB per collector |
 | COL-006 | MUST | JSON be UTF-8 encoded |
+| COL-070 | MAY | Emit file artifacts by staging files under `EPACK_COLLECTOR_OUTPUT_DIR` and referencing them with the per-artifact `file` field |
+| COL-071 | MUST | File artifact paths be relative and stay within the staging directory (no traversal, no symlinks) |
+| COL-072 | MUST | File artifacts carry an explicit `path` and no `data` field |
+| COL-073 | MUST | Collectors requiring file artifacts exit with config error (exit 2) when `EPACK_COLLECTOR_OUTPUT_DIR` is not set |
 
 **Protocol envelope format:**
 ```json
@@ -106,6 +110,7 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-011 | MUST | Read protocol version from `EPACK_PROTOCOL_VERSION` |
 | COL-012 | SHOULD | Read config file path from `EPACK_COLLECTOR_CONFIG` if present |
 | COL-013 | MAY | Read identity token from `EPACK_IDENTITY` if present |
+| COL-014 | MAY | Read the file artifact staging directory from `EPACK_COLLECTOR_OUTPUT_DIR` if present |
 
 ### 2.4 Configuration
 

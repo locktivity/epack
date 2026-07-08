@@ -11,6 +11,9 @@ import (
 type CollectorRunner interface {
 	// Run executes all collectors and returns their outputs.
 	// Returns aggregate results including success/failure status.
+	//
+	// The returned CollectResult owns staging directories; callers must
+	// defer result.Close() after a successful Run.
 	Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions) (*CollectResult, error)
 }
 
@@ -30,6 +33,9 @@ type ExecutionRequest struct {
 
 	// ManagedEnv is the trusted env bundle resolved at runtime.
 	ManagedEnv map[string]string
+
+	// OutputDir is exposed as EPACK_COLLECTOR_OUTPUT_DIR.
+	OutputDir string
 
 	// CollectorIndex and CollectorTotal provide progress event context.
 	CollectorIndex int

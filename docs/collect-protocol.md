@@ -105,6 +105,7 @@ Collectors receive a protocol environment when invoked via `epack collect` or `e
 | `EPACK_COLLECTOR_NAME` | Collector name (e.g., "github") |
 | `EPACK_PROTOCOL_VERSION` | Protocol version ("1") |
 | `EPACK_COLLECTOR_CONFIG` | Path to JSON config file (if config exists in epack.yaml) |
+| `EPACK_COLLECTOR_OUTPUT_DIR` | Staging directory for file artifacts (see File Artifacts) |
 | `EPACK_IDENTITY` | Identity token or identifier (if set, passed through for CI contexts) |
 
 ### Allowed Environment Variables
@@ -254,9 +255,10 @@ Result message fields:
 - `artifacts`: Array of collected artifacts
 
 Each artifact in the array has:
-- `data`: The collected evidence data (required)
+- `data`: The collected evidence data (required unless `file` is set)
 - `schema`: Schema identifier for typed artifacts (optional, e.g., `"evidencepack/cloud-posture@v1"`)
-- `path`: Output path in the pack (optional, defaults to `"artifacts/{collector}.json"`)
+- `path`: Output path in the pack (optional for `data` artifacts, defaults to `"artifacts/{collector}.json"`; required for `file` artifacts)
+- `file`: Path relative to `EPACK_COLLECTOR_OUTPUT_DIR` whose raw bytes become the artifact content (mutually exclusive with `data`; see File Artifacts)
 
 **Multi-artifact example:**
 
@@ -279,6 +281,64 @@ A collector can emit multiple artifacts with different schemas:
   ]
 }
 ```
+
+**File artifacts:**
+
+Use a `file` artifact when the artifact content should be stored as raw bytes
+in the pack, such as PDFs, images, or archives. During collector execution,
+epack sets `EPACK_COLLECTOR_OUTPUT_DIR` to a per-collector staging directory.
+Write the file beneath that directory and emit its relative path in `file`:
+
+```json
+{
+  "type": "epack_result",
+  "protocol_version": 1,
+  "artifacts": [
+    {
+      "data": {"documents": [{"name": "Security policy"}]},
+      "path": "artifacts/documents.json"
+    },
+    {
+      "file": "documents/security-policy.pdf",
+      "path": "artifacts/documents/security-policy.pdf"
+    }
+  ]
+}
+```
+
+Rules:
+- `file` is a relative path and must stay within the staging directory; absolute paths and traversal are rejected.
+- A file artifact writes raw bytes to the pack at `path`; `path` is required and `file` is mutually exclusive with `data`.
+- The staged entry must be a regular file. Symlinks are rejected. On Unix (Linux, macOS), epack opens the staging root and every path component with `O_NOFOLLOW` under descriptor-pinned traversal. On Windows, containment uses a lexical check plus symlink walk and is **best effort, not atomic** against a concurrent swap (see `internal/safefile`); collectors are not currently distributed for Windows.
+- Each staged file is subject to the per-artifact size limit (100 MB). Staged bytes count toward the pack's total-size and artifact-count budget as artifacts are added. They do not count against the per-collector stdout output limit.
+- The staging directory has owner-only permissions and is removed after the pack is built.
+
+Collectors that require file artifacts must return a configuration error (exit
+2) when `EPACK_COLLECTOR_OUTPUT_DIR` is unset. Without that directory, the
+runner cannot resolve emitted `file` entries.
+
+SDK collectors obtain staging helpers with `componentsdk.Staging(ctx)`. Treat a
+false result, or an empty `OutputDir()`, as "this epack does not support file
+artifacts":
+
+```go
+staging, ok := componentsdk.Staging(ctx)
+if !ok || staging.OutputDir() == "" {
+    return componentsdk.NewConfigError("file artifacts require a newer epack; upgrade epack")
+}
+
+name, err := staging.WriteStagedFile("documents/policy.pdf", data)
+if err != nil {
+    return err
+}
+
+return ctx.Emit([]componentsdk.CollectedArtifact{
+    {File: name, Path: "artifacts/documents/policy.pdf"},
+})
+```
+
+For streaming writes, use `StageFile` and emit the returned name after closing
+the file.
 
 **Legacy format (backwards compatible):**
 

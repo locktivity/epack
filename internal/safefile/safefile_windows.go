@@ -83,6 +83,64 @@ func ReadFile(path string, limit limits.SizeLimit) ([]byte, error) {
 	return data, nil
 }
 
+// ReadFileBeneath reads a regular file after a best-effort containment and
+// symlink walk. Windows traversal is not atomic against concurrent swaps.
+func ReadFileBeneath(baseDir, relPath string, limit limits.SizeLimit) ([]byte, error) {
+	if err := ValidateFileBeneath(baseDir, relPath); err != nil {
+		return nil, err
+	}
+	fullPath, err := ValidatePath(baseDir, relPath)
+	if err != nil {
+		return nil, err
+	}
+	return ReadFile(fullPath, limit)
+}
+
+// ValidateFileBeneath performs the Windows best-effort symlink walk.
+func ValidateFileBeneath(baseDir, relPath string) error {
+	fullPath, err := ValidatePath(baseDir, relPath)
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(relPath) == "." {
+		return fmt.Errorf("not a file path: %s", relPath)
+	}
+
+	hasSymlink, err := ContainsSymlinkFrom(fullPath, baseDir)
+	if err != nil {
+		return err
+	}
+	if hasSymlink {
+		return errors.E(errors.SymlinkNotAllowed,
+			fmt.Sprintf("refusing symlink component in %s", relPath), nil)
+	}
+
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file: %s", relPath)
+	}
+	return nil
+}
+
+// OpenForWriteBeneath is the Windows best-effort writer; traversal is not
+// atomic against concurrent swaps.
+func OpenForWriteBeneath(baseDir, relPath string) (*os.File, error) {
+	fullPath, err := ValidatePath(baseDir, relPath)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Clean(relPath) == "." {
+		return nil, fmt.Errorf("not a file path: %s", relPath)
+	}
+	if err := MkdirAllPrivate(baseDir, filepath.Dir(fullPath)); err != nil {
+		return nil, err
+	}
+	return OpenForWrite(fullPath)
+}
+
 // MkdirAll creates a directory and all parents with symlink protection.
 // Uses standard directory permissions (0755).
 //

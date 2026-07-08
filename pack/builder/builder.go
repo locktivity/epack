@@ -41,12 +41,15 @@ import (
 
 // Builder constructs evidence packs.
 type Builder struct {
-	stream     string
-	sources    []pack.Source
-	artifacts  []artifact
-	provenance *pack.Provenance
-	profiles   []pack.ProfileRef
-	overlays   []pack.ProfileRef
+	stream           string
+	sources          []pack.Source
+	artifacts        []artifact
+	totalSize        int64
+	maxPackSize      int64
+	maxArtifactCount int
+	provenance       *pack.Provenance
+	profiles         []pack.ProfileRef
+	overlays         []pack.ProfileRef
 }
 
 // artifact holds pending artifact data before building.
@@ -65,7 +68,9 @@ type artifact struct {
 // The stream identifies the evidence stream (e.g., "my-org/prod").
 func New(stream string) *Builder {
 	return &Builder{
-		stream: stream,
+		stream:           stream,
+		maxPackSize:      limits.MaxPackSizeBytes,
+		maxArtifactCount: limits.MaxArtifactCount,
 	}
 }
 
@@ -236,6 +241,18 @@ func (b *Builder) AddBytesWithOptions(path string, data []byte, opts ArtifactOpt
 				path, len(data), limits.Artifact.Bytes()), nil)
 	}
 
+	// Enforce the pack budget before retaining staged-file bytes.
+	if len(b.artifacts) >= b.maxArtifactCount {
+		return errors.E(errors.TooManyArtifacts,
+			fmt.Sprintf("adding artifact %q would exceed artifact count limit %d",
+				path, b.maxArtifactCount), nil)
+	}
+	if b.totalSize+int64(len(data)) > b.maxPackSize {
+		return errors.E(errors.ArtifactTooLarge,
+			fmt.Sprintf("adding artifact %q would exceed max pack size (%d > %d bytes)",
+				path, b.totalSize+int64(len(data)), b.maxPackSize), nil)
+	}
+
 	// Defensive copy of caller-owned slices to prevent mutation after call
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
@@ -256,6 +273,7 @@ func (b *Builder) AddBytesWithOptions(path string, data []byte, opts ArtifactOpt
 		schema:      opts.Schema,
 		controls:    controlsCopy,
 	})
+	b.totalSize += int64(len(dataCopy))
 
 	return nil
 }
@@ -314,19 +332,19 @@ func (b *Builder) validate() error {
 	if b.stream == "" {
 		return errors.E(errors.InvalidInput, "stream is required", nil)
 	}
-	if len(b.artifacts) > limits.MaxArtifactCount {
+	if len(b.artifacts) > b.maxArtifactCount {
 		return errors.E(errors.TooManyArtifacts,
 			fmt.Sprintf("artifact count %d exceeds limit %d",
-				len(b.artifacts), limits.MaxArtifactCount), nil)
+				len(b.artifacts), b.maxArtifactCount), nil)
 	}
 	var totalSize int64
 	for _, a := range b.artifacts {
 		totalSize += int64(len(a.data))
 	}
-	if totalSize > limits.MaxPackSizeBytes {
+	if totalSize > b.maxPackSize {
 		return errors.E(errors.ArtifactTooLarge,
 			fmt.Sprintf("total pack size %d exceeds limit %d",
-				totalSize, limits.MaxPackSizeBytes), nil)
+				totalSize, b.maxPackSize), nil)
 	}
 	return nil
 }

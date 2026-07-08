@@ -50,6 +50,9 @@ type EnvInput struct {
 	// ConfigPath is exposed as EPACK_COLLECTOR_CONFIG when present.
 	ConfigPath string
 
+	// OutputDir is exposed as EPACK_COLLECTOR_OUTPUT_DIR when present.
+	OutputDir string
+
 	// Secrets lists explicit env var names to pass through.
 	Secrets []string
 
@@ -249,6 +252,10 @@ func BuildEnv(input EnvInput) []string {
 	// Add config file path if config exists
 	if input.ConfigPath != "" {
 		env = append(env, "EPACK_COLLECTOR_CONFIG="+input.ConfigPath)
+	}
+
+	if input.OutputDir != "" {
+		env = append(env, "EPACK_COLLECTOR_OUTPUT_DIR="+input.OutputDir)
 	}
 
 	// Pass through EPACK_IDENTITY if set (for authenticated/CI contexts)

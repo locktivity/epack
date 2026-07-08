@@ -90,6 +90,138 @@ func ReadFile(path string, limit limits.SizeLimit) ([]byte, error) {
 	return data, nil
 }
 
+// ReadFileBeneath reads a regular file using descriptor-pinned traversal.
+// Every component is opened with O_NOFOLLOW so concurrent symlink swaps
+// cannot redirect the read outside baseDir.
+func ReadFileBeneath(baseDir, relPath string, limit limits.SizeLimit) ([]byte, error) {
+	f, err := openBeneath(baseDir, relPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file: %s", relPath)
+	}
+	maxSize := limit.Bytes()
+	if info.Size() > maxSize {
+		return nil, fmt.Errorf("file %s exceeds maximum size (%d bytes > %d bytes)",
+			filepath.Base(relPath), info.Size(), maxSize)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("file %s exceeded maximum size during read (%d bytes)",
+			filepath.Base(relPath), maxSize)
+	}
+
+	return data, nil
+}
+
+// ValidateFileBeneath verifies that baseDir/relPath is a regular file
+// reachable without following symlinks.
+func ValidateFileBeneath(baseDir, relPath string) error {
+	f, err := openBeneath(baseDir, relPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file: %s", relPath)
+	}
+	return nil
+}
+
+func openBeneath(baseDir, relPath string) (*os.File, error) {
+	if _, err := ValidatePath(baseDir, relPath); err != nil {
+		return nil, err
+	}
+	cleaned := filepath.Clean(relPath)
+	if cleaned == "." {
+		return nil, fmt.Errorf("not a file path: %s", relPath)
+	}
+
+	// The staging root is collector-visible and can be replaced after emit.
+	dirFd, err := unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		if err == unix.ELOOP {
+			return nil, errors.E(errors.SymlinkNotAllowed,
+				fmt.Sprintf("refusing symlink base directory: %s", baseDir), nil)
+		}
+		return nil, err
+	}
+
+	components := strings.Split(filepath.ToSlash(cleaned), "/")
+	for _, component := range components[:len(components)-1] {
+		nextFd, err := unix.Openat(dirFd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(dirFd)
+		if err != nil {
+			if err == unix.ELOOP || err == unix.ENOTDIR {
+				return nil, errors.E(errors.SymlinkNotAllowed,
+					fmt.Sprintf("refusing symlink or non-directory component %q in %s", component, relPath), nil)
+			}
+			return nil, err
+		}
+		dirFd = nextFd
+	}
+
+	leaf := components[len(components)-1]
+	leafFd, err := unix.Openat(dirFd, leaf, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	_ = unix.Close(dirFd)
+	if err != nil {
+		if err == unix.ELOOP {
+			return nil, errors.E(errors.SymlinkNotAllowed,
+				fmt.Sprintf("refusing to read symlink: %s", relPath), nil)
+		}
+		return nil, err
+	}
+
+	return os.NewFile(uintptr(leafFd), filepath.Join(baseDir, cleaned)), nil
+}
+
+// OpenForWriteBeneath creates a private file using descriptor-pinned traversal.
+// Parents and leaf are opened beneath baseDir with openat/O_NOFOLLOW so
+// concurrent symlink swaps cannot redirect the write.
+func OpenForWriteBeneath(baseDir, relPath string) (*os.File, error) {
+	if _, err := ValidatePath(baseDir, relPath); err != nil {
+		return nil, err
+	}
+	cleaned := filepath.Clean(relPath)
+	if cleaned == "." {
+		return nil, fmt.Errorf("not a file path: %s", relPath)
+	}
+	fullPath := filepath.Join(baseDir, cleaned)
+
+	dirFd, err := openContainedDir(baseDir, filepath.Dir(fullPath), limits.PrivateDirMode)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = unix.Close(dirFd) }()
+
+	flags := unix.O_WRONLY | unix.O_CREAT | unix.O_TRUNC | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	fd, err := unix.Openat(dirFd, filepath.Base(fullPath), flags, uint32(limits.PrivateFileMode))
+	if err != nil {
+		if err == unix.ELOOP {
+			return nil, errors.E(errors.SymlinkNotAllowed,
+				fmt.Sprintf("refusing to write symlink: %s", relPath), nil)
+		}
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), fullPath), nil
+}
+
 // MkdirAll creates a directory and all parents with symlink protection.
 // Uses standard directory permissions (0755).
 func MkdirAll(baseDir, targetDir string) error {

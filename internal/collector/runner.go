@@ -26,6 +26,7 @@ import (
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/securityaudit"
 	"github.com/locktivity/epack/internal/securitypolicy"
+	"github.com/locktivity/epack/internal/stagedartifact"
 )
 
 // Collector config is passed only via EPACK_COLLECTOR_CONFIG.
@@ -47,6 +48,8 @@ type CollectorArtifact struct {
 	Schema string
 	// Path is the artifact path within the pack (e.g., "posture/cloud.json").
 	Path string
+	// File references staged artifact bytes. Mutually exclusive with RawData.
+	File string
 }
 
 // PathOrDefault returns the artifact's path, or generates a default based on collector name and index.
@@ -60,11 +63,11 @@ func (a CollectorArtifact) PathOrDefault(collector string, index int) string {
 	return fmt.Sprintf("artifacts/%s_%d.json", collector, index)
 }
 
-// rawArtifactEntry is the JSON structure for artifacts in the protocol envelope.
 type rawArtifactEntry struct {
 	Data   json.RawMessage `json:"data"`
 	Schema string          `json:"schema"`
 	Path   string          `json:"path"`
+	File   string          `json:"file"`
 }
 
 // ParseCollectorOutput decodes collector stdout.
@@ -149,10 +152,15 @@ func parseArtifactsArray(raw json.RawMessage) ([]CollectorArtifact, error) {
 	}
 	artifacts := make([]CollectorArtifact, len(entries))
 	for i, e := range entries {
+		file, err := stagedartifact.Entry{HasData: len(e.Data) > 0, File: e.File, Path: e.Path}.Validate()
+		if err != nil {
+			return nil, fmt.Errorf("artifact %d: %w", i, err)
+		}
 		artifacts[i] = CollectorArtifact{
 			RawData: e.Data,
 			Schema:  e.Schema,
 			Path:    e.Path,
+			File:    file,
 		}
 	}
 	return artifacts, nil
@@ -257,6 +265,9 @@ type RunResult struct {
 	Success   bool
 	Output    []byte
 	Error     error
+
+	// OutputDir is owned by the parent CollectResult and removed by Close.
+	OutputDir string
 }
 
 // CollectResult contains all evidence from a collection run.
@@ -264,6 +275,22 @@ type CollectResult struct {
 	Stream   string
 	Results  []RunResult
 	Failures int
+}
+
+// Close removes collector staging directories. It is nil-safe and idempotent.
+func (c *CollectResult) Close() error {
+	if c == nil {
+		return nil
+	}
+	var firstErr error
+	for _, r := range c.Results {
+		if r.OutputDir != "" {
+			if err := os.RemoveAll(r.OutputDir); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }
 
 // parallelResults collects results from concurrent collector executions.
@@ -650,12 +677,20 @@ func (r *Runner) runOne(ctx context.Context, jobCfg *config.JobConfig, run singl
 		result.Error = err
 		return result
 	}
+	outputDir, _, err := execsafe.SecureTempDir("epack-collector-out-*")
+	if err != nil {
+		result.Error = fmt.Errorf("creating collector staging dir: %w", err)
+		return result
+	}
+	result.OutputDir = outputDir
+
 	output, err := r.executeCollector(ctx, ExecutionRequest{
 		Name:           run.Name,
 		ExecPath:       execPath,
 		Config:         run.Config.Config,
 		Secrets:        run.Config.Secrets,
 		ManagedEnv:     managedEnv,
+		OutputDir:      outputDir,
 		CollectorIndex: run.CollectorIndex,
 		CollectorTotal: run.CollectorTotal,
 	}, opts)
@@ -759,6 +794,7 @@ func (r *Runner) executeCollector(ctx context.Context, req ExecutionRequest, opt
 		BaseEnv:             os.Environ(),
 		Name:                req.Name,
 		ConfigPath:          configPath,
+		OutputDir:           req.OutputDir,
 		Secrets:             req.Secrets,
 		ManagedEnv:          req.ManagedEnv,
 		Getenv:              os.Getenv,
