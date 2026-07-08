@@ -141,6 +141,15 @@ type CollectedArtifact struct {
 	// File references staged bytes for binary evidence. Use the path returned
 	// by WriteStagedFile or StageFile. Mutually exclusive with Data.
 	File string
+
+	// DisplayName is a human-readable artifact name shown by epack inspect/list.
+	DisplayName string
+
+	// Description is a one-line artifact description.
+	Description string
+
+	// Controls lists the control IDs this artifact supports.
+	Controls []string
 }
 
 // Typed errors for specific exit codes
@@ -404,6 +413,15 @@ func (c *collectorContext) collectorArtifactEntry(a CollectedArtifact) (map[stri
 	}
 	if a.Schema != "" {
 		entry["schema"] = a.Schema
+	}
+	if a.DisplayName != "" {
+		entry["display_name"] = a.DisplayName
+	}
+	if a.Description != "" {
+		entry["description"] = a.Description
+	}
+	if len(a.Controls) > 0 {
+		entry["controls"] = a.Controls
 	}
 	return entry, nil
 }

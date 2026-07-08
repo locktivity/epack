@@ -1088,7 +1088,7 @@ func TestParseCollectorOutput_MultipleArtifacts(t *testing.T) {
 		"protocol_version": 1,
 		"artifacts": [
 			{"data": {"type": "detailed"}, "path": "artifacts/detailed.json"},
-			{"data": {"type": "normalized"}, "schema": "example/schema@v1", "path": "artifacts/normalized.json"}
+			{"data": {"type": "normalized"}, "schema": "example/schema@v1", "path": "artifacts/normalized.json", "display_name": "Normalized", "description": "Normalized posture", "controls": ["CC6.1"]}
 		]
 	}`
 
@@ -1105,20 +1105,30 @@ func TestParseCollectorOutput_MultipleArtifacts(t *testing.T) {
 		t.Fatalf("expected 2 artifacts, got %d", len(output.Artifacts))
 	}
 
-	// First artifact - no schema
 	if output.Artifacts[0].Path != "artifacts/detailed.json" {
 		t.Errorf("artifact[0].Path = %q, want %q", output.Artifacts[0].Path, "artifacts/detailed.json")
 	}
 	if output.Artifacts[0].Schema != "" {
 		t.Errorf("artifact[0].Schema = %q, want empty", output.Artifacts[0].Schema)
 	}
+	if output.Artifacts[0].DisplayName != "" {
+		t.Errorf("artifact[0].DisplayName = %q, want empty", output.Artifacts[0].DisplayName)
+	}
 
-	// Second artifact - with schema
 	if output.Artifacts[1].Path != "artifacts/normalized.json" {
 		t.Errorf("artifact[1].Path = %q, want %q", output.Artifacts[1].Path, "artifacts/normalized.json")
 	}
 	if output.Artifacts[1].Schema != "example/schema@v1" {
 		t.Errorf("artifact[1].Schema = %q, want %q", output.Artifacts[1].Schema, "example/schema@v1")
+	}
+	if output.Artifacts[1].DisplayName != "Normalized" {
+		t.Errorf("artifact[1].DisplayName = %q, want %q", output.Artifacts[1].DisplayName, "Normalized")
+	}
+	if output.Artifacts[1].Description != "Normalized posture" {
+		t.Errorf("artifact[1].Description = %q, want %q", output.Artifacts[1].Description, "Normalized posture")
+	}
+	if len(output.Artifacts[1].Controls) != 1 || output.Artifacts[1].Controls[0] != "CC6.1" {
+		t.Errorf("artifact[1].Controls = %v, want [CC6.1]", output.Artifacts[1].Controls)
 	}
 }
 

@@ -477,6 +477,9 @@ func addCollectorArtifacts(b *builder.Builder, results []RunResult, collectedAt 
 			opts := builder.ArtifactOptions{
 				Schema:      artifact.Schema,
 				CollectedAt: collectedAt,
+				DisplayName: artifact.DisplayName,
+				Description: artifact.Description,
+				Controls:    artifact.Controls,
 			}
 			if artifact.File != "" {
 				if err := addStagedFileArtifact(b, r, artifact, artifactPath, opts); err != nil {

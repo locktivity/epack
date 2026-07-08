@@ -50,6 +50,12 @@ type CollectorArtifact struct {
 	Path string
 	// File references staged artifact bytes. Mutually exclusive with RawData.
 	File string
+	// DisplayName is a human-readable artifact name.
+	DisplayName string
+	// Description is a one-line artifact description.
+	Description string
+	// Controls lists the control IDs this artifact supports.
+	Controls []string
 }
 
 // PathOrDefault returns the artifact's path, or generates a default based on collector name and index.
@@ -64,10 +70,13 @@ func (a CollectorArtifact) PathOrDefault(collector string, index int) string {
 }
 
 type rawArtifactEntry struct {
-	Data   json.RawMessage `json:"data"`
-	Schema string          `json:"schema"`
-	Path   string          `json:"path"`
-	File   string          `json:"file"`
+	Data        json.RawMessage `json:"data"`
+	Schema      string          `json:"schema"`
+	Path        string          `json:"path"`
+	File        string          `json:"file"`
+	DisplayName string          `json:"display_name"`
+	Description string          `json:"description"`
+	Controls    []string        `json:"controls"`
 }
 
 // ParseCollectorOutput decodes collector stdout.
@@ -157,10 +166,13 @@ func parseArtifactsArray(raw json.RawMessage) ([]CollectorArtifact, error) {
 			return nil, fmt.Errorf("artifact %d: %w", i, err)
 		}
 		artifacts[i] = CollectorArtifact{
-			RawData: e.Data,
-			Schema:  e.Schema,
-			Path:    e.Path,
-			File:    file,
+			RawData:     e.Data,
+			Schema:      e.Schema,
+			Path:        e.Path,
+			File:        file,
+			DisplayName: e.DisplayName,
+			Description: e.Description,
+			Controls:    e.Controls,
 		}
 	}
 	return artifacts, nil

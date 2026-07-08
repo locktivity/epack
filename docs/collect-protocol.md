@@ -259,6 +259,9 @@ Each artifact in the array has:
 - `schema`: Schema identifier for typed artifacts (optional, e.g., `"evidencepack/cloud-posture@v1"`)
 - `path`: Output path in the pack (optional for `data` artifacts, defaults to `"artifacts/{collector}.json"`; required for `file` artifacts)
 - `file`: Path relative to `EPACK_COLLECTOR_OUTPUT_DIR` whose raw bytes become the artifact content (mutually exclusive with `data`; see File Artifacts)
+- `display_name`: Human-readable name shown by `epack inspect` and `epack list` (optional)
+- `description`: One-line description of the artifact (optional)
+- `controls`: Array of control IDs this artifact supports (optional)
 
 **Multi-artifact example:**
 
@@ -333,7 +336,8 @@ if err != nil {
 }
 
 return ctx.Emit([]componentsdk.CollectedArtifact{
-    {File: name, Path: "artifacts/documents/policy.pdf"},
+    componentsdk.FileArtifact("artifacts/documents/policy.pdf", name,
+        componentsdk.ArtifactMeta{DisplayName: "Security policy"}),
 })
 ```
 
@@ -667,9 +671,23 @@ SDK methods:
 - `ctx.Name()` - Get collector name
 
 `CollectedArtifact` fields:
-- `Data` (required) - The evidence data (any JSON-serializable value)
+- `Data` (required unless `File` is set) - The evidence data (any JSON-serializable value)
+- `File` (optional) - Staged file path whose raw bytes become the artifact (mutually exclusive with `Data`; see File Artifacts)
 - `Schema` (optional) - Schema identifier for typed artifacts (e.g., `"evidencepack/cloud-posture@v1"`)
 - `Path` (optional) - Output path in the pack (defaults to `"artifacts/{collector}.json"`)
+- `DisplayName` (optional) - Human-readable name shown by `epack inspect` and `epack list`
+- `Description` (optional) - One-line description of the artifact
+- `Controls` (optional) - Control IDs this artifact supports
+
+Build artifacts with the `JSONArtifact` and `FileArtifact` constructors, which set exactly one of `Data`/`File` and apply optional `ArtifactMeta`:
+
+```go
+componentsdk.JSONArtifact("artifacts/posture.json", data,
+    componentsdk.ArtifactMeta{Schema: "evidencepack/cloud-posture@v1"})
+
+componentsdk.FileArtifact("artifacts/documents/policy.pdf", stagedName,
+    componentsdk.ArtifactMeta{DisplayName: "Security policy"})
+```
 
 ### Manual Implementation
 
@@ -690,9 +708,13 @@ type Output struct {
 }
 
 type Artifact struct {
-    Data   any    `json:"data"`
-    Schema string `json:"schema,omitempty"`
-    Path   string `json:"path,omitempty"`
+    Data        any      `json:"data,omitempty"`
+    Schema      string   `json:"schema,omitempty"`
+    Path        string   `json:"path,omitempty"`
+    File        string   `json:"file,omitempty"`
+    DisplayName string   `json:"display_name,omitempty"`
+    Description string   `json:"description,omitempty"`
+    Controls    []string `json:"controls,omitempty"`
 }
 
 type Evidence struct {

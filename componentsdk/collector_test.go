@@ -111,6 +111,45 @@ func TestLevel_IntegratesWithLoadedJSONConfig(t *testing.T) {
 	}
 }
 
+func TestCollectorArtifactEntry_CarriesDisplayFields(t *testing.T) {
+	c := &collectorContext{}
+
+	entry, err := c.collectorArtifactEntry(CollectedArtifact{
+		Data:        map[string]any{"k": "v"},
+		Path:        "artifacts/doc.json",
+		Schema:      "evidencepack/soc2-report@v1",
+		DisplayName: "Acme SOC 2 2025",
+		Description: "SOC 2 Type II report",
+		Controls:    []string{"CC6.1"},
+	})
+	if err != nil {
+		t.Fatalf("collectorArtifactEntry: %v", err)
+	}
+	if entry["display_name"] != "Acme SOC 2 2025" {
+		t.Errorf("display_name = %v, want %q", entry["display_name"], "Acme SOC 2 2025")
+	}
+	if entry["description"] != "SOC 2 Type II report" {
+		t.Errorf("description = %v, want %q", entry["description"], "SOC 2 Type II report")
+	}
+	controls, ok := entry["controls"].([]string)
+	if !ok || len(controls) != 1 || controls[0] != "CC6.1" {
+		t.Errorf("controls = %v, want [CC6.1]", entry["controls"])
+	}
+
+	bare, err := c.collectorArtifactEntry(CollectedArtifact{
+		Data: map[string]any{"k": "v"},
+		Path: "artifacts/bare.json",
+	})
+	if err != nil {
+		t.Fatalf("collectorArtifactEntry (bare): %v", err)
+	}
+	for _, key := range []string{"display_name", "description", "controls"} {
+		if _, present := bare[key]; present {
+			t.Errorf("bare artifact should omit %q", key)
+		}
+	}
+}
+
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	orig := os.Stderr
