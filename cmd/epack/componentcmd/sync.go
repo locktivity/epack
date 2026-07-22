@@ -16,6 +16,7 @@ import (
 var (
 	syncConfigPath         string
 	syncFrozen             bool
+	syncLocked             bool
 	syncInsecureSkipVerify bool
 )
 
@@ -35,11 +36,15 @@ Installed binaries are placed in:
 
 Modes:
   Default: Install missing binaries, verify existing ones
-  --frozen: CI mode - fail on any mismatch, missing platform, or drift
+  --locked: Clean-machine CI install - install exactly the locked versions,
+            fail on any drift, never rewrite the lock
+  --frozen: Verify-only - fail on any mismatch, missing platform, or drift;
+            never downloads, so it always fails on a fresh machine
 
 Examples:
   epack sync             # Install/verify collectors and tools
-  epack sync --frozen    # CI mode: strict verification
+  epack sync --locked    # CI install: exact locked versions, fail on drift
+  epack sync --frozen    # CI verify: strict verification, no downloads
 
 See also:
   epack install   Lock if needed and download binaries (recommended)
@@ -51,6 +56,8 @@ See also:
 		"path to epack config file")
 	cmd.Flags().BoolVar(&syncFrozen, "frozen", false,
 		"fail on any mismatch or missing platform (CI mode)")
+	cmd.Flags().BoolVar(&syncLocked, "locked", false,
+		"install exactly the locked versions and fail on any drift (clean-machine CI install)")
 	cmd.Flags().BoolVar(&syncInsecureSkipVerify, "insecure-skip-verify", false,
 		"skip signature and digest verification (NOT for CI use)")
 
@@ -85,6 +92,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	opts := sync.SyncOpts{
 		Secure: sync.SyncSecureOptions{
 			Frozen: syncFrozen,
+			Locked: syncLocked,
 		},
 		Unsafe: sync.SyncUnsafeOverrides{
 			SkipVerify: syncInsecureSkipVerify,
@@ -93,6 +101,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	if syncFrozen {
 		out.Print("Syncing dependencies (frozen mode)...\n")
+	} else if syncLocked {
+		out.Print("Syncing dependencies (locked mode)...\n")
 	} else {
 		out.Print("Syncing dependencies...\n")
 	}
@@ -129,6 +139,18 @@ func validateSyncFlags() error {
 		return &exitError{
 			Exit:    exitcode.General,
 			Message: "cannot combine --frozen with --insecure-skip-verify",
+		}
+	}
+	if syncLocked && syncInsecureSkipVerify {
+		return &exitError{
+			Exit:    exitcode.General,
+			Message: "cannot combine --locked with --insecure-skip-verify",
+		}
+	}
+	if syncLocked && syncFrozen {
+		return &exitError{
+			Exit:    exitcode.General,
+			Message: "cannot combine --locked with --frozen; --locked installs, --frozen only verifies",
 		}
 	}
 	if err := securitypolicy.EnforceStrictProduction("component_sync_cli", syncInsecureSkipVerify); err != nil {

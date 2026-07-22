@@ -87,6 +87,7 @@ func (r *Runner) testRemoteProtocol(ctx context.Context) {
 	features, _ := r.caps["features"].(map[string]interface{})
 	hasPrepareFinalize, _ := features["prepare_finalize"].(bool)
 	hasPull, _ := features["pull"].(bool)
+	hasLockReport, _ := features["lock_report"].(bool)
 
 	// Test basic protocol: send a request, get a response
 	r.testRemoteBasicProtocol(ctx)
@@ -116,6 +117,12 @@ func (r *Runner) testRemoteProtocol(ctx context.Context) {
 		r.skip("REM-054", "pull not supported")
 		r.skip("REM-060", "pull not supported")
 		r.skip("REM-061", "pull not supported")
+	}
+
+	if hasLockReport {
+		r.testRemoteLockReport(ctx)
+	} else {
+		r.skip("REM-090", "lock_report not supported")
 	}
 
 	// Test error handling
@@ -429,6 +436,39 @@ func (r *Runner) testRemotePullFinalize(ctx context.Context) {
 	} else {
 		r.fail("REM-061", "missing confirmed: true")
 	}
+}
+
+func (r *Runner) testRemoteLockReport(ctx context.Context) {
+	request := map[string]interface{}{
+		"type":             "lock.report",
+		"protocol_version": 1,
+		"request_id":       "test-lock-001",
+		"remote":           "test",
+		"target": map[string]interface{}{
+			"workspace":   "test-workspace",
+			"environment": "test",
+		},
+		"lock_provenance": map[string]interface{}{
+			"lockfile":        "schema_version: 1\n",
+			"lockfile_sha256": "e4e62a9c9c0a8f4b3f2c0f7a5c3b1e2d",
+			"trigger_kind":    "bootstrap",
+			"outcome":         "success",
+			"summary": map[string]interface{}{
+				"schema_version": 1,
+			},
+			"runtime_context": map[string]interface{}{
+				"pipeline_id": "test-pipeline",
+			},
+		},
+	}
+	requestJSON, _ := json.Marshal(request)
+
+	result := r.exec(ctx, []string{"lock.report"}, requestJSON, nil)
+	if result.ExitCode == 0 && isValidJSON(result.Stdout) {
+		r.pass("REM-090")
+		return
+	}
+	r.fail("REM-090", "lock.report failed")
 }
 
 func (r *Runner) testRemoteErrorHandling(ctx context.Context) {

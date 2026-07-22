@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/remote"
 )
 
@@ -345,5 +346,38 @@ func mustWriteFile(t *testing.T, p, content string) {
 	}
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile(%q): %v", p, err)
+	}
+}
+
+func TestBuildReleaseInfo_AttachesLockProvenance(t *testing.T) {
+	projectRoot := t.TempDir()
+	mustWriteFile(t, filepath.Join(projectRoot, "epack.lock.yaml"),
+		"schema_version: 1\ncollectors:\n  github:\n    kind: source\n    source: github.com/locktivity/epack-collector-github\n    version: v0.2.9\n")
+
+	info, err := buildReleaseInfo(projectRoot, &config.RemoteConfig{}, Options{})
+	if err != nil {
+		t.Fatalf("buildReleaseInfo() error: %v", err)
+	}
+	if info.LockProvenance == nil {
+		t.Fatal("LockProvenance = nil, want provenance when lockfile exists")
+	}
+	if info.LockProvenance.TriggerKind != "frozen_check" || info.LockProvenance.Outcome != "success" {
+		t.Fatalf("provenance trigger/outcome = %q/%q", info.LockProvenance.TriggerKind, info.LockProvenance.Outcome)
+	}
+	if info.LockProvenance.LockfileSHA256 == "" || info.LockProvenance.Lockfile == "" {
+		t.Fatal("provenance missing raw lockfile or hash")
+	}
+	if len(info.LockProvenance.Summary.Collectors) != 1 || info.LockProvenance.Summary.Collectors[0].Version != "v0.2.9" {
+		t.Fatalf("provenance summary = %+v", info.LockProvenance.Summary.Collectors)
+	}
+}
+
+func TestBuildReleaseInfo_NoLockfileMeansNoProvenance(t *testing.T) {
+	info, err := buildReleaseInfo(t.TempDir(), &config.RemoteConfig{}, Options{})
+	if err != nil {
+		t.Fatalf("buildReleaseInfo() error: %v", err)
+	}
+	if info.LockProvenance != nil {
+		t.Fatalf("LockProvenance = %+v, want nil without a lockfile", info.LockProvenance)
 	}
 }

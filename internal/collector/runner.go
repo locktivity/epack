@@ -718,12 +718,12 @@ func (r *Runner) runOne(ctx context.Context, jobCfg *config.JobConfig, run singl
 
 func validateCollectorDigestPolicy(name string, dinfo digestInfo, opts RunOptions) error {
 	if dinfo.IsSourceCollector && dinfo.MissingDigest && !opts.Unsafe.AllowUnverifiedSourceCollectors {
-		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		return errors.WithHint(errors.LockMissingPinnedArtifact, exitcode.MissingBinary,
 			fmt.Sprintf("collector %q missing digest in lockfile (verification required for source collectors)", name),
 			"Run 'epack collector lock' to compute and pin digests", nil)
 	}
 	if opts.Secure.Frozen && dinfo.NeedsVerification && dinfo.Digest == "" {
-		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		return errors.WithHint(errors.LockMissingPinnedArtifact, exitcode.MissingBinary,
 			fmt.Sprintf("collector %q missing digest in lockfile (required in --frozen mode)", name),
 			"Run 'epack collector lock' to compute and pin digests", nil)
 	}
@@ -761,12 +761,12 @@ func resolveCollectorExecPath(name, binaryPath string, cfg config.CollectorConfi
 		return execPath, cleanup, nil
 	}
 	if opts.Secure.Frozen {
-		return "", nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		return "", nil, errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 			fmt.Sprintf("collector %q not pinned in lockfile (required in --frozen mode)", name),
 			"Run 'epack collector lock' to pin all collectors", nil)
 	}
 	if cfg.Binary != "" && !opts.Unsafe.AllowUnpinned {
-		return "", nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		return "", nil, errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 			fmt.Sprintf("external collector %q is not pinned in lockfile", name),
 			"Run 'epack collector lock' to pin external collectors, or use --insecure-allow-unpinned", nil)
 	}
@@ -913,7 +913,7 @@ func (r *Runner) resolveBinaryPath(name string, cfg config.CollectorConfig, lf *
 	// Source-based collector - resolve from lockfile
 	locked, ok := lf.GetCollector(name)
 	if !ok {
-		return "", errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		return "", errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 			fmt.Sprintf("collector %q not found in lockfile", name),
 			"Run 'epack collector lock && epack collector sync' first", nil)
 	}
@@ -997,26 +997,29 @@ func validateFrozenConfigCollector(name string, c config.CollectorConfig, lf *lo
 	locked, ok := lf.GetCollector(name)
 	if c.Source != "" {
 		if !ok {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			return errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 				fmt.Sprintf("config declares collector %q not found in lockfile", name),
 				"Run 'epack collector lock' to update the lockfile", nil)
 		}
 		if locked.Kind == "external" {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			return errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 				fmt.Sprintf("config declares %q as source-based but lockfile has it as external", name),
 				"Run 'epack collector lock' to update the lockfile", nil)
+		}
+		if err := sync.ValidateVersionSatisfaction("collector", name, c.Source, locked.Version, "epack collector lock"); err != nil {
+			return err
 		}
 		return validateFrozenPlatformDigest(name, platform, locked.Platforms, false)
 	}
 
 	if c.Binary != "" {
 		if !ok {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			return errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 				fmt.Sprintf("external collector %q not found in lockfile (required in --frozen mode)", name),
 				"Run 'epack collector lock' to pin external collectors", nil)
 		}
 		if locked.Kind != "external" {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			return errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 				fmt.Sprintf("config declares %q as external binary but lockfile has it as source-based", name),
 				"Run 'epack collector lock' to update the lockfile", nil)
 		}
@@ -1029,21 +1032,21 @@ func validateFrozenPlatformDigest(name, platform string, platforms map[string]co
 	platformEntry, hasPlatform := platforms[platform]
 	if !hasPlatform {
 		if external {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			return errors.WithHint(errors.LockMissingPinnedArtifact, exitcode.MissingBinary,
 				fmt.Sprintf("external collector %q missing platform %s in lockfile (required in --frozen mode)", name, platform),
 				fmt.Sprintf("Run 'epack collector lock --platform %s' to pin external collectors", platform), nil)
 		}
-		return errors.WithHint(errors.BinaryNotFound, exitcode.MissingBinary,
+		return errors.WithHint(errors.LockMissingPinnedArtifact, exitcode.MissingBinary,
 			fmt.Sprintf("collector %q missing platform %s in lockfile", name, platform),
 			fmt.Sprintf("Run 'epack collector lock --platform %s'", platform), nil)
 	}
 	if platformEntry.Digest == "" {
 		if external {
-			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			return errors.WithHint(errors.LockMissingPinnedArtifact, exitcode.MissingBinary,
 				fmt.Sprintf("external collector %q missing digest for platform %s (required in --frozen mode)", name, platform),
 				fmt.Sprintf("Run 'epack collector lock --platform %s' to compute digest", platform), nil)
 		}
-		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		return errors.WithHint(errors.LockMissingPinnedArtifact, exitcode.MissingBinary,
 			fmt.Sprintf("collector %q missing digest for platform %s in lockfile", name, platform),
 			fmt.Sprintf("Run 'epack collector lock --platform %s' to compute digest", platform), nil)
 	}
@@ -1056,12 +1059,12 @@ func validateFrozenLockfileCollector(name string, locked lockfile.LockedCollecto
 	}
 	cfgCollector, ok := cfgCollectors[name]
 	if !ok {
-		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		return errors.WithHint(errors.LockStale, exitcode.LockInvalid,
 			fmt.Sprintf("lockfile has collector %q not found in config", name),
 			"Remove stale entries or add collector to config", nil)
 	}
 	if cfgCollector.Source == "" {
-		return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+		return errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 			fmt.Sprintf("lockfile has %q as source-based but config declares it as external", name),
 			"Run 'epack collector lock' to update the lockfile", nil)
 	}

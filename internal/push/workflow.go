@@ -17,6 +17,8 @@ import (
 
 	"github.com/locktivity/epack/internal/buildcontext"
 	"github.com/locktivity/epack/internal/component/config"
+	"github.com/locktivity/epack/internal/component/lockfile"
+	"github.com/locktivity/epack/internal/lockprovenance"
 	"github.com/locktivity/epack/internal/netpolicy"
 	"github.com/locktivity/epack/internal/netpolicy/adapterurl"
 	"github.com/locktivity/epack/internal/packpath"
@@ -164,7 +166,10 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("adapter does not support prepare/finalize upload protocol")
 	}
 	target := buildPushTarget(remoteCfg, opts, verified.stream)
-	releaseInfo := buildReleaseInfo(remoteCfg, opts)
+	releaseInfo, err := buildReleaseInfo(projectRoot, remoteCfg, opts)
+	if err != nil {
+		return nil, err
+	}
 	prepResp, err := runPushPrepare(ctx, exec, opts.Remote, target, verified, releaseInfo, step)
 	if err != nil {
 		return nil, err
@@ -172,7 +177,7 @@ func Push(ctx context.Context, opts Options) (*Result, error) {
 	if err := maybeRunPushUpload(ctx, verified.Path, prepResp.Upload, remoteCfg.Transport, opts.OnUploadProgress, step); err != nil {
 		return nil, err
 	}
-	finalResp, err := runPushFinalize(ctx, exec, opts.Remote, target, verified, prepResp.FinalizeToken, step)
+	finalResp, err := runPushFinalize(ctx, exec, opts.Remote, target, verified, releaseInfo, prepResp.FinalizeToken, step)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +362,7 @@ func buildPushTarget(remoteCfg *config.RemoteConfig, opts Options, manifestStrea
 	return target
 }
 
-func buildReleaseInfo(remoteCfg *config.RemoteConfig, opts Options) remote.ReleaseInfo {
+func buildReleaseInfo(projectRoot string, remoteCfg *config.RemoteConfig, opts Options) (remote.ReleaseInfo, error) {
 	labels := append([]string{}, remoteCfg.Release.Labels...)
 	labels = append(labels, opts.Labels...)
 	releaseInfo := remote.ReleaseInfo{
@@ -370,7 +375,30 @@ func buildReleaseInfo(remoteCfg *config.RemoteConfig, opts Options) remote.Relea
 	if remoteCfg.Release.Source != nil {
 		releaseInfo.BuildContext = buildBuildContext(remoteCfg.Release.Source)
 	}
-	return releaseInfo
+	provenance, err := buildPushLockProvenance(projectRoot)
+	if err != nil {
+		return remote.ReleaseInfo{}, err
+	}
+	releaseInfo.LockProvenance = provenance
+	return releaseInfo, nil
+}
+
+func buildPushLockProvenance(projectRoot string) (*lockprovenance.Provenance, error) {
+	if _, err := os.Stat(filepath.Join(projectRoot, lockfile.FileName)); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("checking %s: %w", lockfile.FileName, err)
+	}
+	provenance, err := lockprovenance.Build(lockprovenance.Options{
+		ProjectRoot: projectRoot,
+		TriggerKind: lockprovenance.TriggerFrozenCheck,
+		Outcome:     lockprovenance.OutcomeSuccess,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building lock provenance: %w", err)
+	}
+	return provenance, nil
 }
 
 func runPushPrepare(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, pack verifiedPack, releaseInfo remote.ReleaseInfo, step StepCallback) (*remote.PrepareResponse, error) {
@@ -401,13 +429,14 @@ func maybeRunPushUpload(ctx context.Context, absPackPath string, upload remote.U
 	return nil
 }
 
-func runPushFinalize(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, pack verifiedPack, finalizeToken string, step StepCallback) (*remote.FinalizeResponse, error) {
+func runPushFinalize(ctx context.Context, exec *remote.Executor, remoteName string, target remote.TargetConfig, pack verifiedPack, releaseInfo remote.ReleaseInfo, finalizeToken string, step StepCallback) (*remote.FinalizeResponse, error) {
 	step("Finalizing release", true)
 	defer step("Finalizing release", false)
 	finalResp, err := exec.Finalize(ctx, &remote.FinalizeRequest{
 		Remote:        remoteName,
 		Target:        target,
 		Pack:          pack.finalizePackInfo(),
+		Release:       releaseInfo,
 		FinalizeToken: finalizeToken,
 	})
 	if err != nil {

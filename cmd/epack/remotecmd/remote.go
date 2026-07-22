@@ -29,6 +29,7 @@ Examples:
 
 	// Add subcommands
 	cmd.AddCommand(newListCommand())
+	cmd.AddCommand(newReportLockCommand())
 	cmd.AddCommand(newWhoamiCommand())
 
 	return cmd

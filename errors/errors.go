@@ -59,9 +59,12 @@ const (
 	NetworkError Code = "network_error"
 
 	// Collector errors
-	LockfileInvalid Code = "lockfile_invalid"
-	BinaryNotFound  Code = "binary_not_found"
-	InsecureInstall Code = "insecure_install"
+	LockfileInvalid           Code = "lockfile_invalid"
+	LockConfigMismatch        Code = "lock_config_mismatch"
+	LockStale                 Code = "lock_stale"
+	LockMissingPinnedArtifact Code = "lock_missing_pinned_artifact"
+	BinaryNotFound            Code = "binary_not_found"
+	InsecureInstall           Code = "insecure_install"
 
 	// Remote adapter errors
 	RemoteNotFound    Code = "remote_not_found"
@@ -139,8 +142,10 @@ func (e *Error) ExitCode() int {
 // codeToExit maps error codes to CLI exit codes.
 func codeToExit(code Code) int {
 	switch code {
-	case LockfileInvalid:
+	case LockfileInvalid, LockConfigMismatch, LockStale:
 		return exitcode.LockInvalid
+	case LockMissingPinnedArtifact:
+		return exitcode.MissingBinary
 	case DigestMismatch, PackDigestMismatch, SizeMismatch:
 		return exitcode.DigestMismatch
 	case SignatureInvalid, IdentityMismatch:
@@ -187,16 +192,19 @@ func WithDocs(code Code, exit int, msg, hint string, cause error) error {
 // This is used to determine whether to include a doc link.
 var codeHasDocs = map[Code]bool{
 	// Complex errors that benefit from documentation
-	SignatureInvalid:       true,
-	IdentityMismatch:       true,
-	DigestMismatch:         true,
-	PackDigestMismatch:     true,
-	LockfileInvalid:        true,
-	InsecureInstall:        true,
-	ProtocolMismatch:       true,
-	AuthRequired:           true,
-	UnsupportedSpecVersion: true,
-	ZipBomb:                true,
+	SignatureInvalid:          true,
+	IdentityMismatch:          true,
+	DigestMismatch:            true,
+	PackDigestMismatch:        true,
+	LockfileInvalid:           true,
+	LockConfigMismatch:        true,
+	LockStale:                 true,
+	LockMissingPinnedArtifact: true,
+	InsecureInstall:           true,
+	ProtocolMismatch:          true,
+	AuthRequired:              true,
+	UnsupportedSpecVersion:    true,
+	ZipBomb:                   true,
 }
 
 // HasDocs returns true if the error code has documentation available.

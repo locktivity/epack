@@ -2,6 +2,8 @@ package exitmap
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/locktivity/epack/errors"
@@ -149,5 +151,46 @@ func TestToExitResult(t *testing.T) {
 	}
 	if result.Message != "connection failed" {
 		t.Errorf("ToExitResult msg = %q, want %q", result.Message, "connection failed")
+	}
+}
+
+func TestWriteErrorFile_TypedError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "error.txt")
+	err := errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
+		"locked version v0.2.3 does not satisfy configured constraint", "Run 'epack lock'", nil)
+
+	if werr := WriteErrorFile(path, err); werr != nil {
+		t.Fatalf("WriteErrorFile() = %v", werr)
+	}
+
+	data, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("reading error file: %v", rerr)
+	}
+	got := string(data)
+	want := fmt.Sprintf("code=lock_config_mismatch\nexit=%d\nsummary=locked version v0.2.3 does not satisfy configured constraint\n", exitcode.LockInvalid)
+	if got != want {
+		t.Fatalf("error file = %q, want %q", got, want)
+	}
+}
+
+func TestWriteErrorFile_PlainErrorAppends(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "error.txt")
+
+	if werr := WriteErrorFile(path, fmt.Errorf("first")); werr != nil {
+		t.Fatalf("WriteErrorFile() = %v", werr)
+	}
+	if werr := WriteErrorFile(path, fmt.Errorf("second\nwith detail")); werr != nil {
+		t.Fatalf("WriteErrorFile() = %v", werr)
+	}
+
+	data, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("reading error file: %v", rerr)
+	}
+	got := string(data)
+	want := "code=error\nexit=1\nsummary=first\ncode=error\nexit=1\nsummary=second\n"
+	if got != want {
+		t.Fatalf("error file = %q, want %q", got, want)
 	}
 }

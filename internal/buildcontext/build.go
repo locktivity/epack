@@ -10,8 +10,12 @@ type Context struct {
 	RunnerType string
 	PipelineID string
 	GitSHA     string
-	CIRunURL   string
-	GitHub     *GitHubContext
+	// HeadSHA is the branch head commit. On pull_request events GITHUB_SHA is
+	// the ephemeral merge commit, so the workflow passes the real head
+	// explicitly via EPACK_HEAD_SHA.
+	HeadSHA  string
+	CIRunURL string
+	GitHub   *GitHubContext
 }
 
 // GitHubContext contains GitHub Actions-specific build metadata.
@@ -37,6 +41,7 @@ func Build(getenv func(string) string) *Context {
 	}
 	ctx.PipelineID = trimmed(getenv("EPACK_PIPELINE_ID"))
 	ctx.GitSHA = trimmed(getenv("GITHUB_SHA"))
+	ctx.HeadSHA = trimmed(getenv("EPACK_HEAD_SHA"))
 	ctx.CIRunURL = detectGitHubRunURL(getenv)
 
 	github := &GitHubContext{
@@ -68,6 +73,7 @@ func (c *Context) ToMap() map[string]any {
 	addAnyString(ctx, "runner_type", c.RunnerType)
 	addAnyString(ctx, "pipeline_id", c.PipelineID)
 	addAnyString(ctx, "git_sha", c.GitSHA)
+	addAnyString(ctx, "head_sha", c.HeadSHA)
 	addAnyString(ctx, "ci_run_url", c.CIRunURL)
 	if github := c.GitHub.ToMap(); len(github) > 0 {
 		ctx["github"] = github
@@ -87,6 +93,9 @@ func (c *Context) ReleaseFields() map[string]string {
 	if c.GitSHA != "" {
 		release["git_sha"] = c.GitSHA
 	}
+	if c.HeadSHA != "" {
+		release["head_sha"] = c.HeadSHA
+	}
 	if c.CIRunURL != "" {
 		release["ci_run_url"] = c.CIRunURL
 	}
@@ -103,7 +112,7 @@ func (c *Context) ReleaseFields() map[string]string {
 }
 
 func (c *Context) isZero() bool {
-	return c.RunnerType == "" && c.PipelineID == "" && c.GitSHA == "" && c.CIRunURL == "" && (c.GitHub == nil || c.GitHub.isZero())
+	return c.RunnerType == "" && c.PipelineID == "" && c.GitSHA == "" && c.HeadSHA == "" && c.CIRunURL == "" && (c.GitHub == nil || c.GitHub.isZero())
 }
 
 // ToMap converts the GitHub-specific context to the transport-friendly map shape.

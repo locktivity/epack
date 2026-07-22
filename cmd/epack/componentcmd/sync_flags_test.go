@@ -32,9 +32,11 @@ func (s *syncAuditSink) Snapshot() []securityaudit.Event {
 
 func TestValidateSyncFlags(t *testing.T) {
 	origFrozen := syncFrozen
+	origLocked := syncLocked
 	origInsecure := syncInsecureSkipVerify
 	t.Cleanup(func() {
 		syncFrozen = origFrozen
+		syncLocked = origLocked
 		syncInsecureSkipVerify = origInsecure
 	})
 
@@ -45,7 +47,23 @@ func TestValidateSyncFlags(t *testing.T) {
 	}
 
 	syncFrozen = false
+	syncLocked = true
+	if err := validateSyncFlags(); err == nil {
+		t.Fatal("expected locked+insecure combination error")
+	}
+
 	syncInsecureSkipVerify = false
+	syncFrozen = true
+	if err := validateSyncFlags(); err == nil {
+		t.Fatal("expected locked+frozen combination error")
+	}
+
+	syncFrozen = false
+	if err := validateSyncFlags(); err != nil {
+		t.Fatalf("expected locked alone to pass, got %v", err)
+	}
+
+	syncLocked = false
 	if err := validateSyncFlags(); err != nil {
 		t.Fatalf("expected secure flags to pass, got %v", err)
 	}

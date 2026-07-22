@@ -142,10 +142,10 @@ func (s *Syncer) syncLocalProfile(key, filePath, kind string, index int, lf *loc
 		lockedDigest, hasLocked = lf.GetOverlayDigest(key)
 	}
 
-	// In frozen mode, require lockfile entry and matching digest
-	if opts.Secure.Frozen {
+	// In strict mode, require lockfile entry and matching digest
+	if opts.Secure.strict() {
 		if !hasLocked {
-			return nil, errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+			return nil, errors.WithHint(errors.LockConfigMismatch, exitcode.LockInvalid,
 				fmt.Sprintf("local %s %q not in lockfile", kind, key),
 				"Run 'epack lock' to add the profile", nil)
 		}

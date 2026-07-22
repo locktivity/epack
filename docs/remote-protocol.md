@@ -161,6 +161,7 @@ Adapters declare their supported protocol version via `--capabilities`. Requests
 | `pull.prepare` | Get download URL and pack metadata |
 | `pull.finalize` | Confirm pack receipt |
 | `runs.sync` | Sync run ledgers to remote |
+| `lock.report` | Report lockfile provenance without pushing a pack |
 | `auth.login` | Authenticate with remote (interactive) |
 | `auth.whoami` | Query current identity |
 
@@ -188,6 +189,7 @@ The `--capabilities` command returns adapter metadata:
     "direct_upload": false,
     "pull": true,
     "runs_sync": true,
+    "lock_report": true,
     "auth_login": true,
     "whoami": true
   },
@@ -210,6 +212,7 @@ The `--capabilities` command returns adapter metadata:
 | `direct_upload` | Adapter handles upload itself (mutually exclusive with prepare_finalize) |
 | `pull` | Supports two-phase download (pull.prepare + pull.finalize) |
 | `runs_sync` | Supports run ledger syncing |
+| `lock_report` | Supports lockfile provenance reports through `lock.report` |
 | `auth_login` | Supports interactive authentication |
 | `whoami` | Supports identity query |
 
@@ -260,6 +263,40 @@ The push workflow consists of:
     "build_context": {
       "git_sha": "abc123def456",
       "ci_run_url": "https://github.com/..."
+    },
+    "lock_provenance": {
+      "lockfile": "schema_version: 1\ncollectors:\n  github:\n    ...",
+      "lockfile_sha256": "5b3a...",
+      "lockfile_path": "epack.lock.yaml",
+      "trigger_kind": "frozen_check",
+      "outcome": "success",
+      "reported_at": "2026-05-25T12:00:00Z",
+      "summary": {
+        "schema_version": 1,
+        "collectors": [
+          {
+            "name": "github",
+            "source": "github.com/acme/epack-collector-github",
+            "version": "v1.2.3",
+            "commit": "abc123",
+            "platforms": [
+              {
+                "name": "linux/amd64",
+                "digest": "sha256:..."
+              }
+            ]
+          }
+        ]
+      },
+      "runtime_context": {
+        "runner_type": "github_actions",
+        "pipeline_id": "01234567-89ab-cdef-0123-456789abcdef",
+        "github": {
+          "repository": "acme/evidence",
+          "ref": "refs/heads/main",
+          "run_id": "12345"
+        }
+      }
     }
   },
   "identity": {
@@ -309,9 +346,19 @@ The push workflow consists of:
     "file_digest": "sha256:789abc...",
     "size_bytes": 1048576
   },
+  "release": {
+    "lock_provenance": {
+      "lockfile_sha256": "5b3a...",
+      "lockfile_path": "epack.lock.yaml",
+      "trigger_kind": "frozen_check",
+      "outcome": "success"
+    }
+  },
   "finalize_token": "tok_xyz789"
 }
 ```
+
+Clients should send the same lock provenance envelope in `push.prepare` and `push.finalize`. That keeps adapters stateless and avoids forcing them to embed large raw lockfiles inside finalize tokens.
 
 ### push.finalize Response
 
@@ -482,6 +529,101 @@ The `failed_outputs` field (optional) lists output files that could not be uploa
 - File exceeds maximum size (50MB)
 - File path outside result directory
 - Upload or confirmation failure
+
+## Lock Reporting
+
+Adapters that advertise `features.lock_report: true` accept `lock.report`. This command lets CI report the current `epack.lock.yaml` before a pack exists, for example during setup bootstrap or a lock refresh pull request.
+
+The lock provenance envelope is the same shape used by `release.lock_provenance` in `push.prepare`.
+
+### lock.report Request
+
+```json
+{
+  "type": "lock.report",
+  "protocol_version": 1,
+  "request_id": "req_lock_123",
+  "remote": "locktivity",
+  "target": {
+    "workspace": "acme",
+    "environment": "prod"
+  },
+  "lock_provenance": {
+    "lockfile": "schema_version: 1\ncollectors:\n  github:\n    ...",
+    "lockfile_sha256": "5b3a...",
+    "lockfile_path": "epack.lock.yaml",
+    "trigger_kind": "bootstrap",
+    "outcome": "success",
+    "reported_at": "2026-05-25T12:00:00Z",
+    "summary": {
+      "schema_version": 1,
+      "collectors": []
+    },
+    "runtime_context": {
+      "pipeline_id": "01234567-89ab-cdef-0123-456789abcdef",
+      "head_sha": "def456abc789",
+      "github": {
+        "repository": "acme/evidence",
+        "ref": "refs/heads/locktivity/setup"
+      }
+    }
+  }
+}
+```
+
+`runtime_context.head_sha` names the branch head commit the lock was resolved at. On `pull_request` events `GITHUB_SHA` is the ephemeral merge commit, so the workflow passes the real head explicitly via the `EPACK_HEAD_SHA` environment variable. Remotes use it to order reports and discard stale ones.
+
+Failure reports omit the raw lockfile and include a stable failure code:
+
+```json
+{
+  "type": "lock.report",
+  "protocol_version": 1,
+  "request_id": "req_lock_124",
+  "remote": "locktivity",
+  "target": {
+    "workspace": "acme",
+    "environment": "prod"
+  },
+  "lock_provenance": {
+    "trigger_kind": "frozen_check",
+    "outcome": "failure",
+    "failure_code": "lock_config_mismatch",
+    "failure_message": "epack.yaml changed without a matching lock refresh",
+    "reported_at": "2026-05-25T12:00:00Z",
+    "runtime_context": {
+      "pipeline_id": "01234567-89ab-cdef-0123-456789abcdef"
+    }
+  }
+}
+```
+
+Allowed `trigger_kind` values are `bootstrap`, `refresh`, and `frozen_check`.
+Allowed `outcome` values are `success` and `failure`.
+
+Stable frozen failure codes include:
+
+| Code | Meaning |
+|------|---------|
+| `lock_config_mismatch` | `epack.yaml` and `epack.lock.yaml` no longer describe the same components, or a locked version no longer satisfies its configured range |
+| `lock_stale` | The lockfile contains source-based entries no longer present in config |
+| `lock_missing_pinned_artifact` | The lockfile is missing the current platform, a pinned binary, or a required digest |
+
+CI extracts these codes without scraping logs: when the `EPACK_ERROR_FILE` environment variable names a file, every failed epack command appends `code=`, `exit=`, and `summary=` lines to it. A workflow reads that file to pass `--failure-code` and `--failure-message` to `epack remote report-lock` and to render a job summary.
+
+### lock.report Response
+
+```json
+{
+  "ok": true,
+  "type": "lock.report.result",
+  "request_id": "req_lock_123",
+  "status": "accepted",
+  "outcome": "success",
+  "lockfile_sha256": "5b3a...",
+  "revision_id": "rev_123"
+}
+```
 
 ## Authentication
 
@@ -671,6 +813,9 @@ epack pull locktivity --dry-run
 
 # Pull in background (returns immediately)
 epack pull locktivity --detach
+
+# Report a resolved lockfile during setup bootstrap
+epack remote report-lock locktivity --reason bootstrap
 ```
 
 ## Example Adapter Implementation

@@ -10,12 +10,15 @@
 //   - pull.prepare: Get presigned download URL
 //   - pull.finalize: Confirm download completion
 //   - runs.sync: Sync run ledgers to remote
+//   - lock.report: Report lockfile provenance without pushing a pack
 //   - auth.login: Authenticate with remote (adapter-managed)
 //   - auth.whoami: Show current identity
 package remote
 
 import (
 	"time"
+
+	"github.com/locktivity/epack/internal/lockprovenance"
 )
 
 // ProtocolVersion is the current version of the Remote Adapter Protocol.
@@ -29,6 +32,7 @@ const (
 	CommandPullPrepare  = "pull.prepare"
 	CommandPullFinalize = "pull.finalize"
 	CommandRunsSync     = "runs.sync"
+	CommandLockReport   = "lock.report"
 	CommandAuthLogin    = "auth.login"
 	CommandAuthWhoami   = "auth.whoami"
 )
@@ -40,6 +44,7 @@ const (
 	TypePullPrepare  = "pull.prepare"
 	TypePullFinalize = "pull.finalize"
 	TypeRunsSync     = "runs.sync"
+	TypeLockReport   = "lock.report"
 	TypeAuthLogin    = "auth.login"
 	TypeAuthWhoami   = "auth.whoami"
 )
@@ -51,6 +56,7 @@ const (
 	TypePullPrepareResult  = "pull.prepare.result"
 	TypePullFinalizeResult = "pull.finalize.result"
 	TypeRunsSyncResult     = "runs.sync.result"
+	TypeLockReportResult   = "lock.report.result"
 	TypeAuthLoginResult    = "auth.login.result"
 	TypeAuthWhoamiResult   = "auth.whoami.result"
 	TypeError              = "error"
@@ -88,9 +94,10 @@ type PackInfo struct {
 
 // ReleaseInfo contains release metadata for push operations.
 type ReleaseInfo struct {
-	Labels       []string          `json:"labels,omitempty"`
-	Notes        string            `json:"notes,omitempty"`
-	BuildContext map[string]string `json:"build_context,omitempty"`
+	Labels         []string                   `json:"labels,omitempty"`
+	Notes          string                     `json:"notes,omitempty"`
+	BuildContext   map[string]string          `json:"build_context,omitempty"`
+	LockProvenance *lockprovenance.Provenance `json:"lock_provenance,omitempty"`
 }
 
 // AuthHints contains authentication hints for adapter requests.
@@ -201,6 +208,7 @@ type FinalizeRequest struct {
 	Remote          string       `json:"remote"`
 	Target          TargetConfig `json:"target"`
 	Pack            PackInfo     `json:"pack"`
+	Release         ReleaseInfo  `json:"release,omitempty"`
 	FinalizeToken   string       `json:"finalize_token"`
 }
 
@@ -212,6 +220,17 @@ type RunsSyncRequest struct {
 	Target          TargetConfig `json:"target"`
 	FileDigest      string       `json:"file_digest"` // SHA256 of .epack file (unique pack identifier)
 	Runs            []RunInfo    `json:"runs"`
+}
+
+// LockReportRequest is sent to report lockfile provenance without pushing a pack.
+type LockReportRequest struct {
+	Type            string                    `json:"type"` // "lock.report"
+	ProtocolVersion int                       `json:"protocol_version"`
+	RequestID       string                    `json:"request_id"`
+	Remote          string                    `json:"remote"`
+	Target          TargetConfig              `json:"target"`
+	LockProvenance  lockprovenance.Provenance `json:"lock_provenance"`
+	Identity        *AuthHints                `json:"identity,omitempty"`
 }
 
 // AuthLoginRequest initiates authentication with the remote.
@@ -298,6 +317,17 @@ type RunsSyncResponse struct {
 	Rejected      int            `json:"rejected"`
 	Items         []RunSyncItem  `json:"items"`
 	FailedOutputs []FailedOutput `json:"failed_outputs,omitempty"`
+}
+
+// LockReportResponse is returned from lock.report.
+type LockReportResponse struct {
+	OK             bool   `json:"ok"`
+	Type           string `json:"type"` // "lock.report.result"
+	RequestID      string `json:"request_id"`
+	Status         string `json:"status"`
+	Outcome        string `json:"outcome,omitempty"`
+	LockfileSHA256 string `json:"lockfile_sha256,omitempty"`
+	RevisionID     string `json:"revision_id,omitempty"`
 }
 
 // FailedOutput describes an output file that failed to upload or confirm.

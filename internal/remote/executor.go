@@ -288,6 +288,26 @@ func (e *Executor) SyncRuns(ctx context.Context, req *RunsSyncRequest) (*RunsSyn
 	return &resp, nil
 }
 
+// ReportLock reports lockfile provenance to the remote without pushing a pack.
+func (e *Executor) ReportLock(ctx context.Context, req *LockReportRequest) (*LockReportResponse, error) {
+	req.Type = TypeLockReport
+	req.ProtocolVersion = ProtocolVersion
+	if req.RequestID == "" {
+		req.RequestID = uuid.New().String()
+	}
+
+	var resp LockReportResponse
+	if err := e.execute(ctx, CommandLockReport, req, &resp); err != nil {
+		return nil, err
+	}
+
+	if !resp.OK {
+		return nil, fmt.Errorf("lock report failed: unexpected response")
+	}
+
+	return &resp, nil
+}
+
 // AuthLogin initiates interactive authentication.
 func (e *Executor) AuthLogin(ctx context.Context) (*AuthLoginResponse, error) {
 	req := &AuthLoginRequest{

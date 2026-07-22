@@ -40,6 +40,9 @@ type RemoteFeatures struct {
 	// RunsSync indicates support for runs.sync.
 	RunsSync bool `json:"runs_sync,omitempty"`
 
+	// LockReport indicates support for lock.report.
+	LockReport bool `json:"lock_report,omitempty"`
+
 	// AuthLogin indicates support for auth.login.
 	AuthLogin bool `json:"auth_login,omitempty"`
 
@@ -76,6 +79,11 @@ type RemoteHandler interface {
 	PullFinalize(req PullFinalizeRequest) (*PullFinalizeResponse, error)
 }
 
+// LockReportHandler can be implemented by remotes that support lock.report.
+type LockReportHandler interface {
+	LockReport(req LockReportRequest) (*LockReportResponse, error)
+}
+
 // Request types
 
 type PushPrepareRequest struct {
@@ -92,6 +100,7 @@ type PushFinalizeRequest struct {
 	Remote        string       `json:"remote"`
 	Target        RemoteTarget `json:"target"`
 	Pack          PackInfo     `json:"pack"`
+	Release       ReleaseInfo  `json:"release,omitempty"`
 	FinalizeToken string       `json:"finalize_token"`
 }
 
@@ -152,10 +161,40 @@ type PackInfo struct {
 }
 
 type ReleaseInfo struct {
-	Version      string            `json:"version,omitempty"`
-	Notes        string            `json:"notes,omitempty"`
-	Labels       []string          `json:"labels,omitempty"`
-	BuildContext map[string]string `json:"build_context,omitempty"`
+	Version        string            `json:"version,omitempty"`
+	Notes          string            `json:"notes,omitempty"`
+	Labels         []string          `json:"labels,omitempty"`
+	BuildContext   map[string]string `json:"build_context,omitempty"`
+	LockProvenance *LockProvenance   `json:"lock_provenance,omitempty"`
+}
+
+type LockReportRequest struct {
+	RequestID      string         `json:"request_id"`
+	Remote         string         `json:"remote"`
+	Target         RemoteTarget   `json:"target"`
+	LockProvenance LockProvenance `json:"lock_provenance"`
+	Identity       *AuthHints     `json:"identity,omitempty"`
+}
+
+type LockReportResponse struct {
+	Status         string `json:"status"`
+	Outcome        string `json:"outcome,omitempty"`
+	LockfileSHA256 string `json:"lockfile_sha256,omitempty"`
+	RevisionID     string `json:"revision_id,omitempty"`
+}
+
+type LockProvenance struct {
+	Lockfile       string         `json:"lockfile,omitempty"`
+	LockfileSHA256 string         `json:"lockfile_sha256,omitempty"`
+	LockfilePath   string         `json:"lockfile_path,omitempty"`
+	Summary        any            `json:"summary,omitempty"`
+	RuntimeContext map[string]any `json:"runtime_context,omitempty"`
+	TriggerKind    string         `json:"trigger_kind"`
+	Outcome        string         `json:"outcome"`
+	FailureCode    string         `json:"failure_code,omitempty"`
+	FailureMessage string         `json:"failure_message,omitempty"`
+	ReportedAt     string         `json:"reported_at,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 
 type AuthHints struct {
@@ -369,6 +408,15 @@ func processRemoteRequest(data []byte, spec RemoteSpec, handler RemoteHandler) m
 		return handleTypedRemoteRequest(data, base.RequestID, "pull.prepare request", "pull.prepare", handler.PullPrepare)
 	case "pull.finalize":
 		return handleTypedRemoteRequest(data, base.RequestID, "pull.finalize request", "pull.finalize", handler.PullFinalize)
+	case "lock.report":
+		lockHandler, ok := handler.(LockReportHandler)
+		if !ok {
+			return errorResponse(base.RequestID, RemoteError{
+				Code:    "unsupported_protocol",
+				Message: "lock.report is not supported by this remote",
+			})
+		}
+		return handleTypedRemoteRequest(data, base.RequestID, "lock.report request", "lock.report.result", lockHandler.LockReport)
 	default:
 		return errorResponse(base.RequestID, RemoteError{
 			Code:    "unsupported_protocol",

@@ -385,6 +385,14 @@ Remote adapters handle communication with registry backends.
 | REM-083 | SHOULD | Use OS keychain or secure storage for persistent credentials |
 | REM-084 | MUST NOT | Log or expose credentials |
 
+### 4.10 Lock Reporting
+
+| ID | Level | Requirement |
+|----|-------|-------------|
+| REM-090 | MUST | Support `lock.report` if `features.lock_report` is true |
+
+Adapters that advertise `lock_report` accept a lockfile provenance envelope without a pack push. See [remote-protocol.md](remote-protocol.md#lock-reporting) for the request and response shapes.
+
 ---
 
 ## 5. Utility Requirements
@@ -647,7 +655,7 @@ To achieve full conformance, components must pass all testable requirements. Ski
 
 | Level | Count | IDs |
 |-------|-------|-----|
-| MUST | 31 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, REM-001, REM-002, REM-003, REM-004, REM-010, REM-011, REM-013, REM-014, REM-015, REM-020, REM-021, REM-030, REM-031, REM-034, REM-040, REM-041, REM-050, REM-051, REM-052, REM-054, REM-060, REM-061, REM-070, REM-071, REM-072, REM-073, REM-080, REM-082, REM-084 |
+| MUST | 32 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, REM-001, REM-002, REM-003, REM-004, REM-010, REM-011, REM-013, REM-014, REM-015, REM-020, REM-021, REM-030, REM-031, REM-034, REM-040, REM-041, REM-050, REM-051, REM-052, REM-054, REM-060, REM-061, REM-070, REM-071, REM-072, REM-073, REM-080, REM-082, REM-084, REM-090 |
 | SHOULD | 11 | C-013, C-014, C-022, C-032, REM-005, REM-022, REM-023, REM-032, REM-033, REM-042, REM-053, REM-074, REM-081, REM-083 |
 | MAY | 5 | REM-012, REM-024, REM-025, REM-026, REM-075 |
 

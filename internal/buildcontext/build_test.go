@@ -19,6 +19,7 @@ func TestContextReleaseFieldsReturnsPushCompatibleSubset(t *testing.T) {
 		"GITHUB_ACTIONS":    "true",
 		"EPACK_PIPELINE_ID": "01234567-89ab-cdef-0123-456789abcdef",
 		"GITHUB_SHA":        "abc123",
+		"EPACK_HEAD_SHA":    "def456",
 		"GITHUB_RUN_URL":    "https://github.com/acme-corp/evidence/actions/runs/12345",
 	}))
 
@@ -31,6 +32,7 @@ func githubActionsEnv() map[string]string {
 		"GITHUB_ACTIONS":      "true",
 		"EPACK_PIPELINE_ID":   "01234567-89ab-cdef-0123-456789abcdef",
 		"GITHUB_SHA":          "abc123",
+		"EPACK_HEAD_SHA":      "def456",
 		"GITHUB_SERVER_URL":   "https://github.com",
 		"GITHUB_REPOSITORY":   "acme-corp/evidence",
 		"GITHUB_WORKFLOW_REF": "acme-corp/evidence/.github/workflows/epack.yaml@refs/heads/main",
@@ -54,6 +56,7 @@ func assertBuildContext(t *testing.T, ctx *Context) {
 	assertEqual(t, "RunnerType", ctx.RunnerType, "github_actions")
 	assertEqual(t, "PipelineID", ctx.PipelineID, "01234567-89ab-cdef-0123-456789abcdef")
 	assertEqual(t, "GitSHA", ctx.GitSHA, "abc123")
+	assertEqual(t, "HeadSHA", ctx.HeadSHA, "def456")
 	assertEqual(t, "CIRunURL", ctx.CIRunURL, "https://github.com/acme-corp/evidence/actions/runs/12345")
 }
 
@@ -83,12 +86,13 @@ func assertMappedContext(t *testing.T, mapped map[string]any) {
 
 func assertReleaseFields(t *testing.T, fields map[string]string) {
 	t.Helper()
-	if len(fields) != 4 {
-		t.Fatalf("len(fields) = %d, want 4", len(fields))
+	if len(fields) != 5 {
+		t.Fatalf("len(fields) = %d, want 5", len(fields))
 	}
 	assertEqual(t, "runner_type", fields["runner_type"], "github_actions")
 	assertEqual(t, "pipeline_id", fields["pipeline_id"], "01234567-89ab-cdef-0123-456789abcdef")
 	assertEqual(t, "git_sha", fields["git_sha"], "abc123")
+	assertEqual(t, "head_sha", fields["head_sha"], "def456")
 	assertEqual(t, "ci_run_url", fields["ci_run_url"], "https://github.com/acme-corp/evidence/actions/runs/12345")
 }
 

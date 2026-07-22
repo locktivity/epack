@@ -112,6 +112,7 @@ var Requirements = []Requirement{
 	{ID: "REM-080", Level: LevelMust, Description: "Handle authentication internally", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
 	{ID: "REM-082", Level: LevelMust, Description: "Accept identity token via identity field in requests", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
 	{ID: "REM-084", Level: LevelMust, Description: "Do not log or expose credentials", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
+	{ID: "REM-090", Level: LevelMust, Description: "Support lock.report if features.lock_report is true", Types: []componenttypes.ComponentKind{componenttypes.KindRemote}},
 
 	// Utility requirements
 	{ID: "UTIL-001", Level: LevelMust, Description: "Implement --version flag returning version string", Types: []componenttypes.ComponentKind{componenttypes.KindUtility}},

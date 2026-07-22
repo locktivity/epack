@@ -43,6 +43,9 @@ type CapabilityFeatures struct {
 	// RunsSync indicates support for run ledger syncing.
 	RunsSync bool `json:"runs_sync"`
 
+	// LockReport indicates support for lockfile provenance reports.
+	LockReport bool `json:"lock_report"`
+
 	// AuthLogin indicates support for interactive authentication.
 	AuthLogin bool `json:"auth_login"`
 
@@ -83,6 +86,11 @@ func (c *Capabilities) SupportsPrepareFinalize() bool {
 // SupportsRunsSync returns true if the adapter supports run syncing.
 func (c *Capabilities) SupportsRunsSync() bool {
 	return c.Features.RunsSync
+}
+
+// SupportsLockReport returns true if the adapter supports lockfile provenance reports.
+func (c *Capabilities) SupportsLockReport() bool {
+	return c.Features.LockReport
 }
 
 // SupportsPull returns true if the adapter supports the two-phase download protocol.

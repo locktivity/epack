@@ -24,6 +24,9 @@ func main() {
 		if msg != "" {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
 		}
+		if path := os.Getenv(exitmap.ErrorFileEnv); path != "" {
+			_ = exitmap.WriteErrorFile(path, err)
+		}
 		os.Exit(code)
 	}
 }
