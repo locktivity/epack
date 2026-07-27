@@ -224,10 +224,14 @@ func (l *Locker) lockSourceCollector(ctx context.Context, name string, cfg confi
 		},
 		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Collectors[name] = lockfile.LockedCollector{
-				Source:    sourceURI,
-				Version:   selectedTag,
-				Commit:    commit,
-				Signer:    signer,
+				Source:  sourceURI,
+				Version: selectedTag,
+				Commit:  commit,
+				Signer:  signer,
+				Verification: &componenttypes.Verification{
+					Status:     "verified",
+					VerifiedAt: timestamp.Now().String(),
+				},
 				LockedAt:  timestamp.Now().String(),
 				Platforms: platforms,
 			}
@@ -262,9 +266,10 @@ func (l *Locker) lockExternalCollector(ctx context.Context, name string, cfg con
 	platforms[platformKey] = componenttypes.LockedPlatform{Digest: digest}
 
 	lf.Collectors[name] = lockfile.LockedCollector{
-		Kind:      "external",
-		LockedAt:  timestamp.Now().String(),
-		Platforms: platforms,
+		Kind:         "external",
+		Verification: &componenttypes.Verification{Status: "skipped"},
+		LockedAt:     timestamp.Now().String(),
+		Platforms:    platforms,
 	}
 
 	return &LockResult{
@@ -327,10 +332,14 @@ func (l *Locker) lockSourceTool(ctx context.Context, name string, cfg config.Too
 		},
 		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Tools[name] = lockfile.LockedTool{
-				Source:    sourceURI,
-				Version:   selectedTag,
-				Commit:    commit,
-				Signer:    signer,
+				Source:  sourceURI,
+				Version: selectedTag,
+				Commit:  commit,
+				Signer:  signer,
+				Verification: &componenttypes.Verification{
+					Status:     "verified",
+					VerifiedAt: timestamp.Now().String(),
+				},
 				LockedAt:  timestamp.Now().String(),
 				Platforms: platforms,
 			}
@@ -365,9 +374,10 @@ func (l *Locker) lockExternalTool(ctx context.Context, name string, cfg config.T
 	platforms[platformKey] = componenttypes.LockedPlatform{Digest: digest}
 
 	lf.Tools[name] = lockfile.LockedTool{
-		Kind:      "external",
-		LockedAt:  timestamp.Now().String(),
-		Platforms: platforms,
+		Kind:         "external",
+		Verification: &componenttypes.Verification{Status: "skipped"},
+		LockedAt:     timestamp.Now().String(),
+		Platforms:    platforms,
 	}
 
 	return &LockResult{
@@ -394,10 +404,14 @@ func (l *Locker) lockSourceRemote(ctx context.Context, name string, cfg config.R
 		},
 		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Remotes[name] = lockfile.LockedRemote{
-				Source:    sourceURI,
-				Version:   selectedTag,
-				Commit:    commit,
-				Signer:    signer,
+				Source:  sourceURI,
+				Version: selectedTag,
+				Commit:  commit,
+				Signer:  signer,
+				Verification: &componenttypes.Verification{
+					Status:     "verified",
+					VerifiedAt: timestamp.Now().String(),
+				},
 				LockedAt:  timestamp.Now().String(),
 				Platforms: platforms,
 			}
@@ -655,9 +669,10 @@ func (l *Locker) lockExternalRemote(ctx context.Context, name string, cfg config
 	platforms[platformKey] = componenttypes.LockedPlatform{Digest: digest}
 
 	lf.Remotes[name] = lockfile.LockedRemote{
-		Kind:      "external",
-		LockedAt:  timestamp.Now().String(),
-		Platforms: platforms,
+		Kind:         "external",
+		Verification: &componenttypes.Verification{Status: "skipped"},
+		LockedAt:     timestamp.Now().String(),
+		Platforms:    platforms,
 	}
 
 	return &LockResult{
