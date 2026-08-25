@@ -97,6 +97,8 @@ jobs:
       upload-assets: false
 
   # Build epack-core (minimal version: no components) - SLSA Level 3
+  # Windows targets are core-only: the components build depends on
+  # internal/execsafe, which has no Windows implementation yet.
   build-epack-core:
     if: ${{ !inputs.container_only }}
     needs: [test, args]
@@ -114,6 +116,10 @@ jobs:
           - os: darwin
             arch: amd64
           - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+          - os: windows
             arch: arm64
     uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
     with:

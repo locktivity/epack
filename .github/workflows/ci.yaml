@@ -25,6 +25,26 @@ jobs:
       - name: Run tests (full)
         run: go test -race -v -tags components ./...
 
+  # Windows covers the core build only: the components build depends on
+  # internal/execsafe, which has no Windows implementation yet.
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests (core)
+        run: go test ./...
+
+      - name: Build (core)
+        run: go build -o epack.exe ./cmd/epack
+
+      - name: Verify binary runs
+        run: .\epack.exe version
+
   lint:
     runs-on: ubuntu-latest
     steps:
