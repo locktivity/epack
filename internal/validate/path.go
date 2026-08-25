@@ -38,7 +38,10 @@ func RelativePath(path string) error {
 	if path == "" {
 		return fmt.Errorf("empty path")
 	}
-	if filepath.IsAbs(path) {
+	// SECURITY: Also reject rooted paths that filepath.IsAbs misses on
+	// Windows (`/etc/passwd`, `\foo`, `C:foo`); they resolve outside the
+	// intended base on the current volume.
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) || filepath.VolumeName(path) != "" {
 		return fmt.Errorf("path %q is absolute", path)
 	}
 

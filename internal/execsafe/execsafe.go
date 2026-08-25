@@ -11,10 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 
 	"github.com/locktivity/epack/internal/digest"
-	"golang.org/x/sys/unix"
 )
 
 // AllowedEnvVars is the allowlist of environment variables passed to
@@ -131,17 +129,6 @@ func VerifiedBinaryFD(binaryPath, expectedDigest string) (execPath string, clean
 	return tmpPath, cleanup, nil
 }
 
-func openVerifiedSourceFile(binaryPath string) (*os.File, error) {
-	fd, err := unix.Open(binaryPath, unix.O_RDONLY|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		if err == unix.ELOOP {
-			return nil, fmt.Errorf("refusing to execute symlink: %s", binaryPath)
-		}
-		return nil, fmt.Errorf("opening binary: %w", err)
-	}
-	return os.NewFile(uintptr(fd), binaryPath), nil
-}
-
 func copyAndHashBinary(srcFile *os.File, tmpPath string) (*digest.Hasher, error) {
 	dstFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0500)
 	if err != nil {
@@ -203,28 +190,6 @@ func VerifyDigestFromFD(fd int, expectedDigest string) error {
 	}
 
 	return nil
-}
-
-// OpenBinaryNoFollow opens a binary with O_NOFOLLOW to prevent symlink attacks.
-// Returns the fd and an error.
-func OpenBinaryNoFollow(path string) (int, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		if err == unix.ELOOP {
-			return -1, fmt.Errorf("refusing to open symlink: %s", path)
-		}
-		return -1, err
-	}
-	return fd, nil
-}
-
-// FstatInode returns the inode of a file descriptor.
-func FstatInode(fd int) (uint64, error) {
-	var stat syscall.Stat_t
-	if err := syscall.Fstat(fd, &stat); err != nil {
-		return 0, err
-	}
-	return stat.Ino, nil
 }
 
 // BuildRestrictedEnv builds a restricted environment for binary execution.

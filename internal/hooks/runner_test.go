@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,9 @@ import (
 
 func TestRunnerRunExecutesHookViaSh(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("hooks run via sh; not supported on windows")
+	}
 
 	workDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workDir, "epack.yaml"), []byte("collectors:\n  test:\n    binary: /bin/true\n"), 0644); err != nil {

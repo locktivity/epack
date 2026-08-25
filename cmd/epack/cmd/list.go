@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"path/filepath"
+	"path"
 	"strings"
 
 	"github.com/locktivity/epack/internal/cli/output"
@@ -170,7 +170,7 @@ func runListArtifacts(cmd *cobra.Command, args []string) error {
 	// Filter artifacts if pattern provided
 	artifacts := manifest.Artifacts
 	if listFilter != "" {
-		if _, err := filepath.Match(listFilter, ""); err != nil {
+		if _, err := path.Match(listFilter, ""); err != nil {
 			return exitError("invalid filter pattern %q: %v", listFilter, err)
 		}
 		artifacts = filterArtifacts(artifacts, listFilter)
@@ -226,7 +226,7 @@ func runListAttestations(cmd *cobra.Command, args []string) error {
 
 	// Filter if pattern provided
 	if listFilter != "" {
-		if _, err := filepath.Match(listFilter, ""); err != nil {
+		if _, err := path.Match(listFilter, ""); err != nil {
 			return exitError("invalid filter pattern %q: %v", listFilter, err)
 		}
 		attestations = filterStrings(attestations, listFilter)
@@ -321,16 +321,16 @@ func filterStrings(items []string, pattern string) []string {
 	return result
 }
 
-func matchPath(path, pattern string) bool {
+func matchPath(p, pattern string) bool {
 	// Extract just the filename for simple patterns
-	name := filepath.Base(path)
+	name := path.Base(p)
 
 	// Try matching against the full path first
-	if matched, _ := filepath.Match(pattern, path); matched {
+	if matched, _ := path.Match(pattern, p); matched {
 		return true
 	}
 	// Then try matching against just the filename
-	if matched, _ := filepath.Match(pattern, name); matched {
+	if matched, _ := path.Match(pattern, name); matched {
 		return true
 	}
 	return false

@@ -135,10 +135,29 @@ func OpenForWriteBeneath(baseDir, relPath string) (*os.File, error) {
 	if filepath.Clean(relPath) == "." {
 		return nil, fmt.Errorf("not a file path: %s", relPath)
 	}
+	if err := rejectSymlinkComponents(fullPath, baseDir, relPath); err != nil {
+		return nil, err
+	}
 	if err := MkdirAllPrivate(baseDir, filepath.Dir(fullPath)); err != nil {
 		return nil, err
 	}
 	return OpenForWrite(fullPath)
+}
+
+// rejectSymlinkComponents walks the existing components of fullPath from
+// baseDir and refuses when any is a symlink. Best-effort on Windows: the
+// walk is not atomic against concurrent swaps, matching the read-side
+// posture documented on ReadFileBeneath.
+func rejectSymlinkComponents(fullPath, baseDir, displayPath string) error {
+	hasSymlink, err := ContainsSymlinkFrom(fullPath, baseDir)
+	if err != nil {
+		return err
+	}
+	if hasSymlink {
+		return errors.E(errors.SymlinkNotAllowed,
+			fmt.Sprintf("refusing symlink component in %s", displayPath), nil)
+	}
+	return nil
 }
 
 // MkdirAll creates a directory and all parents with symlink protection.
@@ -403,6 +422,9 @@ func writeFileInternal(baseDir, path string, data []byte, dirPerm, filePerm os.F
 	if _, err := validateContained(baseDir, parentDir); err != nil {
 		return err
 	}
+	if err := rejectSymlinkComponents(fullPath, baseDir, path); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(parentDir, dirPerm); err != nil {
 		return fmt.Errorf("creating directories: %w", err)
@@ -429,6 +451,9 @@ func writeFileInternal(baseDir, path string, data []byte, dirPerm, filePerm os.F
 
 func mkdirAllInternal(baseDir, targetDir string, perm os.FileMode) error {
 	if _, err := validateContained(baseDir, targetDir); err != nil {
+		return err
+	}
+	if err := rejectSymlinkComponents(targetDir, baseDir, targetDir); err != nil {
 		return err
 	}
 

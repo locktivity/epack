@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +15,9 @@ import (
 // If UPDATE_GOLDEN env is set, it updates the golden file instead.
 func assertGolden(t *testing.T, goldenPath, got string) {
 	t.Helper()
+
+	// Golden files may arrive with CRLF via git checkout on Windows.
+	got = strings.ReplaceAll(got, "\r\n", "\n")
 
 	if os.Getenv("UPDATE_GOLDEN") != "" {
 		dir := filepath.Dir(goldenPath)
@@ -27,14 +31,15 @@ func assertGolden(t *testing.T, goldenPath, got string) {
 		return
 	}
 
-	want, err := os.ReadFile(goldenPath)
+	wantBytes, err := os.ReadFile(goldenPath)
 	if err != nil {
 		t.Fatalf("failed to read golden file %s: %v\nRun with UPDATE_GOLDEN=1 to create it", goldenPath, err)
 	}
+	want := strings.ReplaceAll(string(wantBytes), "\r\n", "\n")
 
-	if got != string(want) {
+	if got != want {
 		t.Errorf("output mismatch with golden file %s\n\n--- WANT ---\n%s\n--- GOT ---\n%s\n\nRun with UPDATE_GOLDEN=1 to update",
-			goldenPath, string(want), got)
+			goldenPath, want, got)
 	}
 }
 
@@ -72,5 +77,9 @@ func NormalizeTimestamps(s string) string {
 // Matches /tmp and /var/folders paths up to whitespace or quote characters.
 func NormalizeTempPaths(s string) string {
 	re := regexp.MustCompile(`(/tmp|/var/folders)/[^\s"]+`)
-	return re.ReplaceAllString(s, "<PATH>")
+	s = re.ReplaceAllString(s, "<PATH>")
+	// Windows temp paths, including the doubled backslashes JSON output emits.
+	// \b keeps URL schemes like https:// from matching as drive letters.
+	reWin := regexp.MustCompile(`\b[A-Za-z]:[\\/][^\s"]+`)
+	return reWin.ReplaceAllString(s, "<PATH>")
 }

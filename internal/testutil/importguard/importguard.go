@@ -296,13 +296,15 @@ func scanRepoWideImportFile(
 		}
 		return err
 	}
-	if strings.Contains(path, "/vendor/") || !shouldScanFile(info, opts.IncludeTests, false) {
+	if strings.Contains(filepath.ToSlash(path), "/vendor/") || !shouldScanFile(info, opts.IncludeTests, false) {
 		return nil
 	}
 	relPath, err := filepath.Rel(repoRoot, path)
 	if err != nil {
 		return err
 	}
+	// Exemption sets and reported violations use slash paths on every OS.
+	relPath = filepath.ToSlash(relPath)
 	pkgPath := filepath.Dir(relPath)
 	if len(onlyPkgs) > 0 && !onlyPkgs[pkgPath] {
 		return nil

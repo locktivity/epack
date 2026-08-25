@@ -3,6 +3,7 @@ package pack
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 
@@ -254,13 +255,13 @@ func (p *Pack) extractArtifactWithBudget(absOutputDir string, a Artifact, force 
 
 // matchPath checks if a path matches a glob pattern.
 // It matches against both the full path and the base name.
-func matchPath(path, pattern string) bool {
+func matchPath(artifactPath, pattern string) bool {
 	// Try matching the full path
-	if matched, _ := filepath.Match(pattern, path); matched {
+	if matched, _ := path.Match(pattern, artifactPath); matched {
 		return true
 	}
 	// Try matching just the filename
-	if matched, _ := filepath.Match(pattern, filepath.Base(path)); matched {
+	if matched, _ := path.Match(pattern, path.Base(artifactPath)); matched {
 		return true
 	}
 	return false

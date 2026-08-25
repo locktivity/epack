@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"path"
 	"path/filepath"
 
 	"github.com/locktivity/epack/internal/cli/output"
@@ -114,13 +115,13 @@ func runExtract(cmd *cobra.Command, args []string) error {
 	}
 
 	out.Success("Extracted %d artifact(s) to %s", len(result.Extracted), extractOutput)
-	for _, path := range result.Extracted {
+	for _, extractedPath := range result.Extracted {
 		// Show path relative to output dir if possible
-		relPath, err := filepath.Rel(extractOutput, path)
+		relPath, err := filepath.Rel(extractOutput, extractedPath)
 		if err != nil {
-			relPath = path
+			relPath = extractedPath
 		}
-		out.Print("  %s\n", relPath)
+		out.Print("  %s\n", filepath.ToSlash(relPath))
 	}
 
 	return nil
@@ -195,7 +196,7 @@ func shouldExtractArtifact(artifact pack.Artifact, requestedPaths []string) (boo
 	}
 
 	if extractFilter != "" {
-		matched, err := filepath.Match(extractFilter, filepath.Base(artifact.Path))
+		matched, err := path.Match(extractFilter, path.Base(artifact.Path))
 		if err != nil {
 			return false, exitError("invalid --filter pattern %q: %v", extractFilter, err)
 		}

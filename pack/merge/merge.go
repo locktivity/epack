@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"github.com/locktivity/epack/errors"
@@ -227,12 +227,12 @@ func addSourceArtifactsToBuilder(p *pack.Pack, b *builder.Builder, manifest pack
 	return nil
 }
 
-func mergedArtifactPath(path, srcStream string, isMergedPack bool) string {
+func mergedArtifactPath(artifactPath, srcStream string, isMergedPack bool) string {
 	if isMergedPack {
-		return path
+		return artifactPath
 	}
-	relativePath := strings.TrimPrefix(path, "artifacts/")
-	return filepath.Join("artifacts", srcStream, relativePath)
+	relativePath := strings.TrimPrefix(artifactPath, "artifacts/")
+	return path.Join("artifacts", srcStream, relativePath)
 }
 
 func collectEmbeddedAttestations(ctx context.Context, p *pack.Pack, srcStream string, opts Options) ([]pack.EmbeddedAttestation, error) {

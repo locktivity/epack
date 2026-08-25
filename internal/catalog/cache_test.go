@@ -16,8 +16,8 @@ func TestCacheDir(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Dir() error = %v", err)
 		}
-		if dir != "/custom/cache/epack" {
-			t.Errorf("Dir() = %q, want %q", dir, "/custom/cache/epack")
+		if dir != filepath.FromSlash("/custom/cache/epack") {
+			t.Errorf("Dir() = %q, want %q", dir, filepath.FromSlash("/custom/cache/epack"))
 		}
 	})
 
@@ -40,7 +40,7 @@ func TestCatalogPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CatalogPath() error = %v", err)
 	}
-	want := "/test/cache/epack/catalog.json"
+	want := filepath.FromSlash("/test/cache/epack/catalog.json")
 	if path != want {
 		t.Errorf("CatalogPath() = %q, want %q", path, want)
 	}
@@ -52,7 +52,7 @@ func TestMetaPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MetaPath() error = %v", err)
 	}
-	want := "/test/cache/epack/catalog.json.meta"
+	want := filepath.FromSlash("/test/cache/epack/catalog.json.meta")
 	if path != want {
 		t.Errorf("MetaPath() = %q, want %q", path, want)
 	}

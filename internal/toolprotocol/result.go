@@ -354,7 +354,7 @@ func ValidateOutputPath(runDir, outputPath string) error {
 }
 
 func validateOutputPathBasics(outputPath string) (string, error) {
-	if filepath.IsAbs(outputPath) {
+	if filepath.IsAbs(outputPath) || strings.HasPrefix(outputPath, "/") || strings.HasPrefix(outputPath, `\`) {
 		return "", fmt.Errorf("output path must be relative: %s", outputPath)
 	}
 	if filepath.VolumeName(outputPath) != "" {

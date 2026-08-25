@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -33,6 +34,9 @@ func ensureBinary(t *testing.T) string {
 		}
 
 		binaryPath = filepath.Join(tmpDir, "epack")
+		if runtime.GOOS == "windows" {
+			binaryPath += ".exe"
+		}
 
 		cmd := exec.Command("go", "build", "-o", binaryPath, "../")
 		cmd.Dir = filepath.Join(mustGetWd(), "cmd/epack/cmd")
