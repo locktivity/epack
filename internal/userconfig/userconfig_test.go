@@ -3,6 +3,7 @@ package userconfig
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/locktivity/epack/internal/componenttypes"
@@ -479,20 +480,17 @@ func TestUtilityDigest_NoPlatform(t *testing.T) {
 
 func TestUtilityDigest_EmptyDigest(t *testing.T) {
 	lf := NewUtilitiesLock()
-	// Use both common platforms to ensure test works
+	// Key by the current platform so the empty-digest branch runs on any OS.
 	lf.Utilities["myutil"] = componenttypes.LockedUtility{
 		Version: "v1.0.0",
 		Platforms: map[string]componenttypes.LockedPlatform{
-			"darwin-arm64": {Digest: ""},
-			"darwin-amd64": {Digest: ""},
-			"linux-amd64":  {Digest: ""},
-			"linux-arm64":  {Digest: ""},
+			runtime.GOOS + "-" + runtime.GOARCH: {Digest: ""},
 		},
 	}
 
 	_, err := lf.UtilityDigest("myutil")
 	if err == nil {
-		t.Error("expected error for empty digest")
+		t.Fatal("expected error for empty digest")
 	}
 	if !contains(err.Error(), "no digest") {
 		t.Errorf("expected 'no digest' error, got: %v", err)
