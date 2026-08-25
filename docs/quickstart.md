@@ -11,14 +11,19 @@ brew install locktivity/tap/epack
 Or with Go:
 
 ```bash
-go install -tags components github.com/locktivity/epack/cmd/epack@v0.1.23
+go install -tags components github.com/locktivity/epack/cmd/epack@latest
 ```
 
 For a minimal verify-only build (no component commands), install without tags:
 
 ```bash
-go install github.com/locktivity/epack/cmd/epack@v0.1.23
+go install github.com/locktivity/epack/cmd/epack@latest
 ```
+
+On Windows, download `epack-core-windows-amd64.exe` (or `-arm64`) from the
+[releases page](https://github.com/locktivity/epack/releases), or use the
+untagged `go install` above. Windows runs the core build: pack operations
+only; collectors and tools require macOS or Linux.
 
 ## Create a Project
 

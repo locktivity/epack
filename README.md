@@ -34,8 +34,12 @@
 # Homebrew (macOS/Linux)
 brew install locktivity/tap/epack
 
-# Go
-go install -tags components github.com/locktivity/epack/cmd/epack@v0.1.23
+# Go (macOS/Linux; drop -tags components for the core build)
+go install -tags components github.com/locktivity/epack/cmd/epack@latest
+
+# Windows: download epack-core-windows-amd64.exe (or -arm64) from the
+# releases page. Windows runs the core build: pack operations only;
+# collectors and tools require macOS or Linux.
 
 # Binary releases (with SLSA Level 3 provenance)
 # → github.com/locktivity/epack/releases

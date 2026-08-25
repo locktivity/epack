@@ -63,6 +63,7 @@ After the workflow completes:
    - `epack-linux-amd64`, `epack-linux-arm64`
    - `epack-core-darwin-amd64`, `epack-core-darwin-arm64`
    - `epack-core-linux-amd64`, `epack-core-linux-arm64`
+   - `epack-core-windows-amd64.exe`, `epack-core-windows-arm64.exe` (core only; the components build is not supported on Windows)
    - `*.intoto.jsonl` (provenance attestations)
    - `checksums.txt`
 3. Test Homebrew installation:
