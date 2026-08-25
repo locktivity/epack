@@ -163,6 +163,15 @@ func TestAddCollectorArtifacts_StagedFileErrors(t *testing.T) {
 	}
 	requireSymlink(t, outsideDir, filepath.Join(stagingDir, "documents"))
 
+	// Unix rejection messages come from the O_NOFOLLOW open walk; the Windows
+	// best-effort walk in safefile reports a single message for both shapes.
+	symlinkFileMsg := "refusing to read symlink"
+	symlinkDirMsg := "refusing symlink or non-directory component"
+	if runtime.GOOS == "windows" {
+		symlinkFileMsg = "refusing symlink component"
+		symlinkDirMsg = "refusing symlink component"
+	}
+
 	tests := []struct {
 		name         string
 		outputDir    string
@@ -172,8 +181,8 @@ func TestAddCollectorArtifacts_StagedFileErrors(t *testing.T) {
 	}{
 		{name: "missing staging dir", outputDir: "", file: "real.pdf", wantSubstr: "no staging directory was provided"},
 		{name: "missing file", outputDir: stagingDir, file: "absent.pdf", wantNotExist: true},
-		{name: "symlink rejected", outputDir: stagingDir, file: "link.pdf", wantSubstr: "refusing to read symlink"},
-		{name: "symlinked intermediate directory rejected", outputDir: stagingDir, file: "documents/policy.pdf", wantSubstr: "refusing symlink or non-directory component"},
+		{name: "symlink rejected", outputDir: stagingDir, file: "link.pdf", wantSubstr: symlinkFileMsg},
+		{name: "symlinked intermediate directory rejected", outputDir: stagingDir, file: "documents/policy.pdf", wantSubstr: symlinkDirMsg},
 	}
 
 	for _, tt := range tests {

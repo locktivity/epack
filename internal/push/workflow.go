@@ -759,27 +759,32 @@ func globWithDoublestar(pattern string) ([]string, error) {
 }
 
 func doublestarBaseDir(pattern string) string {
+	// The volume prefix is split off first: filepath.Join("C:", ...) would
+	// otherwise produce a drive-relative path on Windows.
 	cleanPattern := filepath.Clean(pattern)
 	sep := string(filepath.Separator)
-	parts := strings.Split(cleanPattern, sep)
+	vol := filepath.VolumeName(cleanPattern)
+	rest := strings.TrimPrefix(cleanPattern, vol)
+	isAbs := strings.HasPrefix(rest, sep)
+	rest = strings.TrimPrefix(rest, sep)
+
 	var baseParts []string
-	for _, part := range parts {
+	for _, part := range strings.Split(rest, sep) {
 		if strings.ContainsAny(part, "*?[") {
 			break
 		}
 		baseParts = append(baseParts, part)
 	}
-	if len(baseParts) == 0 {
-		if filepath.IsAbs(cleanPattern) {
-			return sep
-		}
+	baseDir := strings.Join(baseParts, sep)
+
+	switch {
+	case isAbs:
+		return vol + sep + baseDir
+	case baseDir == "":
 		return "."
+	default:
+		return baseDir
 	}
-	baseDir := filepath.Join(baseParts...)
-	if filepath.IsAbs(cleanPattern) {
-		return sep + baseDir
-	}
-	return baseDir
 }
 
 func matchDoublestar(pattern, p string) (bool, error) {

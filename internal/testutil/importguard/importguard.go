@@ -304,8 +304,9 @@ func scanRepoWideImportFile(
 		return err
 	}
 	// Exemption sets and reported violations use slash paths on every OS.
+	// filepath.Dir re-Cleans to backslashes on Windows, so convert again.
 	relPath = filepath.ToSlash(relPath)
-	pkgPath := filepath.Dir(relPath)
+	pkgPath := filepath.ToSlash(filepath.Dir(relPath))
 	if len(onlyPkgs) > 0 && !onlyPkgs[pkgPath] {
 		return nil
 	}

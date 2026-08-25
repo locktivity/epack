@@ -201,7 +201,9 @@ func OpenForWrite(path string) (*os.File, error) {
 // ValidatePath validates that relPath stays within baseDir.
 // Returns the absolute path if valid.
 func ValidatePath(baseDir, relPath string) (string, error) {
-	if filepath.IsAbs(relPath) {
+	// Rooted paths (`\foo`, `/foo`, `C:foo`) are not IsAbs on Windows but
+	// still resolve outside the intended location; reject them the same way.
+	if filepath.IsAbs(relPath) || strings.HasPrefix(relPath, `\`) || strings.HasPrefix(relPath, "/") || filepath.VolumeName(relPath) != "" {
 		return "", errors.E(errors.PathTraversal,
 			fmt.Sprintf("absolute paths not allowed: %s", relPath), nil)
 	}

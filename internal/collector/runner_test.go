@@ -123,6 +123,9 @@ func TestRunnerRun_RejectsIncompatibleSecurityFlags(t *testing.T) {
 }
 
 func TestVerifiedBinaryFD(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("verified binary execution fails closed on windows")
+	}
 	tmpDir := t.TempDir()
 
 	// Create binary with known content

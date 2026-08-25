@@ -463,14 +463,14 @@ func TestUtilityDigest_NoPlatform(t *testing.T) {
 	lf.Utilities["myutil"] = componenttypes.LockedUtility{
 		Version: "v1.0.0",
 		Platforms: map[string]componenttypes.LockedPlatform{
-			// Platform that doesn't match current
-			"windows-amd64": {Digest: "sha256:xyz789"},
+			// Platform that can never match the running test host
+			"plan9-mips64": {Digest: "sha256:xyz789"},
 		},
 	}
 
 	_, err := lf.UtilityDigest("myutil")
 	if err == nil {
-		t.Error("expected error for missing platform")
+		t.Fatal("expected error for missing platform")
 	}
 	if !contains(err.Error(), "not available for platform") {
 		t.Errorf("expected 'not available for platform' error, got: %v", err)

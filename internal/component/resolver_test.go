@@ -1,6 +1,7 @@
 package component
 
 import (
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -33,7 +34,7 @@ func TestInstallPath(t *testing.T) {
 	}
 
 	// Path should start with base
-	if !strings.HasPrefix(path, "/base") {
+	if !strings.HasPrefix(path, filepath.FromSlash("/base")) {
 		t.Errorf("path should start with /base, got %s", path)
 	}
 }
@@ -79,15 +80,19 @@ func TestInstallPath_ErrorOnInvalidBinaryName(t *testing.T) {
 }
 
 func TestResolveBinaryPath_ExternalBinary(t *testing.T) {
-	cfg := config.CollectorConfig{Binary: "/usr/local/bin/collector"}
+	binary := "/usr/local/bin/collector"
+	if runtime.GOOS == "windows" {
+		binary = `C:\tools\collector.exe`
+	}
+	cfg := config.CollectorConfig{Binary: binary}
 	lf := lockfile.New()
 
 	path, err := sync.ResolveBinaryPath("/base", "test", cfg, lf)
 	if err != nil {
 		t.Fatalf("sync.ResolveBinaryPath() error: %v", err)
 	}
-	if path != "/usr/local/bin/collector" {
-		t.Errorf("path = %q, want %q", path, "/usr/local/bin/collector")
+	if path != binary {
+		t.Errorf("path = %q, want %q", path, binary)
 	}
 }
 
