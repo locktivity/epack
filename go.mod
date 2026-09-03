@@ -2,6 +2,8 @@ module github.com/locktivity/epack
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
