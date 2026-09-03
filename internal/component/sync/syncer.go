@@ -235,15 +235,7 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 	if err != nil {
 		return nil, err
 	}
-
-	// Convert profile results to SyncResult format
-	for _, pr := range profileResults {
-		results = append(results, SyncResult{
-			Name:     pr.Source,
-			Kind:     pr.Kind,
-			Verified: pr.Verified, // Only true if digest was verified against lockfile
-		})
-	}
+	results = appendLocalFileResults(results, profileResults)
 
 	// Sync overlays (verify digests match lockfile)
 	overlayResults, err := s.SyncOverlays(ctx, cfg, lf, opts)
@@ -256,26 +248,24 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 	if err != nil {
 		return nil, err
 	}
-
-	// Convert mapping results to SyncResult format
-	for _, mr := range mappingResults {
-		results = append(results, SyncResult{
-			Name:     mr.Source,
-			Kind:     mr.Kind,
-			Verified: mr.Verified, // Only true if digest was verified against lockfile
-		})
-	}
-
-	// Convert overlay results to SyncResult format
-	for _, or := range overlayResults {
-		results = append(results, SyncResult{
-			Name:     or.Source,
-			Kind:     or.Kind,
-			Verified: or.Verified, // Only true if digest was verified against lockfile
-		})
-	}
+	results = appendLocalFileResults(results, mappingResults)
+	results = appendLocalFileResults(results, overlayResults)
 
 	return results, nil
+}
+
+// appendLocalFileResults converts local file sync results (profiles,
+// overlays, mappings) to the SyncResult format. Verified is only true if the
+// digest was verified against the lockfile.
+func appendLocalFileResults(results []SyncResult, fileResults []ProfileSyncResult) []SyncResult {
+	for _, fr := range fileResults {
+		results = append(results, SyncResult{
+			Name:     fr.Source,
+			Kind:     fr.Kind,
+			Verified: fr.Verified,
+		})
+	}
+	return results
 }
 
 type syncKindFunc[T any] func(context.Context, string, T, *lockfile.LockFile, string, SyncOpts) (*SyncResult, error)

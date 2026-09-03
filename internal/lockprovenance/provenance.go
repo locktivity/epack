@@ -258,53 +258,50 @@ func summarizeRemotes(entries map[string]lockfile.LockedRemote) []ComponentSumma
 	return out
 }
 
-func summarizeProfiles(entries map[string]lockfile.LockedProfile) []FileSummary {
+func summarizeFiles[T any](entries map[string]T, convert func(name string, entry T) FileSummary) []FileSummary {
 	names := sortedNames(entries)
 	out := make([]FileSummary, 0, len(names))
 	for _, name := range names {
-		entry := entries[name]
-		out = append(out, FileSummary{
+		out = append(out, convert(name, entries[name]))
+	}
+	return out
+}
+
+func summarizeProfiles(entries map[string]lockfile.LockedProfile) []FileSummary {
+	return summarizeFiles(entries, func(name string, entry lockfile.LockedProfile) FileSummary {
+		return FileSummary{
 			Name:     name,
 			Source:   entry.Source,
 			Version:  entry.Version,
 			Digest:   entry.Digest,
 			Signer:   entry.Signer,
 			LockedAt: entry.LockedAt,
-		})
-	}
-	return out
+		}
+	})
 }
 
 func summarizeOverlays(entries map[string]lockfile.LockedOverlay) []FileSummary {
-	names := sortedNames(entries)
-	out := make([]FileSummary, 0, len(names))
-	for _, name := range names {
-		entry := entries[name]
-		out = append(out, FileSummary{
+	return summarizeFiles(entries, func(name string, entry lockfile.LockedOverlay) FileSummary {
+		return FileSummary{
 			Name:     name,
 			Source:   entry.Source,
 			Version:  entry.Version,
 			Digest:   entry.Digest,
 			Signer:   entry.Signer,
 			LockedAt: entry.LockedAt,
-		})
-	}
-	return out
+		}
+	})
 }
 
 func summarizeMappings(entries map[string]lockfile.LockedMapping) []FileSummary {
-	names := sortedNames(entries)
-	out := make([]FileSummary, 0, len(names))
-	for _, name := range names {
-		entry := entries[name]
-		out = append(out, FileSummary{
+	return summarizeFiles(entries, func(name string, entry lockfile.LockedMapping) FileSummary {
+		return FileSummary{
 			Name:     name,
 			Source:   entry.Source,
 			Digest:   entry.Digest,
 			LockedAt: entry.LockedAt,
-		})
-	}
-	return out
+		}
+	})
 }
 
 func summarizePlatforms(entries map[string]componenttypes.LockedPlatform) []PlatformSummary {
