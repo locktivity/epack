@@ -74,6 +74,17 @@ func New(stream string) *Builder {
 	}
 }
 
+// ArtifactPaths returns the paths of all artifacts staged so far.
+// Callers use this to cross-check references (e.g., control mapping entries)
+// against the pack being built.
+func (b *Builder) ArtifactPaths() map[string]bool {
+	paths := make(map[string]bool, len(b.artifacts))
+	for _, a := range b.artifacts {
+		paths[a.path] = true
+	}
+	return paths
+}
+
 // AddSource adds a source collector to the manifest.
 // Sources are informational and do not affect verification.
 func (b *Builder) AddSource(name, version string) *Builder {

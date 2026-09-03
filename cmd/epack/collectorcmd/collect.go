@@ -13,6 +13,7 @@ import (
 	"github.com/locktivity/epack/internal/collector"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/mapping"
 	"github.com/locktivity/epack/pack"
 	"github.com/spf13/cobra"
 )
@@ -320,6 +321,45 @@ func printEvidenceSummary(out *output.Writer, packPath string) {
 	if len(controls) > 0 {
 		out.Print("\n  %s %s\n", palette.Dim("Controls:"), strings.Join(controls, ", "))
 	}
+
+	// Show sealed control mappings if any
+	if summary := summarizeMappingArtifacts(p, manifest.Artifacts); summary != "" {
+		out.Print("\n  %s %s\n", palette.Dim("Mappings:"), summary)
+	}
+}
+
+// summarizeMappingArtifacts reads sealed control mapping artifacts and
+// summarizes how many entries they carry for which profile.
+func summarizeMappingArtifacts(p *pack.Pack, artifacts []pack.Artifact) string {
+	entries := 0
+	count := 0
+	profileID := ""
+	for _, artifact := range artifacts {
+		if artifact.Schema != mapping.Schema {
+			continue
+		}
+		count++
+		data, err := p.ReadArtifact(artifact.Path)
+		if err != nil {
+			continue
+		}
+		doc, err := mapping.Parse(data.Bytes())
+		if err != nil {
+			continue
+		}
+		entries += len(doc.Mappings)
+		if profileID == "" {
+			profileID = doc.Profile.ID
+		}
+	}
+	if count == 0 {
+		return ""
+	}
+	summary := fmt.Sprintf("%d entries", entries)
+	if profileID != "" {
+		summary += " against " + profileID
+	}
+	return summary
 }
 
 // findSourceForArtifact finds which source contributed an artifact.

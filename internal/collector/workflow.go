@@ -14,6 +14,7 @@ import (
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/credentials"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/mapping"
 	"github.com/locktivity/epack/internal/packpath"
 	"github.com/locktivity/epack/internal/platform"
 	"github.com/locktivity/epack/internal/safefile"
@@ -330,6 +331,11 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 		return nil, err
 	}
 
+	// Seal configured control mappings into the pack
+	if err := addMappingArtifacts(b, cfg, lf, workDir, collectedAt, opts.Stderr); err != nil {
+		return nil, err
+	}
+
 	// Set profile and overlay refs for traceability (builder handles empty slices)
 	b.SetProfiles(buildProfileRefs(cfg, lf))
 	b.SetOverlays(buildOverlayRefs(cfg, lf))
@@ -340,6 +346,76 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 
 	result.PackPath = outputPath
 	return result, nil
+}
+
+// addMappingArtifacts seals each configured control mapping into the pack as
+// an ordinary embedded artifact stamped with the control-mapping schema.
+// Content problems and unresolved references are warnings on stderr, never
+// build failures: mappings are publisher assertions with no verdict semantics.
+func addMappingArtifacts(b *builder.Builder, cfg *config.JobConfig, lf *lockfile.LockFile, workDir, collectedAt string, stderr io.Writer) error {
+	if len(cfg.Mappings) == 0 {
+		return nil
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+
+	var lockedProfileDigests []string
+	if lf != nil {
+		for _, locked := range lf.Profiles {
+			if locked.Digest != "" {
+				lockedProfileDigests = append(lockedProfileDigests, locked.Digest)
+			}
+		}
+	}
+
+	type loadedMapping struct {
+		key string
+		doc *mapping.Document
+	}
+	loaded := make([]loadedMapping, 0, len(cfg.Mappings))
+
+	for _, mappingCfg := range cfg.Mappings {
+		key := mappingCfg.Key()
+		doc, source, err := mapping.Load(workDir, key, mappingCfg.FilePath())
+		if err != nil {
+			return err
+		}
+		loaded = append(loaded, loadedMapping{key: key, doc: doc})
+
+		for _, warning := range doc.Check() {
+			fmt.Fprintf(stderr, "warning: mapping %s: %s\n", key, warning)
+		}
+		for _, warning := range doc.CheckProfileDigest(lockedProfileDigests) {
+			fmt.Fprintf(stderr, "warning: mapping %s: %s\n", key, warning)
+		}
+
+		emitted, err := mapping.EmitJSON(source)
+		if err != nil {
+			return fmt.Errorf("mapping %s: %w", key, err)
+		}
+
+		artifactPath := mapping.ArtifactPath(key)
+		if err := b.AddBytesWithOptions(artifactPath, emitted, builder.ArtifactOptions{
+			Schema:      mapping.Schema,
+			ContentType: "application/json",
+			CollectedAt: collectedAt,
+		}); err != nil {
+			return fmt.Errorf("adding mapping %s: %w", key, err)
+		}
+	}
+
+	// Cross-check artifact references once every artifact, mappings included,
+	// is staged. Document references are left to validators, which can read
+	// the pack's document index.
+	packPaths := b.ArtifactPaths()
+	for _, entry := range loaded {
+		for _, warning := range entry.doc.CheckArtifactRefs(packPaths) {
+			fmt.Fprintf(stderr, "warning: mapping %s: %s\n", entry.key, warning)
+		}
+	}
+
+	return nil
 }
 
 // buildProfileRefs builds profile refs from config and lockfile for manifest traceability.
@@ -437,7 +513,14 @@ func lockfileNeedsUpdateWorkflow(cfg *config.JobConfig, lf *lockfile.LockFile, p
 		}
 	}
 
-	// Check for content drift (profiles/overlays modified after locking)
+	// Check mappings (need lockfile entries with digest for verification)
+	for _, mappingCfg := range cfg.Mappings {
+		if _, ok := lf.GetMappingDigest(mappingCfg.Key()); !ok {
+			return true
+		}
+	}
+
+	// Check for content drift (profiles/overlays/mappings modified after locking)
 	if sync.HasProfileDigestDrift(cfg, lf, workDir) {
 		return true
 	}
@@ -625,6 +708,12 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 
 	lockfilePath := filepath.Join(opts.WorkDir, lockfile.FileName)
 	lf, _ := lockfile.Load(lockfilePath)
+
+	// Seal configured control mappings into the pack
+	if err := addMappingArtifacts(b, cfg, lf, opts.WorkDir, collectedAt, opts.Stderr); err != nil {
+		return nil, err
+	}
+
 	b.SetProfiles(buildProfileRefs(cfg, lf))
 	b.SetOverlays(buildOverlayRefs(cfg, lf))
 

@@ -75,6 +75,13 @@ collectors:
 #   policy:
 #     source: locktivity/epack-tool-policy@v1
 
+# Control mappings record which evidence supports which profile requirement
+# (evidencepack/control-mapping@v1). Each file is locked by digest and sealed
+# into built packs as artifacts/<name>.json. Mappings are publisher assertions;
+# they never affect validation results.
+# mappings:
+#   - path: mappings/control-mappings.yaml
+
 # Remotes are registries for pushing/pulling packs.
 # Each remote is implemented by an adapter binary (epack-remote-<adapter>).
 # Adapters can be installed via source (managed) or binary (external).

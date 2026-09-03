@@ -128,6 +128,9 @@ const (
 	// MaxOverlayCount is the maximum number of overlays in a config.
 	MaxOverlayCount int = 100
 
+	// MaxMappingCount is the maximum number of control mappings in a config.
+	MaxMappingCount int = 100
+
 	// MaxUtilityCount is the maximum number of utilities in a user lockfile.
 	MaxUtilityCount int = 100
 

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### NEW FEATURES
 
+- **Control Mappings** - Seal publisher-authored evidence-to-control mappings
+  (`evidencepack/control-mapping@v1`) into packs:
+  - `mappings:` section in `epack.yaml` declaring local mapping files
+  - Mapping files are locked by digest in `epack.lock.yaml`, drift-checked,
+    and verified under `--frozen`
+  - `epack collect` seals each mapping into the pack as an ordinary embedded
+    artifact (`artifacts/<name>.json`) stamped with the mapping schema; YAML
+    input is emitted as deterministic JSON
+  - `epack build --mapping <path>` seals a mapping in the core build path
+  - Build-time warnings (never failures) for malformed entries, entries citing
+    artifacts the pack does not carry, and mappings pinned to a profile digest
+    that matches no locked profile
+  - `epack inspect` shows a Control Mappings section; the collect summary
+    reports sealed mapping entries
+  - Lock provenance summaries gain a `mappings` section beside profiles and
+    overlays
+
 - **Unified Catalog Search** - `epack catalog search` command searches all component types (collectors, tools, remotes, utilities) with optional `--kind` filter
 - **Catalog Refresh** - `epack catalog refresh` fetches latest catalog from registry with ETag/Last-Modified caching
 - **Global Utility Management** - New `epack utility` command for managing user-installed utilities:

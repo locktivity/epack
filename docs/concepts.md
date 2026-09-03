@@ -211,6 +211,29 @@ This ensures:
 - **Verification**: Digests are checked before execution
 - **Auditability**: You can review exactly what runs
 
+## Control Mappings
+
+A control mapping records which evidence in a pack supports which profile
+requirement (`evidencepack/control-mapping@v1`). It answers the question a
+reviewer asks first: what stands behind each control?
+
+Declare mapping files in `epack.yaml`:
+
+```yaml
+mappings:
+  - path: mappings/control-mappings.yaml
+```
+
+`epack lock` pins each mapping file by digest, `--frozen` verifies it was not
+edited after locking, and `epack collect` seals it into the pack as an
+ordinary embedded artifact (`artifacts/control-mappings.json`), covered by
+the pack digest and any signature.
+
+Mappings are publisher assertions. They never affect verification or
+validation results. At build time, entries that cite artifacts the pack does
+not carry, and mappings pinned to a profile digest that matches no locked
+profile, produce warnings, not failures.
+
 ## SLSA Level 3 Verification
 
 When you install a component via `source:`, epack verifies [SLSA Level 3](https://slsa.dev/spec/v1.0/levels) provenance through Sigstore:

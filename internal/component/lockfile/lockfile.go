@@ -18,7 +18,7 @@ import (
 // FileName is the canonical lockfile filename for pinned collectors and tools.
 const FileName = "epack.lock.yaml"
 
-// LockFile is the v1 collector, tool, remote adapter, profile, and overlay lockfile.
+// LockFile is the v1 collector, tool, remote adapter, profile, overlay, and mapping lockfile.
 type LockFile struct {
 	SchemaVersion int                        `yaml:"schema_version"`
 	Collectors    map[string]LockedCollector `yaml:"collectors,omitempty"`
@@ -26,6 +26,7 @@ type LockFile struct {
 	Remotes       map[string]LockedRemote    `yaml:"remotes,omitempty"`
 	Profiles      map[string]LockedProfile   `yaml:"profiles,omitempty"`
 	Overlays      map[string]LockedOverlay   `yaml:"overlays,omitempty"`
+	Mappings      map[string]LockedMapping   `yaml:"mappings,omitempty"`
 }
 
 // LockedCollector pins either a source-based or external collector entry.
@@ -90,6 +91,14 @@ type LockedOverlay struct {
 	LockedAt string                       `yaml:"locked_at,omitempty"`
 }
 
+// LockedMapping pins a control mapping file by digest.
+// Mappings are local JSON/YAML files sealed into built packs.
+type LockedMapping struct {
+	Source   string `yaml:"source"` // Project-relative path (mappings are always local)
+	Digest   string `yaml:"digest"` // SHA256 digest of the mapping file
+	LockedAt string `yaml:"locked_at,omitempty"`
+}
+
 // New returns an empty lockfile model.
 func New() *LockFile {
 	return &LockFile{
@@ -99,6 +108,7 @@ func New() *LockFile {
 		Remotes:       make(map[string]LockedRemote),
 		Profiles:      make(map[string]LockedProfile),
 		Overlays:      make(map[string]LockedOverlay),
+		Mappings:      make(map[string]LockedMapping),
 	}
 }
 
@@ -140,6 +150,9 @@ func Parse(data []byte) (*LockFile, error) {
 	if lf.Overlays == nil {
 		lf.Overlays = make(map[string]LockedOverlay)
 	}
+	if lf.Mappings == nil {
+		lf.Mappings = make(map[string]LockedMapping)
+	}
 	if lf.SchemaVersion == 0 {
 		lf.SchemaVersion = 1
 	}
@@ -164,6 +177,10 @@ func Parse(data []byte) (*LockFile, error) {
 	if len(lf.Overlays) > limits.MaxOverlayCount {
 		return nil, fmt.Errorf("lockfile overlay count %d exceeds limit of %d",
 			len(lf.Overlays), limits.MaxOverlayCount)
+	}
+	if len(lf.Mappings) > limits.MaxMappingCount {
+		return nil, fmt.Errorf("lockfile mapping count %d exceeds limit of %d",
+			len(lf.Mappings), limits.MaxMappingCount)
 	}
 
 	// Validate all component names and versions to prevent path traversal via malicious lockfile
@@ -235,6 +252,13 @@ func (lf *LockFile) validateComponentsForParse() error {
 	// Validate overlays
 	for source, o := range lf.Overlays {
 		if err := validateProfileForParse("overlay", source, o.Version, o.LockedAt); err != nil {
+			return err
+		}
+	}
+
+	// Validate mappings
+	for source, m := range lf.Mappings {
+		if err := validateProfileForParse("mapping", source, "", m.LockedAt); err != nil {
 			return err
 		}
 	}
@@ -467,6 +491,13 @@ func (lf *LockFile) validateComponentsForSave() error {
 	// Validate overlays
 	for source, o := range lf.Overlays {
 		if err := validateProfileForSave("overlay", source, o.Version); err != nil {
+			return err
+		}
+	}
+
+	// Validate mappings
+	for source := range lf.Mappings {
+		if err := validateProfileForSave("mapping", source, ""); err != nil {
 			return err
 		}
 	}
@@ -729,4 +760,19 @@ func (lf *LockFile) GetOverlayDigest(source string) (string, bool) {
 		return "", false
 	}
 	return o.Digest, true
+}
+
+// GetMapping returns a mapping entry by source.
+func (lf *LockFile) GetMapping(source string) (LockedMapping, bool) {
+	m, ok := lf.Mappings[source]
+	return m, ok
+}
+
+// GetMappingDigest returns the digest for a locked mapping.
+func (lf *LockFile) GetMappingDigest(source string) (string, bool) {
+	m, ok := lf.Mappings[source]
+	if !ok || m.Digest == "" {
+		return "", false
+	}
+	return m.Digest, true
 }

@@ -56,6 +56,7 @@ type Summary struct {
 	Remotes       []ComponentSummary `json:"remotes,omitempty"`
 	Profiles      []FileSummary      `json:"profiles,omitempty"`
 	Overlays      []FileSummary      `json:"overlays,omitempty"`
+	Mappings      []FileSummary      `json:"mappings,omitempty"`
 }
 
 type ComponentSummary struct {
@@ -190,6 +191,7 @@ func summarize(lf *lockfile.LockFile) Summary {
 		Remotes:       summarizeRemotes(lf.Remotes),
 		Profiles:      summarizeProfiles(lf.Profiles),
 		Overlays:      summarizeOverlays(lf.Overlays),
+		Mappings:      summarizeMappings(lf.Mappings),
 	}
 }
 
@@ -284,6 +286,21 @@ func summarizeOverlays(entries map[string]lockfile.LockedOverlay) []FileSummary 
 			Version:  entry.Version,
 			Digest:   entry.Digest,
 			Signer:   entry.Signer,
+			LockedAt: entry.LockedAt,
+		})
+	}
+	return out
+}
+
+func summarizeMappings(entries map[string]lockfile.LockedMapping) []FileSummary {
+	names := sortedNames(entries)
+	out := make([]FileSummary, 0, len(names))
+	for _, name := range names {
+		entry := entries[name]
+		out = append(out, FileSummary{
+			Name:     name,
+			Source:   entry.Source,
+			Digest:   entry.Digest,
 			LockedAt: entry.LockedAt,
 		})
 	}

@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/mapping"
+	"github.com/locktivity/epack/internal/safefile"
 	"github.com/locktivity/epack/pack/builder"
 	"github.com/spf13/cobra"
 )
@@ -15,6 +18,7 @@ var (
 	buildStream      string
 	buildSources     []string
 	buildFiles       []string
+	buildMappings    []string
 	buildStdin       string
 	buildContentType string
 	buildOutput      string
@@ -27,6 +31,7 @@ func init() {
 	buildCmd.Flags().StringVarP(&buildStream, "stream", "s", "", "stream identifier (required)")
 	buildCmd.Flags().StringArrayVar(&buildSources, "source", nil, "source collector (name:version, repeatable)")
 	buildCmd.Flags().StringArrayVarP(&buildFiles, "file", "f", nil, "file mapping (src:dest or src)")
+	buildCmd.Flags().StringArrayVar(&buildMappings, "mapping", nil, "control mapping file to seal into the pack (repeatable)")
 	buildCmd.Flags().StringVar(&buildStdin, "stdin", "", "read artifact from stdin with given path")
 	buildCmd.Flags().StringVar(&buildContentType, "content-type", "", "default content type for artifacts")
 	buildCmd.Flags().StringVarP(&buildOutput, "output", "o", "", "output path (alternative to positional)")
@@ -69,6 +74,57 @@ Examples:
 	RunE: runBuild,
 }
 
+// addBuildMappings seals --mapping files into the pack as control mapping
+// artifacts. Content problems and unresolved artifact references are warnings
+// on stderr, never build failures.
+func addBuildMappings(b *builder.Builder) error {
+	if len(buildMappings) == 0 {
+		return nil
+	}
+
+	type loadedMapping struct {
+		key string
+		doc *mapping.Document
+	}
+	loaded := make([]loadedMapping, 0, len(buildMappings))
+
+	for _, path := range buildMappings {
+		data, err := safefile.ReadFile(path, limits.ProfileFile)
+		if err != nil {
+			return exitError("reading mapping %s: %v", path, err)
+		}
+		doc, err := mapping.Parse(data)
+		if err != nil {
+			return exitError("mapping %s: %v", path, err)
+		}
+		loaded = append(loaded, loadedMapping{key: path, doc: doc})
+
+		for _, warning := range doc.Check() {
+			fmt.Fprintf(os.Stderr, "warning: mapping %s: %s\n", path, warning)
+		}
+
+		emitted, err := mapping.EmitJSON(data)
+		if err != nil {
+			return exitError("mapping %s: %v", path, err)
+		}
+
+		if err := b.AddBytesWithOptions(mapping.ArtifactPath(path), emitted, builder.ArtifactOptions{
+			Schema:      mapping.Schema,
+			ContentType: "application/json",
+		}); err != nil {
+			return exitError("adding mapping %s: %v", path, err)
+		}
+	}
+
+	packPaths := b.ArtifactPaths()
+	for _, entry := range loaded {
+		for _, warning := range entry.doc.CheckArtifactRefs(packPaths) {
+			fmt.Fprintf(os.Stderr, "warning: mapping %s: %s\n", entry.key, warning)
+		}
+	}
+	return nil
+}
+
 func runBuild(cmd *cobra.Command, args []string) error {
 	out := outputWriter()
 
@@ -106,6 +162,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	if err := b.AddArtifacts(sources); err != nil {
 		return exitError("failed to add artifacts: %v", err)
+	}
+
+	if err := addBuildMappings(b); err != nil {
+		return err
 	}
 
 	buildSpinner := out.StartSpinner("Building pack...")

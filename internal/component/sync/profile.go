@@ -67,6 +67,22 @@ func (s *Syncer) SyncOverlays(ctx context.Context, cfg *config.JobConfig, lf *lo
 	return results, nil
 }
 
+// SyncMappings syncs all control mappings from the config.
+// Mappings are always local files, so this only computes and verifies digests.
+func (s *Syncer) SyncMappings(cfg *config.JobConfig, lf *lockfile.LockFile, opts SyncOpts) ([]ProfileSyncResult, error) {
+	var results []ProfileSyncResult
+
+	for i, mapping := range cfg.Mappings {
+		result, err := s.syncLocalProfile(mapping.Key(), mapping.FilePath(), "mapping", i, lf, opts)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, *result)
+	}
+
+	return results, nil
+}
+
 func (s *Syncer) syncProfile(ctx context.Context, index int, profile config.ProfileConfig, lf *lockfile.LockFile, opts SyncOpts) (*ProfileSyncResult, error) {
 	if profile.Path != "" {
 		return s.syncLocalProfile(profile.Key(), profile.FilePath(), "profile", index, lf, opts)
@@ -136,9 +152,12 @@ func (s *Syncer) syncLocalProfile(key, filePath, kind string, index int, lf *loc
 	// Check if digest matches lockfile
 	var lockedDigest string
 	var hasLocked bool
-	if kind == "profile" {
+	switch kind {
+	case "profile":
 		lockedDigest, hasLocked = lf.GetProfileDigest(key)
-	} else {
+	case "mapping":
+		lockedDigest, hasLocked = lf.GetMappingDigest(key)
+	default:
 		lockedDigest, hasLocked = lf.GetOverlayDigest(key)
 	}
 
@@ -273,6 +292,14 @@ func LockProfiles(cfg *config.JobConfig, lf *lockfile.LockFile, workDir string) 
 		// TODO: Handle remote sources when implemented
 	}
 
+	for _, mapping := range cfg.Mappings {
+		result, err := lockLocalMapping(mapping.Key(), mapping.FilePath(), lf, workDir)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, *result)
+	}
+
 	return results, nil
 }
 
@@ -342,6 +369,35 @@ func lockLocalOverlay(key, filePath string, lf *lockfile.LockFile, workDir strin
 	}, nil
 }
 
+func lockLocalMapping(key, filePath string, lf *lockfile.LockFile, workDir string) (*ProfileLockResult, error) {
+	resolvedPath, err := resolveProfilePath(workDir, key, filePath)
+	if err != nil {
+		return nil, fmt.Errorf("computing digest for mapping %s: %w", key, err)
+	}
+	digest, err := computeFileDigest(resolvedPath)
+	if err != nil {
+		return nil, fmt.Errorf("computing digest for mapping %s: %w", key, err)
+	}
+
+	existing, exists := lf.Mappings[key]
+	isNew := !exists
+	updated := exists && existing.Digest != digest
+
+	lf.Mappings[key] = lockfile.LockedMapping{
+		Source:   key,
+		Digest:   digest,
+		LockedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	return &ProfileLockResult{
+		Source:  key,
+		Kind:    "mapping",
+		Digest:  digest,
+		IsNew:   isNew,
+		Updated: updated,
+	}, nil
+}
+
 // ValidateProfileAlignment checks that config profiles match lockfile entries.
 func ValidateProfileAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skipStaleCheck bool) error {
 	// Validate profiles in config exist in lockfile
@@ -361,6 +417,16 @@ func ValidateProfileAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skip
 			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
 				fmt.Sprintf("overlay[%d] %q not in lockfile", i, key),
 				"Run 'epack lock' to add the overlay", nil)
+		}
+	}
+
+	// Validate mappings in config exist in lockfile
+	for i, mapping := range cfg.Mappings {
+		key := mapping.Key()
+		if _, ok := lf.Mappings[key]; !ok {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("mapping[%d] %q not in lockfile", i, key),
+				"Run 'epack lock' to add the mapping", nil)
 		}
 	}
 
@@ -394,6 +460,18 @@ func ValidateProfileAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skip
 		}
 	}
 
+	mappingKeys := make(map[string]bool)
+	for _, m := range cfg.Mappings {
+		mappingKeys[m.Key()] = true
+	}
+	for key := range lf.Mappings {
+		if !mappingKeys[key] {
+			return errors.WithHint(errors.LockfileInvalid, exitcode.LockInvalid,
+				fmt.Sprintf("lockfile has mapping %q not in config", key),
+				"Remove stale entries or add mapping to config", nil)
+		}
+	}
+
 	return nil
 }
 
@@ -407,6 +485,11 @@ func HasProfileLockfileGap(cfg *config.JobConfig, lf *lockfile.LockFile) bool {
 	}
 	for _, o := range cfg.Overlays {
 		if _, ok := lf.Overlays[o.Key()]; !ok {
+			return true
+		}
+	}
+	for _, m := range cfg.Mappings {
+		if _, ok := lf.Mappings[m.Key()]; !ok {
 			return true
 		}
 	}
@@ -454,6 +537,26 @@ func HasProfileDigestDrift(cfg *config.JobConfig, lf *lockfile.LockFile, workDir
 		}
 		// Resolve the path and compute current digest
 		resolvedPath, err := resolveProfilePath(workDir, key, overlay.FilePath())
+		if err != nil {
+			continue // File issues handled during actual sync
+		}
+		currentDigest, err := computeFileDigest(resolvedPath)
+		if err != nil {
+			continue // File issues handled during actual sync
+		}
+		if currentDigest != lockedDigest {
+			return true // Digest drifted
+		}
+	}
+
+	// Check mappings
+	for _, mapping := range cfg.Mappings {
+		key := mapping.Key()
+		lockedDigest, ok := lf.GetMappingDigest(key)
+		if !ok {
+			continue // Entry missing - handled elsewhere
+		}
+		resolvedPath, err := resolveProfilePath(workDir, key, mapping.FilePath())
 		if err != nil {
 			continue // File issues handled during actual sync
 		}

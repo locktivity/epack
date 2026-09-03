@@ -32,6 +32,12 @@ type JobConfig struct {
 	// Overlays modify profile requirements (add or adjust constraints).
 	Overlays []OverlayConfig `yaml:"overlays,omitempty"`
 
+	// Mappings declares control mapping files to seal into built packs.
+	// A mapping records which evidence supports which profile requirement
+	// (evidencepack/control-mapping@v1). Mappings are publisher-authored
+	// local files; they are never fetched from a registry.
+	Mappings []MappingConfig `yaml:"mappings,omitempty"`
+
 	// Remotes configures remote registries for push/pull operations.
 	// Each remote maps a name to its configuration.
 	Remotes map[string]RemoteConfig `yaml:"remotes,omitempty"`
@@ -154,6 +160,35 @@ func (p ProfileConfig) FilePath() string {
 		return p.ResolvedPath
 	}
 	return p.Path
+}
+
+// MappingConfig declares a control mapping file sealed into built packs.
+// Unlike profiles and overlays, mappings are always local files: they describe
+// this publisher's evidence, so there is no registry to fetch them from.
+type MappingConfig struct {
+	// Path is a local file path to a control mapping YAML/JSON file.
+	Path string `yaml:"path"`
+
+	// ResolvedPath is the absolute path for file I/O operations.
+	// This is set by Normalize() when Path is non-empty.
+	// NOT stored in YAML - used only at runtime.
+	// INVARIANT: Lockfile keys use Path (project-relative),
+	// while file operations use ResolvedPath (absolute).
+	ResolvedPath string `yaml:"-" json:"-"`
+}
+
+// Key returns the identifier used for lockfile lookup.
+func (m MappingConfig) Key() string {
+	return m.Path
+}
+
+// FilePath returns the path for file I/O operations.
+// Returns ResolvedPath if set (absolute), otherwise falls back to Path.
+func (m MappingConfig) FilePath() string {
+	if m.ResolvedPath != "" {
+		return m.ResolvedPath
+	}
+	return m.Path
 }
 
 // OverlayConfig declares an overlay that modifies profile requirements.
@@ -550,6 +585,12 @@ func (c *JobConfig) Validate() error {
 			len(c.Overlays), limits.MaxOverlayCount)
 	}
 
+	// SECURITY: Enforce mapping count limit to prevent DoS
+	if len(c.Mappings) > limits.MaxMappingCount {
+		return fmt.Errorf("mappings: count %d exceeds limit of %d",
+			len(c.Mappings), limits.MaxMappingCount)
+	}
+
 	if err := c.validatePlatforms(); err != nil {
 		return err
 	}
@@ -569,6 +610,9 @@ func (c *JobConfig) Validate() error {
 		return err
 	}
 	if err := c.validateOverlays(); err != nil {
+		return err
+	}
+	if err := c.validateMappings(); err != nil {
 		return err
 	}
 	return c.validateEnvironmentOverrides()
@@ -801,6 +845,15 @@ func (c *JobConfig) validateOverlays() error {
 	return nil
 }
 
+func (c *JobConfig) validateMappings() error {
+	for i, mapping := range c.Mappings {
+		if mapping.Path == "" {
+			return fmt.Errorf("mapping[%d]: path must be set", i)
+		}
+	}
+	return nil
+}
+
 func (c *JobConfig) validateEnvironmentOverrides() error {
 	for envName, envCfg := range c.Environments {
 		if err := ValidateEnvironmentName(envName); err != nil {
@@ -908,6 +961,15 @@ func (c *JobConfig) Normalize(baseDir string) error {
 			c.Overlays[i].ResolvedPath = resolved
 		}
 	}
+	for i := range c.Mappings {
+		if c.Mappings[i].Path != "" {
+			resolved, err := safefile.ValidatePath(baseDir, c.Mappings[i].Path)
+			if err != nil {
+				return fmt.Errorf("mappings[%d].path %q: %w", i, c.Mappings[i].Path, err)
+			}
+			c.Mappings[i].ResolvedPath = resolved
+		}
+	}
 	return nil
 }
 
@@ -931,11 +993,16 @@ func (c *JobConfig) HasLocalOverlays() bool {
 	return false
 }
 
+// HasMappings returns true if any control mappings are configured.
+func (c *JobConfig) HasMappings() bool {
+	return len(c.Mappings) > 0
+}
+
 // NeedsLocking returns true if any component requires a lockfile entry.
 // This includes source-based components (collectors, tools, remotes, profiles, overlays)
-// and local profiles/overlays (for digest tracking).
+// and local profiles/overlays/mappings (for digest tracking).
 func (c *JobConfig) NeedsLocking() bool {
-	return c.HasSourceComponents() || c.HasLocalProfiles() || c.HasLocalOverlays()
+	return c.HasSourceComponents() || c.HasLocalProfiles() || c.HasLocalOverlays() || c.HasMappings()
 }
 
 // EffectiveRegistry returns the registry to use for component resolution.

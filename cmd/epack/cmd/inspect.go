@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/locktivity/epack/internal/cli/output"
+	"github.com/locktivity/epack/internal/mapping"
 	"github.com/locktivity/epack/pack"
 	"github.com/spf13/cobra"
 )
@@ -96,7 +97,39 @@ func runInspect(cmd *cobra.Command, args []string) error {
 	}
 
 	printInspectHuman(out, packPath, manifest, attestations)
+	printInspectMappings(out, p, manifest.Artifacts)
 	return nil
+}
+
+// printInspectMappings summarizes sealed control mapping artifacts:
+// how many entries each carries and which profile it asserts against.
+func printInspectMappings(out *output.Writer, p *pack.Pack, artifacts []pack.Artifact) {
+	printed := false
+	for _, a := range artifacts {
+		if a.Schema != mapping.Schema {
+			continue
+		}
+		data, err := p.ReadArtifact(a.Path)
+		if err != nil {
+			continue
+		}
+		doc, err := mapping.Parse(data.Bytes())
+		if err != nil {
+			continue
+		}
+		if !printed {
+			out.Section("Control Mappings")
+			printed = true
+		}
+		line := fmt.Sprintf("  %s  %d entries", a.Path, len(doc.Mappings))
+		if doc.Profile.ID != "" {
+			line += "  against " + doc.Profile.ID
+		}
+		out.Print("%s\n", line)
+	}
+	if printed {
+		out.Println()
+	}
 }
 
 func printRawManifest(out *output.Writer, manifest pack.Manifest) error {

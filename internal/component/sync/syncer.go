@@ -251,6 +251,21 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 		return nil, err
 	}
 
+	// Sync mappings (verify digests match lockfile)
+	mappingResults, err := s.SyncMappings(cfg, lf, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert mapping results to SyncResult format
+	for _, mr := range mappingResults {
+		results = append(results, SyncResult{
+			Name:     mr.Source,
+			Kind:     mr.Kind,
+			Verified: mr.Verified, // Only true if digest was verified against lockfile
+		})
+	}
+
 	// Convert overlay results to SyncResult format
 	for _, or := range overlayResults {
 		results = append(results, SyncResult{
