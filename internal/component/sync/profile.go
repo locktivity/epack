@@ -16,20 +16,20 @@ import (
 	"github.com/locktivity/epack/internal/safefile"
 )
 
-// ProfileSyncResult contains the result of syncing a profile or overlay.
-type ProfileSyncResult struct {
+// LocalFileSyncResult contains the result of syncing a profile, overlay, or mapping.
+type LocalFileSyncResult struct {
 	Source   string // Profile source reference or path
-	Kind     string // "profile" or "overlay"
+	Kind     string // "profile", "overlay", or "mapping"
 	Digest   string // SHA256 digest of the profile file
 	Cached   bool   // Whether the profile was already cached
 	IsLocal  bool   // Whether this is a local path (not remote source)
 	Verified bool   // Whether the digest was verified against lockfile
 }
 
-// ProfileLockResult contains the result of locking a profile or overlay.
-type ProfileLockResult struct {
+// LocalFileLockResult contains the result of locking a profile, overlay, or mapping.
+type LocalFileLockResult struct {
 	Source  string // Profile source reference or path
-	Kind    string // "profile" or "overlay"
+	Kind    string // "profile", "overlay", or "mapping"
 	Digest  string // SHA256 digest of the profile file
 	IsNew   bool   // Whether this is a newly locked profile
 	Updated bool   // Whether the digest was updated
@@ -172,8 +172,8 @@ var localFileKinds = []*localFileKind{profileKind, overlayKind, mappingKind}
 // SyncProfiles syncs all profiles from the config.
 // For local profiles (path), it computes the digest and caches it.
 // For remote profiles (source), it fetches from the registry and caches.
-func (s *Syncer) SyncProfiles(ctx context.Context, cfg *config.JobConfig, lf *lockfile.LockFile, opts SyncOpts) ([]ProfileSyncResult, error) {
-	var results []ProfileSyncResult
+func (s *Syncer) SyncProfiles(ctx context.Context, cfg *config.JobConfig, lf *lockfile.LockFile, opts SyncOpts) ([]LocalFileSyncResult, error) {
+	var results []LocalFileSyncResult
 
 	for _, profile := range cfg.Profiles {
 		result, err := s.syncProfile(ctx, profile, lf, opts)
@@ -187,8 +187,8 @@ func (s *Syncer) SyncProfiles(ctx context.Context, cfg *config.JobConfig, lf *lo
 }
 
 // SyncOverlays syncs all overlays from the config.
-func (s *Syncer) SyncOverlays(ctx context.Context, cfg *config.JobConfig, lf *lockfile.LockFile, opts SyncOpts) ([]ProfileSyncResult, error) {
-	var results []ProfileSyncResult
+func (s *Syncer) SyncOverlays(ctx context.Context, cfg *config.JobConfig, lf *lockfile.LockFile, opts SyncOpts) ([]LocalFileSyncResult, error) {
+	var results []LocalFileSyncResult
 
 	for _, overlay := range cfg.Overlays {
 		result, err := s.syncOverlay(ctx, overlay, lf, opts)
@@ -203,11 +203,11 @@ func (s *Syncer) SyncOverlays(ctx context.Context, cfg *config.JobConfig, lf *lo
 
 // SyncMappings syncs all control mappings from the config.
 // Mappings are always local files, so this only computes and verifies digests.
-func (s *Syncer) SyncMappings(cfg *config.JobConfig, lf *lockfile.LockFile, opts SyncOpts) ([]ProfileSyncResult, error) {
-	var results []ProfileSyncResult
+func (s *Syncer) SyncMappings(cfg *config.JobConfig, lf *lockfile.LockFile, opts SyncOpts) ([]LocalFileSyncResult, error) {
+	var results []LocalFileSyncResult
 
 	for _, mapping := range cfg.Mappings {
-		result, err := s.syncLocalProfile(mappingKind, mapping.Key(), mapping.FilePath(), lf, opts)
+		result, err := s.syncLocalFile(mappingKind, mapping.Key(), mapping.FilePath(), lf, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -217,21 +217,21 @@ func (s *Syncer) SyncMappings(cfg *config.JobConfig, lf *lockfile.LockFile, opts
 	return results, nil
 }
 
-func (s *Syncer) syncProfile(ctx context.Context, profile config.ProfileConfig, lf *lockfile.LockFile, opts SyncOpts) (*ProfileSyncResult, error) {
+func (s *Syncer) syncProfile(ctx context.Context, profile config.ProfileConfig, lf *lockfile.LockFile, opts SyncOpts) (*LocalFileSyncResult, error) {
 	if profile.Path != "" {
-		return s.syncLocalProfile(profileKind, profile.Key(), profile.FilePath(), lf, opts)
+		return s.syncLocalFile(profileKind, profile.Key(), profile.FilePath(), lf, opts)
 	}
-	return s.syncRemoteProfile(ctx, profileKind, profile.Source, lf, opts)
+	return s.syncRemoteFile(ctx, profileKind, profile.Source, lf, opts)
 }
 
-func (s *Syncer) syncOverlay(ctx context.Context, overlay config.OverlayConfig, lf *lockfile.LockFile, opts SyncOpts) (*ProfileSyncResult, error) {
+func (s *Syncer) syncOverlay(ctx context.Context, overlay config.OverlayConfig, lf *lockfile.LockFile, opts SyncOpts) (*LocalFileSyncResult, error) {
 	if overlay.Path != "" {
-		return s.syncLocalProfile(overlayKind, overlay.Key(), overlay.FilePath(), lf, opts)
+		return s.syncLocalFile(overlayKind, overlay.Key(), overlay.FilePath(), lf, opts)
 	}
-	return s.syncRemoteProfile(ctx, overlayKind, overlay.Source, lf, opts)
+	return s.syncRemoteFile(ctx, overlayKind, overlay.Source, lf, opts)
 }
 
-// resolveProfilePath determines the validated absolute path for file I/O.
+// resolveLocalFilePath determines the validated absolute path for file I/O.
 // If filePath is absolute (from ResolvedPath), validates containment and symlinks.
 // Otherwise, validates key relative to workDir using standard path resolution.
 //
@@ -239,7 +239,7 @@ func (s *Syncer) syncOverlay(ctx context.Context, overlay config.OverlayConfig, 
 // via safefile primitives. The containment check for absolute paths is defense-in-depth:
 // even if config was normalized against a different base directory, the path must still
 // be within workDir.
-func resolveProfilePath(workDir, key, filePath string) (string, error) {
+func resolveLocalFilePath(workDir, key, filePath string) (string, error) {
 	// If filePath is not absolute, use standard path resolution with key
 	if !filepath.IsAbs(filePath) {
 		return safefile.ValidateRegularFile(workDir, key)
@@ -249,17 +249,17 @@ func resolveProfilePath(workDir, key, filePath string) (string, error) {
 	return safefile.ValidateAbsoluteFile(workDir, filePath)
 }
 
-// syncLocalProfile handles local profile/overlay/mapping files.
+// syncLocalFile handles local profile/overlay/mapping files.
 // key is the lockfile key (project-relative path), filePath is for file I/O (absolute if normalized).
 // It computes the digest and optionally verifies against lockfile in frozen mode.
 //
 // SECURITY: Uses safefile.ValidateRegularFile for full path-component symlink rejection,
 // and safefile.ReadFile for bounded, race-safe reads with O_NOFOLLOW.
-func (s *Syncer) syncLocalProfile(kind *localFileKind, key, filePath string, lf *lockfile.LockFile, opts SyncOpts) (*ProfileSyncResult, error) {
+func (s *Syncer) syncLocalFile(kind *localFileKind, key, filePath string, lf *lockfile.LockFile, opts SyncOpts) (*LocalFileSyncResult, error) {
 	// Determine which path to use for file I/O
 	// If filePath is absolute (from ResolvedPath), use it after symlink validation
 	// Otherwise, validate key relative to WorkDir
-	validatedPath, err := resolveProfilePath(s.WorkDir, key, filePath)
+	validatedPath, err := resolveLocalFilePath(s.WorkDir, key, filePath)
 	if err != nil {
 		code := errors.CodeOf(err)
 		if code == errors.SymlinkNotAllowed || code == errors.InvalidPath || code == errors.PathTraversal {
@@ -303,7 +303,7 @@ func (s *Syncer) syncLocalProfile(kind *localFileKind, key, filePath string, lf 
 	// Only report as verified if we actually verified against lockfile
 	verified := hasLocked && lockedDigest == digest
 
-	return &ProfileSyncResult{
+	return &LocalFileSyncResult{
 		Source:   key,
 		Kind:     kind.name,
 		Digest:   digest,
@@ -313,9 +313,9 @@ func (s *Syncer) syncLocalProfile(kind *localFileKind, key, filePath string, lf 
 	}, nil
 }
 
-// syncRemoteProfile handles remote profile/overlay sources.
+// syncRemoteFile handles remote profile/overlay sources.
 // TODO: Implement fetching from registry. For now, returns an error.
-func (s *Syncer) syncRemoteProfile(ctx context.Context, kind *localFileKind, source string, lf *lockfile.LockFile, opts SyncOpts) (*ProfileSyncResult, error) {
+func (s *Syncer) syncRemoteFile(ctx context.Context, kind *localFileKind, source string, lf *lockfile.LockFile, opts SyncOpts) (*LocalFileSyncResult, error) {
 	// Check if already in lockfile
 	lockedDigest, ok := kind.lockedDigest(lf, source)
 
@@ -326,7 +326,7 @@ func (s *Syncer) syncRemoteProfile(ctx context.Context, kind *localFileKind, sou
 	// If cached file exists and matches lockfile digest, use it
 	if ok && lockedDigest != "" {
 		if digest, err := computeFileDigest(cachePath); err == nil && digest == lockedDigest {
-			return &ProfileSyncResult{
+			return &LocalFileSyncResult{
 				Source:   source,
 				Kind:     kind.name,
 				Digest:   digest,
@@ -384,10 +384,10 @@ func sanitizeSourceForPath(source string) string {
 	return string(result)
 }
 
-// LockProfiles updates the lockfile with digests for every local file kind.
+// LockLocalFiles updates the lockfile with digests for every local file kind.
 // This is called by 'epack lock' to pin profile, overlay, and mapping versions.
-func LockProfiles(cfg *config.JobConfig, lf *lockfile.LockFile, workDir string) ([]ProfileLockResult, error) {
-	var results []ProfileLockResult
+func LockLocalFiles(cfg *config.JobConfig, lf *lockfile.LockFile, workDir string) ([]LocalFileLockResult, error) {
+	var results []LocalFileLockResult
 
 	for _, kind := range localFileKinds {
 		for _, ref := range kind.localFiles(cfg) {
@@ -403,11 +403,11 @@ func LockProfiles(cfg *config.JobConfig, lf *lockfile.LockFile, workDir string) 
 	return results, nil
 }
 
-func lockLocalFile(kind *localFileKind, key, filePath string, lf *lockfile.LockFile, workDir string) (*ProfileLockResult, error) {
+func lockLocalFile(kind *localFileKind, key, filePath string, lf *lockfile.LockFile, workDir string) (*LocalFileLockResult, error) {
 	// Resolve the path to use for file I/O
 	// If filePath is absolute (from ResolvedPath), use it after validation
 	// Otherwise, use key relative to workDir
-	resolvedPath, err := resolveProfilePath(workDir, key, filePath)
+	resolvedPath, err := resolveLocalFilePath(workDir, key, filePath)
 	if err != nil {
 		return nil, fmt.Errorf("computing digest for %s %s: %w", kind.name, key, err)
 	}
@@ -418,7 +418,7 @@ func lockLocalFile(kind *localFileKind, key, filePath string, lf *lockfile.LockF
 
 	existed, prevDigest := kind.setLocked(lf, key, digest, time.Now().UTC().Format(time.RFC3339))
 
-	return &ProfileLockResult{
+	return &LocalFileLockResult{
 		Source:  key,
 		Kind:    kind.name,
 		Digest:  digest,
@@ -427,8 +427,8 @@ func lockLocalFile(kind *localFileKind, key, filePath string, lf *lockfile.LockF
 	}, nil
 }
 
-// ValidateProfileAlignment checks that configured local files match lockfile entries.
-func ValidateProfileAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skipStaleCheck bool) error {
+// ValidateLocalFileAlignment checks that configured local files match lockfile entries.
+func ValidateLocalFileAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skipStaleCheck bool) error {
 	// Validate configured entries exist in the lockfile
 	for _, kind := range localFileKinds {
 		for i, key := range kind.configKeys(cfg) {
@@ -464,9 +464,9 @@ func ValidateProfileAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skip
 	return nil
 }
 
-// HasProfileLockfileGap checks if any configured local file is missing from the lockfile.
+// HasLocalFileLockfileGap checks if any configured local file is missing from the lockfile.
 // Returns true if any entry is missing, false if all are present.
-func HasProfileLockfileGap(cfg *config.JobConfig, lf *lockfile.LockFile) bool {
+func HasLocalFileLockfileGap(cfg *config.JobConfig, lf *lockfile.LockFile) bool {
 	for _, kind := range localFileKinds {
 		for _, key := range kind.configKeys(cfg) {
 			if !kind.lockedEntry(lf, key) {
@@ -477,18 +477,18 @@ func HasProfileLockfileGap(cfg *config.JobConfig, lf *lockfile.LockFile) bool {
 	return false
 }
 
-// HasProfileDigestDrift checks if any local file has content that differs from the lockfile.
+// HasLocalFileDigestDrift checks if any local file has content that differs from the lockfile.
 // This detects the case where a file was modified after locking but before collection.
 // Returns true if any digest has drifted, false if all match or on any error.
 // Errors are silently ignored to allow the workflow to proceed (the actual sync will catch issues).
-func HasProfileDigestDrift(cfg *config.JobConfig, lf *lockfile.LockFile, workDir string) bool {
+func HasLocalFileDigestDrift(cfg *config.JobConfig, lf *lockfile.LockFile, workDir string) bool {
 	for _, kind := range localFileKinds {
 		for _, ref := range kind.localFiles(cfg) {
 			lockedDigest, ok := kind.lockedDigest(lf, ref.key)
 			if !ok {
 				continue // Entry missing - handled elsewhere
 			}
-			resolvedPath, err := resolveProfilePath(workDir, ref.key, ref.filePath)
+			resolvedPath, err := resolveLocalFilePath(workDir, ref.key, ref.filePath)
 			if err != nil {
 				continue // File issues handled during actual sync
 			}

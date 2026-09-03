@@ -100,7 +100,7 @@ func (l *Locker) Lock(ctx context.Context, cfg *config.JobConfig, opts LockOpts)
 	}
 
 	// Lock profiles and overlays (computes digests for local files)
-	profileResults, err := LockProfiles(cfg, lf, filepath.Dir(l.LockfilePath))
+	profileResults, err := LockLocalFiles(cfg, lf, filepath.Dir(l.LockfilePath))
 	if err != nil {
 		return nil, fmt.Errorf("locking profiles: %w", err)
 	}

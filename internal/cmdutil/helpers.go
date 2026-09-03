@@ -213,10 +213,10 @@ func LockfileNeedsUpdate(cfg *config.JobConfig, lf *lockfile.LockFile, currentPl
 		return true
 	}
 	// Check for missing profile/overlay entries OR content drift
-	if sync.HasProfileLockfileGap(cfg, lf) {
+	if sync.HasLocalFileLockfileGap(cfg, lf) {
 		return true
 	}
-	return sync.HasProfileDigestDrift(cfg, lf, workDir)
+	return sync.HasLocalFileDigestDrift(cfg, lf, workDir)
 }
 
 func requiredPlatforms(platforms []string, currentPlatform string) []string {

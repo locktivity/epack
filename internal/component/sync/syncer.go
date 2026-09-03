@@ -153,7 +153,7 @@ type SyncUnsafeOverrides struct {
 // SyncResult contains the result of syncing a component.
 type SyncResult struct {
 	Name      string // Component name
-	Kind      string // "collector", "tool", "remote", "profile", or "overlay"
+	Kind      string // "collector", "tool", "remote", "profile", "overlay", or "mapping"
 	Version   string
 	Platform  string
 	Installed bool
@@ -257,7 +257,7 @@ func (s *Syncer) Sync(ctx context.Context, cfg *config.JobConfig, opts SyncOpts)
 // appendLocalFileResults converts local file sync results (profiles,
 // overlays, mappings) to the SyncResult format. Verified is only true if the
 // digest was verified against the lockfile.
-func appendLocalFileResults(results []SyncResult, fileResults []ProfileSyncResult) []SyncResult {
+func appendLocalFileResults(results []SyncResult, fileResults []LocalFileSyncResult) []SyncResult {
 	for _, fr := range fileResults {
 		results = append(results, SyncResult{
 			Name:     fr.Source,
@@ -317,7 +317,7 @@ func (s *Syncer) validateAlignmentWithOpts(cfg *config.JobConfig, lf *lockfile.L
 		return err
 	}
 	// Validate profile alignment (profiles in config must exist in lockfile)
-	return ValidateProfileAlignment(cfg, lf, opts.SkipStaleEntryCheck)
+	return ValidateLocalFileAlignment(cfg, lf, opts.SkipStaleEntryCheck)
 }
 
 func (s *Syncer) validateToolAlignment(cfg *config.JobConfig, lf *lockfile.LockFile, skipStaleCheck bool) error {

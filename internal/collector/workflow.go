@@ -513,7 +513,7 @@ func lockfileNeedsUpdateWorkflow(cfg *config.JobConfig, lf *lockfile.LockFile, p
 	}
 
 	// Check for content drift (profiles/overlays/mappings modified after locking)
-	if sync.HasProfileDigestDrift(cfg, lf, workDir) {
+	if sync.HasLocalFileDigestDrift(cfg, lf, workDir) {
 		return true
 	}
 

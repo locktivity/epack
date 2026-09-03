@@ -27,12 +27,12 @@ func TestLockProfilesIncludesMappings(t *testing.T) {
 	}
 	lf := lockfile.New()
 
-	results, err := LockProfiles(cfg, lf, tempDir)
+	results, err := LockLocalFiles(cfg, lf, tempDir)
 	if err != nil {
-		t.Fatalf("LockProfiles: %v", err)
+		t.Fatalf("LockLocalFiles: %v", err)
 	}
 
-	var mappingResult *ProfileLockResult
+	var mappingResult *LocalFileLockResult
 	for i := range results {
 		if results[i].Kind == "mapping" {
 			mappingResult = &results[i]
@@ -54,9 +54,9 @@ func TestLockProfilesIncludesMappings(t *testing.T) {
 	}
 
 	// Re-locking unchanged content is neither new nor updated
-	results, err = LockProfiles(cfg, lf, tempDir)
+	results, err = LockLocalFiles(cfg, lf, tempDir)
 	if err != nil {
-		t.Fatalf("LockProfiles (second): %v", err)
+		t.Fatalf("LockLocalFiles (second): %v", err)
 	}
 	for _, r := range results {
 		if r.Kind == "mapping" && (r.IsNew || r.Updated) {
@@ -73,11 +73,11 @@ func TestHasProfileDigestDriftDetectsMappingEdit(t *testing.T) {
 		Mappings: []config.MappingConfig{{Path: "control-mappings.yaml"}},
 	}
 	lf := lockfile.New()
-	if _, err := LockProfiles(cfg, lf, tempDir); err != nil {
-		t.Fatalf("LockProfiles: %v", err)
+	if _, err := LockLocalFiles(cfg, lf, tempDir); err != nil {
+		t.Fatalf("LockLocalFiles: %v", err)
 	}
 
-	if HasProfileDigestDrift(cfg, lf, tempDir) {
+	if HasLocalFileDigestDrift(cfg, lf, tempDir) {
 		t.Error("freshly locked mapping should not drift")
 	}
 
@@ -85,7 +85,7 @@ func TestHasProfileDigestDriftDetectsMappingEdit(t *testing.T) {
 		t.Fatalf("editing mapping file: %v", err)
 	}
 
-	if !HasProfileDigestDrift(cfg, lf, tempDir) {
+	if !HasLocalFileDigestDrift(cfg, lf, tempDir) {
 		t.Error("edited mapping should drift")
 	}
 }
@@ -96,18 +96,18 @@ func TestValidateProfileAlignmentCoversMappings(t *testing.T) {
 	}
 	lf := lockfile.New()
 
-	if err := ValidateProfileAlignment(cfg, lf, false); err == nil {
+	if err := ValidateLocalFileAlignment(cfg, lf, false); err == nil {
 		t.Error("mapping missing from lockfile should fail alignment")
 	}
 
 	lf.Mappings["control-mappings.yaml"] = lockfile.LockedMapping{Source: "control-mappings.yaml", Digest: "sha256:abc"}
-	if err := ValidateProfileAlignment(cfg, lf, false); err != nil {
+	if err := ValidateLocalFileAlignment(cfg, lf, false); err != nil {
 		t.Errorf("aligned mapping should pass: %v", err)
 	}
 
 	// Stale lockfile entry with no config counterpart fails
 	empty := &config.JobConfig{}
-	if err := ValidateProfileAlignment(empty, lf, false); err == nil {
+	if err := ValidateLocalFileAlignment(empty, lf, false); err == nil {
 		t.Error("stale mapping lock entry should fail alignment")
 	}
 }
@@ -120,8 +120,8 @@ func TestSyncMappingsVerifiesAgainstLockfile(t *testing.T) {
 		Mappings: []config.MappingConfig{{Path: "control-mappings.yaml"}},
 	}
 	lf := lockfile.New()
-	if _, err := LockProfiles(cfg, lf, tempDir); err != nil {
-		t.Fatalf("LockProfiles: %v", err)
+	if _, err := LockLocalFiles(cfg, lf, tempDir); err != nil {
+		t.Fatalf("LockLocalFiles: %v", err)
 	}
 
 	syncer := NewSyncer(tempDir)

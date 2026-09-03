@@ -79,7 +79,7 @@ func TestResolveProfilePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := resolveProfilePath(tt.workDir, tt.key, tt.filePath)
+			result, err := resolveLocalFilePath(tt.workDir, tt.key, tt.filePath)
 
 			if tt.wantErr {
 				if err == nil {
@@ -241,9 +241,9 @@ func TestHasProfileDigestDrift(t *testing.T) {
 				tt.modifyFiles()
 			}
 
-			result := HasProfileDigestDrift(tt.cfg, tt.lf, tempDir)
+			result := HasLocalFileDigestDrift(tt.cfg, tt.lf, tempDir)
 			if result != tt.wantDrift {
-				t.Errorf("HasProfileDigestDrift() = %v, want %v", result, tt.wantDrift)
+				t.Errorf("HasLocalFileDigestDrift() = %v, want %v", result, tt.wantDrift)
 			}
 		})
 	}
@@ -278,7 +278,7 @@ func TestHasProfileDigestDrift_FileModification(t *testing.T) {
 	}
 
 	// Initially no drift
-	if HasProfileDigestDrift(cfg, lf, tempDir) {
+	if HasLocalFileDigestDrift(cfg, lf, tempDir) {
 		t.Error("expected no drift initially")
 	}
 
@@ -289,7 +289,7 @@ func TestHasProfileDigestDrift_FileModification(t *testing.T) {
 	}
 
 	// Now should detect drift
-	if !HasProfileDigestDrift(cfg, lf, tempDir) {
+	if !HasLocalFileDigestDrift(cfg, lf, tempDir) {
 		t.Error("expected drift after file modification")
 	}
 }
