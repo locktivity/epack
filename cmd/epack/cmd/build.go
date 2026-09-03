@@ -115,7 +115,7 @@ func addBuildMappings(b *builder.Builder) error {
 
 	if err := mapping.SealAll(buildSealSink{b: b}, sources, mapping.SealOpts{
 		Warnf: func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, format, args...)
+			_, _ = fmt.Fprintf(os.Stderr, format, args...)
 		},
 	}); err != nil {
 		return exitError("%v", err)

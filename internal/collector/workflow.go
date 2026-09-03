@@ -405,7 +405,7 @@ func addMappingArtifacts(b *builder.Builder, cfg *config.JobConfig, lf *lockfile
 		ProfileDigests:      lockedProfileDigests,
 		CheckProfileDigests: true,
 		Warnf: func(format string, args ...any) {
-			fmt.Fprintf(stderr, format, args...)
+			_, _ = fmt.Fprintf(stderr, format, args...)
 		},
 	})
 }
