@@ -348,6 +348,25 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 	return result, nil
 }
 
+// builderSealSink adapts the pack builder to mapping.SealSink, stamping each
+// sealed mapping with the control-mapping schema.
+type builderSealSink struct {
+	b           *builder.Builder
+	collectedAt string
+}
+
+func (s builderSealSink) Add(path string, data []byte) error {
+	return s.b.AddBytesWithOptions(path, data, builder.ArtifactOptions{
+		Schema:      mapping.Schema,
+		ContentType: "application/json",
+		CollectedAt: s.collectedAt,
+	})
+}
+
+func (s builderSealSink) ArtifactPaths() map[string]bool {
+	return s.b.ArtifactPaths()
+}
+
 // addMappingArtifacts seals each configured control mapping into the pack as
 // an ordinary embedded artifact stamped with the control-mapping schema.
 // Content problems and unresolved references are warnings on stderr, never
@@ -369,53 +388,26 @@ func addMappingArtifacts(b *builder.Builder, cfg *config.JobConfig, lf *lockfile
 		}
 	}
 
-	type loadedMapping struct {
-		key string
-		doc *mapping.Document
-	}
-	loaded := make([]loadedMapping, 0, len(cfg.Mappings))
-
+	sources := make([]mapping.SealSource, 0, len(cfg.Mappings))
 	for _, mappingCfg := range cfg.Mappings {
 		key := mappingCfg.Key()
-		doc, source, err := mapping.Load(workDir, key, mappingCfg.FilePath())
-		if err != nil {
-			return err
-		}
-		loaded = append(loaded, loadedMapping{key: key, doc: doc})
-
-		for _, warning := range doc.Check() {
-			fmt.Fprintf(stderr, "warning: mapping %s: %s\n", key, warning)
-		}
-		for _, warning := range doc.CheckProfileDigest(lockedProfileDigests) {
-			fmt.Fprintf(stderr, "warning: mapping %s: %s\n", key, warning)
-		}
-
-		emitted, err := mapping.EmitJSON(source)
-		if err != nil {
-			return fmt.Errorf("mapping %s: %w", key, err)
-		}
-
-		artifactPath := mapping.ArtifactPath(key)
-		if err := b.AddBytesWithOptions(artifactPath, emitted, builder.ArtifactOptions{
-			Schema:      mapping.Schema,
-			ContentType: "application/json",
-			CollectedAt: collectedAt,
-		}); err != nil {
-			return fmt.Errorf("adding mapping %s: %w", key, err)
-		}
+		filePath := mappingCfg.FilePath()
+		sources = append(sources, mapping.SealSource{
+			Key: key,
+			Load: func() ([]byte, error) {
+				_, data, err := mapping.Load(workDir, key, filePath)
+				return data, err
+			},
+		})
 	}
 
-	// Cross-check artifact references once every artifact, mappings included,
-	// is staged. Document references are left to validators, which can read
-	// the pack's document index.
-	packPaths := b.ArtifactPaths()
-	for _, entry := range loaded {
-		for _, warning := range entry.doc.CheckArtifactRefs(packPaths) {
-			fmt.Fprintf(stderr, "warning: mapping %s: %s\n", entry.key, warning)
-		}
-	}
-
-	return nil
+	return mapping.SealAll(builderSealSink{b: b, collectedAt: collectedAt}, sources, mapping.SealOpts{
+		ProfileDigests:      lockedProfileDigests,
+		CheckProfileDigests: true,
+		Warnf: func(format string, args ...any) {
+			fmt.Fprintf(stderr, format, args...)
+		},
+	})
 }
 
 // buildProfileRefs builds profile refs from config and lockfile for manifest traceability.

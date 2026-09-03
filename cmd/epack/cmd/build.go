@@ -74,6 +74,23 @@ Examples:
 	RunE: runBuild,
 }
 
+// buildSealSink adapts the pack builder to mapping.SealSink for the core
+// build path, which has no collection timestamp.
+type buildSealSink struct {
+	b *builder.Builder
+}
+
+func (s buildSealSink) Add(path string, data []byte) error {
+	return s.b.AddBytesWithOptions(path, data, builder.ArtifactOptions{
+		Schema:      mapping.Schema,
+		ContentType: "application/json",
+	})
+}
+
+func (s buildSealSink) ArtifactPaths() map[string]bool {
+	return s.b.ArtifactPaths()
+}
+
 // addBuildMappings seals --mapping files into the pack as control mapping
 // artifacts. Content problems and unresolved artifact references are warnings
 // on stderr, never build failures.
@@ -82,45 +99,26 @@ func addBuildMappings(b *builder.Builder) error {
 		return nil
 	}
 
-	type loadedMapping struct {
-		key string
-		doc *mapping.Document
-	}
-	loaded := make([]loadedMapping, 0, len(buildMappings))
-
+	sources := make([]mapping.SealSource, 0, len(buildMappings))
 	for _, path := range buildMappings {
-		data, err := safefile.ReadFile(path, limits.ProfileFile)
-		if err != nil {
-			return exitError("reading mapping %s: %v", path, err)
-		}
-		doc, err := mapping.Parse(data)
-		if err != nil {
-			return exitError("mapping %s: %v", path, err)
-		}
-		loaded = append(loaded, loadedMapping{key: path, doc: doc})
-
-		for _, warning := range doc.Check() {
-			fmt.Fprintf(os.Stderr, "warning: mapping %s: %s\n", path, warning)
-		}
-
-		emitted, err := mapping.EmitJSON(data)
-		if err != nil {
-			return exitError("mapping %s: %v", path, err)
-		}
-
-		if err := b.AddBytesWithOptions(mapping.ArtifactPath(path), emitted, builder.ArtifactOptions{
-			Schema:      mapping.Schema,
-			ContentType: "application/json",
-		}); err != nil {
-			return exitError("adding mapping %s: %v", path, err)
-		}
+		sources = append(sources, mapping.SealSource{
+			Key: path,
+			Load: func() ([]byte, error) {
+				data, err := safefile.ReadFile(path, limits.ProfileFile)
+				if err != nil {
+					return nil, fmt.Errorf("reading mapping %s: %w", path, err)
+				}
+				return data, nil
+			},
+		})
 	}
 
-	packPaths := b.ArtifactPaths()
-	for _, entry := range loaded {
-		for _, warning := range entry.doc.CheckArtifactRefs(packPaths) {
-			fmt.Fprintf(os.Stderr, "warning: mapping %s: %s\n", entry.key, warning)
-		}
+	if err := mapping.SealAll(buildSealSink{b: b}, sources, mapping.SealOpts{
+		Warnf: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format, args...)
+		},
+	}); err != nil {
+		return exitError("%v", err)
 	}
 	return nil
 }
