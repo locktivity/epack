@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -430,8 +431,9 @@ func (l *Locker) lockSourceComponent(
 		return nil, err
 	}
 	existingVersion, existingPlatforms, exists := getExisting()
+	platforms := platformsToLock(resolved.platforms, existingPlatforms, exists && existingVersion != resolved.selectedTag, opts.AllPlatforms)
 	lockedPlatforms, signer, err := l.lockSourcePlatforms(
-		ctx, name, binaryLookupName, resolved.owner, resolved.repo, resolved.selectedTag, resolved.release, resolved.platforms, opts,
+		ctx, name, binaryLookupName, resolved.owner, resolved.repo, resolved.selectedTag, resolved.release, platforms, opts,
 	)
 	if err != nil {
 		return nil, err
@@ -484,6 +486,22 @@ func (l *Locker) resolveSourceComponentVersion(
 		release:     release,
 		platforms:   platforms,
 	}, nil
+}
+
+// Existing entries hold the previous release's digests, so a new version
+// relocks every platform already in the lockfile.
+func platformsToLock(requested []string, existing map[string]componenttypes.LockedPlatform, versionChanged, allPlatforms bool) []string {
+	if !versionChanged || allPlatforms {
+		return requested
+	}
+	platforms := slices.Clone(requested)
+	for p := range existing {
+		if !slices.Contains(platforms, p) {
+			platforms = append(platforms, p)
+		}
+	}
+	sort.Strings(platforms)
+	return platforms
 }
 
 func mergeExistingPlatforms(lockedPlatforms, existingPlatforms map[string]componenttypes.LockedPlatform, exists, allPlatforms bool) {
