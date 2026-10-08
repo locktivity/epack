@@ -60,9 +60,9 @@ type CheckResult struct {
 
 // Check does everything a run does before collecting and nothing after:
 // trusts publishers, locks a fetched configuration and checks a committed
-// one's lock, checks the variables the configuration reads, resolves the
-// credentials the broker provides, signs in to the remote, and reports what
-// it found so the pipeline page can show it.
+// one's lock, installs the locked components, checks the variables the
+// configuration reads, resolves the credentials the broker provides, signs in
+// to the remote, and reports what it found so the pipeline page can show it.
 func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 	opts, err := withDefaults(opts)
 	if err != nil {
@@ -95,6 +95,9 @@ func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 		lockFetched(ctx, cfg, opts, result)
 	}
 	checkLock(cfg, opts.WorkDir, fetched, result)
+	if result.PublishersTrusted && result.LockPresent && result.LockCurrent {
+		installLocked(ctx, cfg, opts, result)
+	}
 	var session *remoteSession
 	if result.Remote != "" {
 		session = openRemote(ctx, cfg, opts, result)
@@ -227,6 +230,17 @@ func lockFetched(ctx context.Context, cfg *config.JobConfig, opts Options, resul
 	if _, _, err := lockIfNeeded(ctx, cfg, opts); err != nil {
 		result.Findings = append(result.Findings, err.Error())
 	}
+}
+
+// installLocked installs the locked components the way a run does before
+// collecting, so the check signs in through the adapter the run will use.
+func installLocked(ctx context.Context, cfg *config.JobConfig, opts Options, result *CheckResult) {
+	opts.OnStep("Installing dependencies", true)
+	if _, err := syncLocked(ctx, cfg, opts); err != nil {
+		result.Findings = append(result.Findings, err.Error())
+		return
+	}
+	opts.OnStep("Installed dependencies", false)
 }
 
 func checkLock(cfg *config.JobConfig, workDir string, fetched bool, result *CheckResult) {

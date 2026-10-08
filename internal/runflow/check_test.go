@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/locktivity/epack/internal/component/config"
+	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/remoteconfig"
 	"github.com/locktivity/epack/internal/trustedpublishers"
 )
@@ -89,6 +90,54 @@ func TestCheck_StopsAtUntrustedPublishersInAFetchedFolder(t *testing.T) {
 	}
 	if strings.Contains(joined, "epack.lock.yaml") {
 		t.Errorf("a fetched folder is locked by its run, never committed:\n%s", joined)
+	}
+}
+
+func TestCheck_InstallsTheLockedComponentsAsTheRunWould(t *testing.T) {
+	testhome.Isolate(t)
+	t.Setenv(trustedpublishers.EnvVar, "")
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "epack-collector-local")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "epack.yaml"), []byte("stream: northwind/production\ncollectors:\n  local:\n    binary: "+binary+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(filepath.Join(dir, "epack.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sync.NewLocker(dir).Lock(context.Background(), cfg, sync.LockOpts{}); err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+
+	result, err := Check(context.Background(), Options{WorkDir: dir, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !result.OK() {
+		t.Fatalf("a current lock whose components install should pass: %v", result.Findings)
+	}
+
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho changed\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err = Check(context.Background(), Options{WorkDir: dir, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !strings.Contains(strings.Join(result.Findings, "\n"), "installing dependencies") {
+		t.Errorf("a component that no longer matches its lock should stop the check: %v", result.Findings)
 	}
 }
 

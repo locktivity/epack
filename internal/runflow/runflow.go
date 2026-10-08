@@ -349,13 +349,23 @@ func install(ctx context.Context, cfg *config.JobConfig, opts Options, result *R
 	}
 	result.LockedNow = locked
 	result.LockResults = lockResults
+	syncResults, err := syncLocked(ctx, cfg, opts)
+	if err != nil {
+		return err
+	}
+	result.SyncResults = syncResults
+	return nil
+}
+
+// syncLocked installs and verifies the locked collectors, tools, and remote
+// adapters for this machine.
+func syncLocked(ctx context.Context, cfg *config.JobConfig, opts Options) ([]sync.SyncResult, error) {
 	syncOpts := sync.SyncOpts{Secure: sync.SyncSecureOptions{Locked: true}}
 	results, err := sync.NewSyncer(opts.WorkDir).Sync(ctx, cfg, syncOpts)
 	if err != nil {
-		return fmt.Errorf("installing dependencies: %w", err)
+		return nil, fmt.Errorf("installing dependencies: %w", err)
 	}
-	result.SyncResults = results
-	return nil
+	return results, nil
 }
 
 // lockIfNeeded locks the configuration when its lock is missing or behind,
