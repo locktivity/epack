@@ -43,6 +43,10 @@ type CollectOpts struct {
 
 	// OnCollectorEvent receives collector lifecycle events while running.
 	OnCollectorEvent func(CollectorEvent)
+
+	// Credentials resolves the Locktivity-managed credentials collectors
+	// declare. The zero value resolves with the run's CI identity.
+	Credentials credentials.Resolver
 }
 
 // CollectWorkflowResult contains the outcomes of evidence collection.
@@ -267,6 +271,7 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 		Progress: ProgressHooks{
 			OnCollectorEvent: opts.OnCollectorEvent,
 		},
+		Credentials: opts.Credentials,
 	}
 
 	runResult, err := runner.Run(ctx, cfg, runOpts)

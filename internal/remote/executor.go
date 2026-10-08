@@ -439,6 +439,27 @@ func (e *Executor) KeyList(ctx context.Context, config string) (*KeyListResponse
 	return &resp, nil
 }
 
+// CredentialsResolve asks the remote for a configuration's managed
+// credentials, resolved with its sign-in.
+func (e *Executor) CredentialsResolve(ctx context.Context, config string, credentialSets []string) (*CredentialsResolveResponse, error) {
+	req := &CredentialsResolveRequest{
+		Type:            TypeCredentialsResolve,
+		ProtocolVersion: ProtocolVersion,
+		RequestID:       uuid.New().String(),
+		Config:          config,
+		CredentialSets:  credentialSets,
+	}
+
+	var resp CredentialsResolveResponse
+	if err := e.execute(ctx, CommandCredentialsResolve, req, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("credentials resolve failed: unexpected response")
+	}
+	return &resp, nil
+}
+
 // KeyRevoke asks the remote to stop trusting a key and what it signed.
 func (e *Executor) KeyRevoke(ctx context.Context, config, id string) (*KeyRevokeResponse, error) {
 	req := &KeyRevokeRequest{

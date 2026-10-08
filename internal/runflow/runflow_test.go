@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	epackerrors "github.com/locktivity/epack/errors"
+	"github.com/locktivity/epack/internal/broker"
 	"github.com/locktivity/epack/internal/cli/exitmap"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/exitcode"
@@ -238,5 +239,31 @@ func TestCheckPublishers_RefusesALocalBinaryInAFetchedConfiguration(t *testing.T
 	err := checkPublishers(cfg, pullRecord(), Options{NonInteractive: true})
 	if err == nil || !strings.Contains(err.Error(), "collector custom runs a local binary") {
 		t.Fatalf("checkPublishers = %v, want a refusal", err)
+	}
+}
+
+func TestCredentialSession_OpensOnlyForCollectorsThatNeedOneWithoutACIIdentity(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv(broker.GitLabIDTokenEnvVar, "")
+	t.Setenv(broker.SigningKeyEnvVar, "")
+	withCredentials := &config.JobConfig{Collectors: map[string]config.CollectorConfig{"documents": {Credentials: []string{"locktivity_documents"}}}}
+	without := &config.JobConfig{Collectors: map[string]config.CollectorConfig{"tls": {}}}
+
+	if session, _ := credentialSession(context.Background(), without, Options{}, "locktivity"); session != nil {
+		t.Error("no collector needs credentials, so no session")
+	}
+	if session, _ := credentialSession(context.Background(), withCredentials, Options{}, ""); session != nil {
+		t.Error("a run with no remote has no sign-in to use")
+	}
+
+	session, closeSession := credentialSession(context.Background(), withCredentials, Options{}, "locktivity")
+	defer closeSession()
+	if _, err := session.Resolve(context.Background(), broker.ResolveRequest{}, broker.RuntimeContext{}); err == nil || !strings.Contains(err.Error(), `"locktivity"`) {
+		t.Errorf("a remote the configuration doesn't define should say so to the collector, got %v", err)
+	}
+
+	t.Setenv(broker.SigningKeyEnvVar, "/keys/runner.pem")
+	if session, _ := credentialSession(context.Background(), withCredentials, Options{}, "locktivity"); session != nil {
+		t.Error("a run with its own identity resolves with it")
 	}
 }

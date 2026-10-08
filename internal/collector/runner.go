@@ -238,6 +238,9 @@ type RunOptions struct {
 	Unsafe UnsafeOverrides
 	// Optional progress hooks.
 	Progress ProgressHooks
+	// Credentials resolves the Locktivity-managed credentials collectors
+	// declare. The zero value resolves with the run's CI identity.
+	Credentials credentials.Resolver
 }
 
 // CollectorEventType identifies collector lifecycle events.
@@ -684,7 +687,7 @@ func (r *Runner) runOne(ctx context.Context, jobCfg *config.JobConfig, run singl
 	}
 
 	// Execute the collector
-	managedEnv, err := credentials.Resolver{}.ResolveComponentEnv(ctx, jobCfg, run.Config.Credentials)
+	managedEnv, err := opts.Credentials.ResolveComponentEnv(ctx, jobCfg, run.Config.Credentials)
 	if err != nil {
 		result.Error = err
 		return result

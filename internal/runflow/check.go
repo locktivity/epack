@@ -106,7 +106,7 @@ func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 		}
 	}
 	checkEnv(cfg, opts.WorkDir, result)
-	checkCredentials(ctx, cfg, result)
+	checkCredentials(ctx, cfg, session, result)
 	checkSigning(ctx, session, opts, result)
 	if session != nil {
 		session.report(ctx, opts, result)
@@ -308,8 +308,13 @@ func coveredBySignIn(cfg *config.JobConfig, signedInAs string, env remoteconfig.
 	return true
 }
 
-func checkCredentials(ctx context.Context, cfg *config.JobConfig, result *CheckResult) {
+// checkCredentials resolves what the run would, through the remote's sign-in
+// when the run has no CI identity of its own.
+func checkCredentials(ctx context.Context, cfg *config.JobConfig, session *remoteSession, result *CheckResult) {
 	resolver := credentials.Resolver{}
+	if session != nil && session.caps.SupportsCredentialsResolve() {
+		resolver.Session = remote.SessionBroker{Executor: session.exec}
+	}
 	try := func(component string, refs []string) {
 		if len(refs) == 0 {
 			return

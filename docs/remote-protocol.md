@@ -165,6 +165,7 @@ Adapters declare their supported protocol version via `--capabilities`. Requests
 | `auth.login` | Start a browser sign-in that returns to a loopback redirect |
 | `auth.complete` | Finish a browser sign-in with the code the browser returned |
 | `auth.whoami` | Query current identity |
+| `credentials.resolve` | Resolve a configuration's managed credentials with the adapter's sign-in |
 
 ### Invocation
 
@@ -226,6 +227,7 @@ The `--capabilities` command returns adapter metadata:
 | `whoami` | Supports identity query |
 | `config_pull` | Supports handing over a named configuration through `config.pull` |
 | `keys` | Manages the signing keys a pipeline accepts through `key.register`, `key.list`, `key.retire`, and `key.revoke` |
+| `credentials_resolve` | Resolves a configuration's managed credentials with its sign-in through `credentials.resolve`, for a run with no CI identity |
 
 `files_dir`, outside the feature flags, names the one hidden folder a fetched
 configuration from this adapter may carry for its own bookkeeping, such as
@@ -975,6 +977,43 @@ Retiring a key that is already retired or revoked leaves it as it is.
 Revoking a key withdraws trust from every pack it signed, so it is for a key
 that can no longer be trusted. To replace a key and keep what it signed
 trusted, retire it instead.
+
+## Credential Resolution
+
+A run with no CI identity of its own, such as one on a laptop, has nothing to
+present to a credential broker. A remote that advertises `credentials_resolve`
+resolves a configuration's managed credentials with the sign-in it holds
+instead, so the person's token stays in the adapter and only the resolved
+credentials reach epack. epack asks only when no GitHub Actions OIDC token,
+GitLab ID token, or signing key is available. `config` names the configuration
+as in the signing key operations, and `credential_sets` holds the IDs from the
+configuration's `credential_sets` map.
+
+### credentials.resolve Request
+
+```json
+{
+  "type": "credentials.resolve",
+  "protocol_version": 1,
+  "request_id": "req_vwx234",
+  "config": "6f1c2b9e-4f0a-4c1e-9d3b-2a7e5c8b1f00",
+  "credential_sets": ["credset_7k2m9q4w8x1z"]
+}
+```
+
+### credentials.resolve Response
+
+```json
+{
+  "ok": true,
+  "type": "credentials.resolve.result",
+  "request_id": "req_vwx234",
+  "env": {"LOCKTIVITY_DOCUMENTS_TOKEN": "..."},
+  "expires_at": "2026-10-08T19:00:00Z"
+}
+```
+
+`env` is what the components that named these sets receive.
 
 ## Error Handling
 

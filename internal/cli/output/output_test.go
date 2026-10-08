@@ -366,6 +366,23 @@ func TestSpinner_NonTTY_Fail(t *testing.T) {
 	}
 }
 
+func TestSpinner_TTYClearsTheLineBeforeTheResult(t *testing.T) {
+	for name, finish := range map[string]func(*Spinner) string{
+		"success": func(s *Spinner) string { s.Success("Done"); return s.w.palette.Success("") + " Done\n" },
+		"fail":    func(s *Spinner) string { s.Fail("Failed"); return s.w.palette.Failure("") + " Failed\n" },
+	} {
+		stdout := &bytes.Buffer{}
+		w := New(stdout, &bytes.Buffer{}, Options{NoColor: true})
+		w.isTTY = true
+
+		want := "\r\033[K" + finish(w.StartSpinner("Collecting tls: Scanning example.com:443"))
+
+		if got := stdout.String(); !strings.HasSuffix(got, want) {
+			t.Errorf("%s: the result line should clear what the spinner left, got %q", name, got)
+		}
+	}
+}
+
 func TestSpinner_Quiet(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	w := New(stdout, &bytes.Buffer{}, Options{Quiet: true})

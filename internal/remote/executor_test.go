@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/locktivity/epack/internal/broker"
 	"github.com/locktivity/epack/internal/remote"
 )
 
@@ -349,6 +350,26 @@ func recordedRequest(t *testing.T, dir string) (string, map[string]any) {
 		t.Fatalf("parsing request %s: %v", data, err)
 	}
 	return string(command), request
+}
+
+func TestSessionBroker_ResolvesThroughTheAdaptersSignIn(t *testing.T) {
+	script, dir := recordingAdapter(t, `{"ok":true,"type":"credentials.resolve.result","request_id":"req-1","env":{"LOCKTIVITY_DOCUMENTS_TOKEN":"tok_docs"},"expires_at":"2026-10-08T19:00:00Z"}`, 0)
+
+	resolved, err := remote.SessionBroker{Executor: remote.NewExecutor(script, "test")}.Resolve(context.Background(),
+		broker.ResolveRequest{CredentialSets: []string{"credset_docs"}, PipelineID: "pipe_1"}, broker.RuntimeContext{})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if resolved.Env["LOCKTIVITY_DOCUMENTS_TOKEN"] != "tok_docs" {
+		t.Errorf("env = %v", resolved.Env)
+	}
+
+	command, request := recordedRequest(t, dir)
+	sets, _ := request["credential_sets"].([]any)
+	if command != "credentials.resolve" || request["type"] != "credentials.resolve" || request["config"] != "pipe_1" ||
+		len(sets) != 1 || sets[0] != "credset_docs" {
+		t.Errorf("command = %q, request = %v", command, request)
+	}
 }
 
 func TestExecutor_AuthLoginSendsTheRedirectAndReadsTheInstructions(t *testing.T) {

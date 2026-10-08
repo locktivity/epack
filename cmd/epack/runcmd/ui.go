@@ -34,6 +34,12 @@ func (u *stageUI) onStage(stage string, started bool) {
 	if u.quiet() {
 		return
 	}
+	// A run goes on to the post-collect hook after a failed collect, so the
+	// spinner of a stage that never finished is closed as that stage's
+	// failure before the next stage prints.
+	if started {
+		u.fail()
+	}
 	u.stage = stage
 	label := stageLabel(stage, started)
 	if plainStage(stage) {

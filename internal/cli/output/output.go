@@ -312,7 +312,7 @@ func (s *Spinner) Success(message string) {
 
 	if s.w.isTTY && !s.w.opts.CI {
 		// Clear the spinner line and print success
-		_, _ = fmt.Fprintf(s.w.stdout, "\r%s %s\n", s.w.palette.Success(""), message)
+		_, _ = fmt.Fprintf(s.w.stdout, "\r\033[K%s %s\n", s.w.palette.Success(""), message)
 	} else {
 		s.printResult(s.w.palette.Success(""), message)
 	}
@@ -343,7 +343,7 @@ func (s *Spinner) Fail(message string) {
 
 	if s.w.isTTY && !s.w.opts.CI {
 		// Clear the spinner line and print failure
-		_, _ = fmt.Fprintf(s.w.stdout, "\r%s %s\n", s.w.palette.Failure(""), message)
+		_, _ = fmt.Fprintf(s.w.stdout, "\r\033[K%s %s\n", s.w.palette.Failure(""), message)
 	} else {
 		s.printResult(s.w.palette.Failure(""), message)
 	}

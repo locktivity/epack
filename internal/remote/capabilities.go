@@ -104,6 +104,10 @@ type CapabilityFeatures struct {
 	// signing keys a pipeline accepts (key.register, key.list, key.retire,
 	// key.revoke).
 	Keys bool `json:"keys,omitempty"`
+
+	// CredentialsResolve indicates the adapter resolves a configuration's
+	// managed credentials with its sign-in (credentials.resolve).
+	CredentialsResolve bool `json:"credentials_resolve,omitempty"`
 }
 
 // CapabilityAuth describes authentication options.
@@ -150,6 +154,12 @@ func (c *Capabilities) SupportsLockReport() bool {
 // SupportsKeys returns true if the adapter manages signing keys.
 func (c *Capabilities) SupportsKeys() bool {
 	return c.Features.Keys
+}
+
+// SupportsCredentialsResolve returns true if the adapter resolves managed
+// credentials with its sign-in.
+func (c *Capabilities) SupportsCredentialsResolve() bool {
+	return c.Features.CredentialsResolve
 }
 
 // SupportsPull returns true if the adapter supports the two-phase download protocol.

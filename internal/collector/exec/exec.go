@@ -296,6 +296,7 @@ func WriteConfig(config map[string]interface{}) (string, func(), error) {
 //   - Escapes control characters (newlines, tabs, etc.)
 //   - Redacts patterns that look like secrets (via redact.Sensitive)
 func SanitizeStderr(stderr string) string {
+	stderr = strings.TrimRight(stderr, " \t\r\n")
 	if stderr == "" {
 		return "(no stderr)"
 	}

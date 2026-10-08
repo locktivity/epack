@@ -585,3 +585,30 @@ type KeyRetireResponse struct {
 	RequestID string     `json:"request_id"`
 	Key       SigningKey `json:"key"`
 }
+
+// Credential resolution, for a run with no CI identity of its own: the
+// remote resolves a configuration's managed credentials with the person's
+// sign-in, which never leaves the adapter.
+const (
+	CommandCredentialsResolve = "credentials.resolve"
+	TypeCredentialsResolve    = "credentials.resolve"
+)
+
+// CredentialsResolveRequest asks the remote for a configuration's managed
+// credentials by the credential set IDs the configuration names.
+type CredentialsResolveRequest struct {
+	Type            string   `json:"type"` // "credentials.resolve"
+	ProtocolVersion int      `json:"protocol_version"`
+	RequestID       string   `json:"request_id"`
+	Config          string   `json:"config,omitempty"`
+	CredentialSets  []string `json:"credential_sets"`
+}
+
+// CredentialsResolveResponse carries the env the components receive.
+type CredentialsResolveResponse struct {
+	OK        bool              `json:"ok"`
+	Type      string            `json:"type"` // "credentials.resolve.result"
+	RequestID string            `json:"request_id"`
+	Env       map[string]string `json:"env"`
+	ExpiresAt string            `json:"expires_at,omitempty"`
+}

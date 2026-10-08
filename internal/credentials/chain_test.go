@@ -97,6 +97,7 @@ func TestResolverExplainsWhichIdentityIsMissing(t *testing.T) {
 		{"elsewhere", nil, []string{
 			"a GitLab ID token in LOCKTIVITY_ID_TOKEN",
 			"a signing key in EPACK_SIGNING_KEY with EPACK_PIPELINE_ID",
+			"a sign-in with epack remote login",
 		}},
 	}
 	for _, tc := range cases {
@@ -162,6 +163,31 @@ type recordingBroker struct {
 func (b *recordingBroker) Resolve(_ context.Context, req broker.ResolveRequest, _ broker.RuntimeContext) (broker.ResolvedEnv, error) {
 	b.request = req
 	return broker.ResolvedEnv{Env: b.env}, nil
+}
+
+func TestResolverUsesTheSessionOnlyWithoutACIIdentity(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.JobConfig{CredentialSets: map[string]string{"locktivity_documents": "credset_docs"}}
+	session := &recordingBroker{env: map[string]string{"LOCKTIVITY_DOCUMENTS_TOKEN": "tok_docs"}}
+	laptop := Resolver{Session: session, Getenv: func(name string) string {
+		return map[string]string{broker.PipelineIDEnvVar: "pipe_1"}[name]
+	}}
+
+	env, err := laptop.ResolveComponentEnv(context.Background(), cfg, []string{"locktivity_documents"})
+	if err != nil || env["LOCKTIVITY_DOCUMENTS_TOKEN"] != "tok_docs" {
+		t.Fatalf("env = %v, err = %v", env, err)
+	}
+	if session.request.PipelineID != "pipe_1" || len(session.request.CredentialSets) != 1 || session.request.CredentialSets[0] != "credset_docs" {
+		t.Fatalf("the session was asked for %+v", session.request)
+	}
+
+	keyed := Resolver{Session: session, Getenv: func(name string) string {
+		return map[string]string{broker.SigningKeyEnvVar: "/keys/runner.pem"}[name]
+	}}
+	if keyed.broker(DetectRuntimeContext(keyed.getenv())) == session {
+		t.Fatal("a run with its own identity resolves with that identity, not the sign-in")
+	}
 }
 
 type stubBroker struct {

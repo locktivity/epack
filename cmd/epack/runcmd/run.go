@@ -153,7 +153,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		ui.fail()
 		printCollectors(out, result)
 		if result != nil && result.FailureReported {
-			out.Error("Reported the failure to %s", result.Remote)
+			out.Error("Reported the failure to %s\n", result.Remote)
 		}
 		return cmdutil.HandleError(err)
 	}

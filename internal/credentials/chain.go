@@ -14,7 +14,10 @@ import (
 // Resolver resolves Locktivity-managed credential refs for a component at runtime.
 type Resolver struct {
 	Broker broker.CredentialBroker
-	Getenv func(string) string
+	// Session resolves through a signed-in remote when the run has no CI
+	// identity, as on a laptop.
+	Session broker.CredentialBroker
+	Getenv  func(string) string
 }
 
 // ResolveComponentEnv resolves Locktivity-managed credential refs to the env bundle
@@ -74,7 +77,7 @@ func identityUnavailableError(rt broker.RuntimeContext) error {
 		return fmt.Errorf("locktivity-managed credentials require the job's identity; declare id_tokens with %s and the audience shown on the pipeline page, or use a signing key in %s with %s",
 			broker.GitLabIDTokenEnvVar, broker.SigningKeyEnvVar, broker.PipelineIDEnvVar)
 	default:
-		return fmt.Errorf("locktivity-managed credentials require a runtime identity: GitHub Actions OIDC, a GitLab ID token in %s, or a signing key in %s with %s",
+		return fmt.Errorf("locktivity-managed credentials require a runtime identity: GitHub Actions OIDC, a GitLab ID token in %s, a signing key in %s with %s, or a sign-in with epack remote login",
 			broker.GitLabIDTokenEnvVar, broker.SigningKeyEnvVar, broker.PipelineIDEnvVar)
 	}
 }
@@ -82,6 +85,9 @@ func identityUnavailableError(rt broker.RuntimeContext) error {
 func (r Resolver) broker(rt broker.RuntimeContext) broker.CredentialBroker {
 	if r.Broker != nil {
 		return r.Broker
+	}
+	if r.Session != nil && !rt.IdentityAvailable() {
+		return r.Session
 	}
 
 	apiBase, _, err := broker.ResolveCustomCredentialBrokerURL(r.getenv())

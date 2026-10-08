@@ -16,11 +16,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/locktivity/epack/internal/broker"
 	"github.com/locktivity/epack/internal/cmdutil"
 	"github.com/locktivity/epack/internal/collector"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
+	"github.com/locktivity/epack/internal/credentials"
 	"github.com/locktivity/epack/internal/dispatch"
 	"github.com/locktivity/epack/internal/hooks"
 	"github.com/locktivity/epack/internal/lockprovenance"
@@ -419,6 +421,8 @@ func runHook(ctx context.Context, opts Options, name string) error {
 }
 
 func collect(ctx context.Context, cfg *config.JobConfig, opts Options, result *Result) error {
+	session, closeSession := credentialSession(ctx, cfg, opts, result.Remote)
+	defer closeSession()
 	collected, err := collector.Collect(ctx, cfg, collector.CollectOpts{
 		Secure:           collector.SecureRunOptions{Frozen: !opts.AllowUnpinned},
 		Unsafe:           collector.UnsafeOverrides{AllowUnpinned: opts.AllowUnpinned},
@@ -426,9 +430,53 @@ func collect(ctx context.Context, cfg *config.JobConfig, opts Options, result *R
 		Stderr:           opts.Stderr,
 		OutputPath:       opts.PackPath,
 		OnCollectorEvent: opts.OnCollectorEvent,
+		Credentials:      credentials.Resolver{Session: session},
 	})
 	result.Collect = collected
 	return err
+}
+
+// credentialSession lets collectors get their Locktivity-managed credentials
+// through the remote's sign-in when the run has no CI identity to resolve
+// them with, as on a laptop.
+func credentialSession(ctx context.Context, cfg *config.JobConfig, opts Options, remoteName string) (broker.CredentialBroker, func()) {
+	noop := func() {}
+	if remoteName == "" || !collectorsNeedCredentials(cfg) || credentials.DetectRuntimeContext(os.Getenv).IdentityAvailable() {
+		return nil, noop
+	}
+	remoteCfg, err := remote.ResolveRemoteConfig(cfg, remoteName, "")
+	if err != nil {
+		return sessionUnavailable{err: err}, noop
+	}
+	exec, caps, err := remote.PrepareAdapterExecutor(ctx, opts.WorkDir, remoteName, cfg, remoteCfg, remote.AdapterExecutorOptions{
+		Stderr:       opts.Stderr,
+		Verification: remote.VerificationOptions{Unsafe: remote.VerificationUnsafeOverrides{AllowUnverifiedSource: opts.AllowUnpinned}},
+	})
+	if err != nil {
+		return sessionUnavailable{err: fmt.Errorf("remote %s: %w", remoteName, err)}, noop
+	}
+	if !caps.SupportsCredentialsResolve() {
+		exec.Close()
+		return sessionUnavailable{err: fmt.Errorf("remote %s's adapter does not resolve credentials with a sign-in", remoteName)}, noop
+	}
+	return remote.SessionBroker{Executor: exec}, exec.Close
+}
+
+func collectorsNeedCredentials(cfg *config.JobConfig) bool {
+	for _, c := range cfg.Collectors {
+		if len(c.Credentials) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// sessionUnavailable gives each collector that needed the remote's sign-in
+// the reason it couldn't be used.
+type sessionUnavailable struct{ err error }
+
+func (s sessionUnavailable) Resolve(context.Context, broker.ResolveRequest, broker.RuntimeContext) (broker.ResolvedEnv, error) {
+	return broker.ResolvedEnv{}, s.err
 }
 
 func runTools(ctx context.Context, cfg *config.JobConfig, opts Options, result *Result) error {
