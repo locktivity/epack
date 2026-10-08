@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/locktivity/epack/internal/testutil/testhome"
 	"github.com/locktivity/epack/internal/userconfig"
 )
 
@@ -20,12 +21,7 @@ import (
 // remote recorded on the developer's machine never leaks into a test.
 func isolateHome(t *testing.T) string {
 	t.Helper()
-	home, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatalf("resolving temp dir: %v", err)
-	}
-	t.Setenv("HOME", home)
-	return home
+	return testhome.Isolate(t)
 }
 
 func TestResolveConfigTarget_FlagWins(t *testing.T) {

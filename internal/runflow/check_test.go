@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/locktivity/epack/internal/remote"
+	"github.com/locktivity/epack/internal/testutil/testhome"
 	"github.com/locktivity/epack/sign"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func writeCheckProject(t *testing.T, config string) string {
 }
 
 func TestCheck_NamesWhatTheRunWouldMiss(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 	t.Setenv("OKTA_PRIVATE_KEY", "")
 	t.Setenv("SENTRY_AUTH_TOKEN", "set")
@@ -61,7 +62,7 @@ func TestCheck_NamesWhatTheRunWouldMiss(t *testing.T) {
 }
 
 func TestCheck_StopsAtUntrustedPublishersInAFetchedFolder(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -128,7 +129,7 @@ func TestCoveredBySignIn_OnlyTheRemotesOwnVariablesAndOnlyWhenSignedIn(t *testin
 }
 
 func TestCheck_NamesAllPlatformsWhenTheConfigListsThem(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -146,7 +147,7 @@ func TestCheck_NamesAllPlatformsWhenTheConfigListsThem(t *testing.T) {
 }
 
 func TestCheck_SaysHowItWouldSign(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()

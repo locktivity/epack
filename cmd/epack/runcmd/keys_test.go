@@ -17,6 +17,7 @@ import (
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/testutil/testhome"
 	"github.com/locktivity/epack/sign"
 )
 
@@ -29,8 +30,7 @@ func writeKeyProject(t *testing.T, status string) (dir, keyPath string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script adapters are not available on Windows")
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testhome.Isolate(t)
 	key, err := sign.GenerateKey()
 	if err != nil {
 		t.Fatal(err)

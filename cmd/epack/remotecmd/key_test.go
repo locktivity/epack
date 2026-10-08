@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/locktivity/epack/internal/remote"
+	"github.com/locktivity/epack/internal/testutil/testhome"
 )
 
 func TestKeyFileIsTheMachineKeyUnlessOutIsGiven(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testhome.Isolate(t)
 	keyOut = ""
 	t.Cleanup(func() { keyOut = "" })
 

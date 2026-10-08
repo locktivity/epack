@@ -13,6 +13,7 @@ import (
 	"github.com/locktivity/epack/internal/broker"
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/runflow"
+	"github.com/locktivity/epack/internal/testutil/testhome"
 )
 
 func parseDuration(s string) (time.Duration, error) {
@@ -85,7 +86,7 @@ func TestRun_NeedsARemoteForAName(t *testing.T) {
 
 func isolateHome(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 }
 
 func TestPrintCheckResult_PointsAtThePipelinePageOnlyForAWebLink(t *testing.T) {

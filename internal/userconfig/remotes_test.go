@@ -6,6 +6,7 @@ import (
 
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/testutil/testhome"
 )
 
 func TestLoadRemotesLockFromPath_MissingIsEmpty(t *testing.T) {
@@ -61,11 +62,7 @@ func TestSaveRemotesLockToPath_RejectsBadName(t *testing.T) {
 }
 
 func TestDefaultRemote_RoundTrip(t *testing.T) {
-	home, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatalf("resolving temp dir: %v", err)
-	}
-	t.Setenv("HOME", home)
+	testhome.Isolate(t)
 
 	if name, err := DefaultRemote(); err != nil || name != "" {
 		t.Fatalf("DefaultRemote before login = %q, %v", name, err)

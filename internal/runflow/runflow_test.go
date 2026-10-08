@@ -13,6 +13,7 @@ import (
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/remoteconfig"
+	"github.com/locktivity/epack/internal/testutil/testhome"
 	"github.com/locktivity/epack/internal/trustedpublishers"
 	"github.com/locktivity/epack/internal/userconfig"
 )
@@ -125,7 +126,7 @@ func pullRecord() *remoteconfig.State {
 }
 
 func TestCheckPublishers_LeavesAFolderWithoutAPullRecordAlone(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 
 	if err := checkPublishers(fetchedConfig(), nil, Options{NonInteractive: true}); err != nil {
@@ -134,7 +135,7 @@ func TestCheckPublishers_LeavesAFolderWithoutAPullRecordAlone(t *testing.T) {
 }
 
 func TestCheckPublishers_StopsAJobAndNamesTheVariable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 
 	err := checkPublishers(fetchedConfig(), pullRecord(), Options{NonInteractive: true})
@@ -150,7 +151,7 @@ func TestCheckPublishers_StopsAJobAndNamesTheVariable(t *testing.T) {
 }
 
 func TestCheckPublishers_GrantsForOneProcess(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 
 	t.Setenv(trustedpublishers.EnvVar, "Locktivity")
 	if err := checkPublishers(fetchedConfig(), pullRecord(), Options{NonInteractive: true}); err != nil {
@@ -166,7 +167,7 @@ func TestCheckPublishers_GrantsForOneProcess(t *testing.T) {
 }
 
 func TestCheckPublishers_AsksOnceInATerminalAndRecordsTheAnswer(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 
 	var asked []string
@@ -198,7 +199,7 @@ func TestCheckPublishers_AsksOnceInATerminalAndRecordsTheAnswer(t *testing.T) {
 }
 
 func TestCheckPublishers_ANoStopsTheRun(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 
 	opts := Options{
@@ -216,7 +217,7 @@ func TestCheckPublishers_ANoStopsTheRun(t *testing.T) {
 }
 
 func TestCheckPublishers_YesNeverWidensTrust(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "")
 
 	opts := Options{
@@ -229,7 +230,7 @@ func TestCheckPublishers_YesNeverWidensTrust(t *testing.T) {
 }
 
 func TestCheckPublishers_RefusesALocalBinaryInAFetchedConfiguration(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testhome.Isolate(t)
 	t.Setenv(trustedpublishers.EnvVar, "locktivity")
 
 	cfg := fetchedConfig()
