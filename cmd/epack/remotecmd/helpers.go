@@ -5,10 +5,12 @@ package remotecmd
 import (
 	"context"
 	"fmt"
-	"os"
+	"strings"
 
 	"github.com/locktivity/epack/errors"
+	"github.com/locktivity/epack/internal/cli/browser"
 	"github.com/locktivity/epack/internal/cli/output"
+	"github.com/locktivity/epack/internal/cmdutil"
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/redact"
 	"github.com/spf13/cobra"
@@ -47,14 +49,26 @@ func exitErrorWithCode(code int, format string, args ...interface{}) error {
 // ExitMalformedPack is the exit code for malformed pack errors.
 const ExitMalformedPack = 2
 
-// out is the shared output writer, initialized lazily.
-var out *output.Writer
+// getOutput returns an output writer configured from the root flags that
+// writes where the command writes.
+func getOutput(cmd *cobra.Command) *output.Writer {
+	return output.New(cmd.OutOrStdout(), cmd.ErrOrStderr(), cmdutil.OutputOptions(cmd))
+}
 
-// outputWriter returns the current output writer, initializing if needed.
-// This is used when there's no command context available.
-func outputWriter() *output.Writer {
-	if out == nil {
-		out = output.New(os.Stdout, os.Stderr, output.Options{})
+// PipelinePage is the pipeline page link a remote sent, or empty when it is
+// not an http or https URL. The link comes from a server, so nothing else is
+// shown or passed on.
+func PipelinePage(link string) string {
+	if browser.Validate(link) != nil {
+		return ""
 	}
-	return out
+	return strings.TrimSpace(link)
+}
+
+// PrintPipelinePage points the person at the pipeline page when the remote
+// sent a link PipelinePage keeps.
+func PrintPipelinePage(out *output.Writer, link string) {
+	if page := PipelinePage(link); page != "" {
+		out.Print("See it on the pipeline page: %s\n", output.Printable(page))
+	}
 }

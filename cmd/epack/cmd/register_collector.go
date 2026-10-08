@@ -8,6 +8,7 @@ import (
 	"github.com/locktivity/epack/cmd/epack/contextcmd"
 	"github.com/locktivity/epack/cmd/epack/hookscmd"
 	"github.com/locktivity/epack/cmd/epack/remotecmd"
+	"github.com/locktivity/epack/cmd/epack/runcmd"
 	"github.com/locktivity/epack/cmd/epack/sdkcmd"
 	"github.com/spf13/cobra"
 )
@@ -46,8 +47,14 @@ func registerCollectorCommands(root *cobra.Command) {
 	root.AddCommand(remotecmd.NewPullCommand())
 	root.AddCommand(remotecmd.NewPushCommand())
 
-	// Add 'epack remote' for remote management (list, whoami)
+	// Add 'epack remote' for remote management (list, login, clone, whoami)
 	root.AddCommand(remotecmd.NewRemoteCommand())
+
+	// Add 'epack key' for the signing key runs from this machine use
+	root.AddCommand(remotecmd.NewKeyCommand())
+
+	// Add 'epack run' for the whole workflow: fetch, install, collect, tools, sign, push
+	root.AddCommand(runcmd.NewCommand())
 
 	// Add 'epack hooks run <hook>' for portable runner hooks.
 	root.AddCommand(hookscmd.NewCommand())

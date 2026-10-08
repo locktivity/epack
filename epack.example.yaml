@@ -94,7 +94,7 @@ remotes:
       workspace: myorg
       environment: prod
     auth:
-      mode: device_code  # Options: device_code, access_token, client_credentials
+      mode: browser  # Options: browser, access_token, client_credentials
       # profile: default  # Optional named credential profile
     # credentials:
     #   - locktivity_push

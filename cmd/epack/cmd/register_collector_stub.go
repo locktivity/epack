@@ -38,6 +38,16 @@ See: https://github.com/locktivity/epack#installation`,
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:   "run",
+		Short: "Collect, sign, and send a pack in one command (not available in this build)",
+		Long: `Run command is not available in epack-core.
+
+For collectors, tools, and remotes, install 'epack' (full version).
+See: https://github.com/locktivity/epack#installation`,
+		RunE: stubRunE,
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:   "lock",
 		Short: "Lock collector and tool dependencies (not available in this build)",
 		Long: `Lock command is not available in epack-core.

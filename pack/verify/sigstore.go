@@ -2,12 +2,16 @@ package verify
 
 import (
 	"context"
+	"crypto"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/locktivity/epack/internal/jsonutil"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
@@ -15,13 +19,15 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+	"github.com/sigstore/sigstore/pkg/signature"
 )
 
 // SigstoreVerifier implements Verifier using sigstore-go.
 // It verifies attestations stored as Sigstore bundles.
 type SigstoreVerifier struct {
-	verifier *verify.Verifier
-	cfg      *config
+	keyVerifiers []keyVerifier
+	verifier     *verify.Verifier
+	cfg          *config
 }
 
 // NewStrictVerifier creates a Verifier that requires identity verification.
@@ -89,15 +95,79 @@ func NewSigstoreVerifier(opts ...Option) (*SigstoreVerifier, error) {
 		verifierOpts = append(verifierOpts, verify.WithSignedTimestamps(cfg.tsaThreshold))
 	}
 
-	v, err := verify.NewVerifier(trustedMaterial, verifierOpts...)
+	// With no transparency log or timestamp requirement, certificates are
+	// checked against the current time; only a caller that zeroed both
+	// thresholds gets here.
+	certOpts := verifierOpts
+	if len(certOpts) == 0 {
+		certOpts = []verify.VerifierOption{verify.WithCurrentTime()}
+	}
+	v, err := verify.NewVerifier(trustedMaterial, certOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create verifier: %w", err)
 	}
 
+	keyVerifiers, err := buildKeyVerifiers(cfg.publicKeys, trustedMaterial, verifierOpts)
+	if err != nil {
+		return nil, err
+	}
+
 	return &SigstoreVerifier{
-		verifier: v,
-		cfg:      cfg,
+		verifier:     v,
+		keyVerifiers: keyVerifiers,
+		cfg:          cfg,
 	}, nil
+}
+
+// keyVerifier verifies signatures made with one provided public key.
+type keyVerifier struct {
+	fingerprint string
+	verifier    *verify.Verifier
+}
+
+// buildKeyVerifiers makes one verifier per provided key. A key signature has
+// no certificate, so the trusted root cannot vouch for it; the key itself is
+// what the caller trusts. A bundle without transparency log or timestamp
+// evidence is only acceptable when the caller required none.
+func buildKeyVerifiers(keys []crypto.PublicKey, trustedMaterial root.TrustedMaterial, verifierOpts []verify.VerifierOption) ([]keyVerifier, error) {
+	verifiers := make([]keyVerifier, 0, len(keys))
+	for _, key := range keys {
+		fingerprint, err := publicKeyFingerprint(key)
+		if err != nil {
+			return nil, err
+		}
+		sv, err := signature.LoadVerifier(key, crypto.SHA256)
+		if err != nil {
+			return nil, fmt.Errorf("loading public key %s: %w", fingerprint, err)
+		}
+		material := root.TrustedMaterialCollection{
+			trustedMaterial,
+			root.NewTrustedPublicKeyMaterial(func(string) (root.TimeConstrainedVerifier, error) {
+				return root.NewExpiringKey(sv, time.Time{}, time.Time{}), nil
+			}),
+		}
+		opts := verifierOpts
+		if len(opts) == 0 {
+			opts = []verify.VerifierOption{verify.WithNoObserverTimestamps()}
+		}
+		kv, err := verify.NewVerifier(material, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create key verifier: %w", err)
+		}
+		verifiers = append(verifiers, keyVerifier{fingerprint: fingerprint, verifier: kv})
+	}
+	return verifiers, nil
+}
+
+// publicKeyFingerprint is the identity epack records for a key signer: the
+// hex SHA-256 of the DER-encoded public key.
+func publicKeyFingerprint(pub crypto.PublicKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", fmt.Errorf("marshaling public key: %w", err)
+	}
+	sum := sha256.Sum256(der)
+	return fmt.Sprintf("%x", sum), nil
 }
 
 // Verify verifies a Sigstore bundle attestation.
@@ -127,7 +197,70 @@ func (v *SigstoreVerifier) Verify(ctx context.Context, attestation []byte) (*Res
 		return nil, err
 	}
 
-	// Determine artifact policy based on bundle type
+	if signedWithKey(b) {
+		return v.verifyWithKeys(b)
+	}
+
+	artifactOpt, err := artifactPolicy(b)
+	if err != nil {
+		return nil, err
+	}
+
+	policy := verify.NewPolicy(artifactOpt, identityOpts...)
+
+	// Verify the bundle
+	result, err := v.verifier.Verify(b, policy)
+	if err != nil {
+		return nil, fmt.Errorf("verification failed: %w", err)
+	}
+
+	return v.toResult(result, b)
+}
+
+// signedWithKey reports whether the bundle carries a public key rather than
+// a certificate as its verification material.
+func signedWithKey(b *bundle.Bundle) bool {
+	vc, err := b.VerificationContent()
+	if err != nil || vc == nil {
+		return false
+	}
+	return vc.PublicKey() != nil
+}
+
+// verifyWithKeys tries each provided key against a key-signed bundle. The
+// one that verifies names the signer.
+func (v *SigstoreVerifier) verifyWithKeys(b *bundle.Bundle) (*Result, error) {
+	if len(v.keyVerifiers) == 0 {
+		return nil, fmt.Errorf("attestation was signed with a key, not a certificate; pass the signer's public key to verify it")
+	}
+	if v.cfg.issuer != "" || v.cfg.issuerRegexp != nil || v.cfg.subject != "" || v.cfg.subjectRegexp != nil {
+		return nil, fmt.Errorf("attestation was signed with a key, which cannot satisfy an issuer or subject policy")
+	}
+	artifactOpt, err := artifactPolicy(b)
+	if err != nil {
+		return nil, err
+	}
+	policy := verify.NewPolicy(artifactOpt, verify.WithKey())
+
+	var lastErr error
+	for _, kv := range v.keyVerifiers {
+		result, err := kv.verifier.Verify(b, policy)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		out, err := v.toResult(result, b)
+		if err != nil {
+			return nil, err
+		}
+		out.Identity = &Identity{Subject: kv.fingerprint, Method: "key"}
+		return out, nil
+	}
+	return nil, fmt.Errorf("verification failed: none of the %d provided public keys signed this attestation: %w", len(v.keyVerifiers), lastErr)
+}
+
+// artifactPolicy decides what the signature must cover based on the bundle type.
+func artifactPolicy(b *bundle.Bundle) (verify.ArtifactPolicyOption, error) {
 	var artifactOpt verify.ArtifactPolicyOption
 	if b.GetDsseEnvelope() != nil {
 		// DSSE envelopes contain the statement; no external artifact needed
@@ -144,16 +277,7 @@ func (v *SigstoreVerifier) Verify(ctx context.Context, attestation []byte) (*Res
 		// Unknown bundle type, try without artifact
 		artifactOpt = verify.WithoutArtifactUnsafe()
 	}
-
-	policy := verify.NewPolicy(artifactOpt, identityOpts...)
-
-	// Verify the bundle
-	result, err := v.verifier.Verify(b, policy)
-	if err != nil {
-		return nil, fmt.Errorf("verification failed: %w", err)
-	}
-
-	return v.toResult(result, b)
+	return artifactOpt, nil
 }
 
 // buildIdentityPolicy builds verification policy options from config.
@@ -196,6 +320,7 @@ func (v *SigstoreVerifier) toResult(sr *verify.VerificationResult, b *bundle.Bun
 		result.Identity = &Identity{
 			Issuer:  sr.VerifiedIdentity.Issuer.Issuer,
 			Subject: sr.VerifiedIdentity.SubjectAlternativeName.SubjectAlternativeName,
+			Method:  "certificate",
 		}
 	} else {
 		// When using InsecureSkipIdentityCheck, VerifiedIdentity is nil.
@@ -376,6 +501,7 @@ func extractIdentityFromBundle(b *bundle.Bundle) *Identity {
 	return &Identity{
 		Issuer:  summary.Issuer,
 		Subject: summary.SubjectAlternativeName,
+		Method:  "certificate",
 	}
 }
 

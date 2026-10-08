@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"crypto"
 	"fmt"
 	"os"
 	"regexp"
@@ -36,6 +37,10 @@ type PackOpts struct {
 
 	// InsecureSkipEmbeddedVerify skips verification of embedded attestations in merged packs.
 	InsecureSkipEmbeddedVerify bool
+
+	// PublicKeys are keys attestations may have been signed with instead of
+	// a certificate. The key that verifies names the signer.
+	PublicKeys []crypto.PublicKey
 }
 
 // PackResult contains the outcomes of pack verification.
@@ -75,6 +80,11 @@ type AttestationDetail struct {
 
 	// SignedAt is the timestamp from the transparency log entry.
 	SignedAt string `json:"signed_at,omitempty"`
+
+	// Method is "certificate" for a Fulcio-issued identity and "key" when
+	// the signature was made with a key the caller provided; Subject is then
+	// the key's fingerprint.
+	Method string `json:"method,omitempty"`
 }
 
 // HasErrors returns true if any verification step failed.
@@ -190,6 +200,9 @@ func buildVerifierOptions(opts PackOpts) ([]verify.Option, error) {
 	if opts.InsecureSkipIdentityCheck {
 		vopts = append(vopts, verify.WithInsecureSkipIdentityCheckForTesting())
 	}
+	if len(opts.PublicKeys) > 0 {
+		vopts = append(vopts, verify.WithPublicKeys(opts.PublicKeys...))
+	}
 
 	return vopts, nil
 }
@@ -223,8 +236,10 @@ func appendVerifierRegexpOption(vopts *[]verify.Option, pattern, field string, f
 }
 
 // hasIdentityPolicy returns true if any identity constraint is specified.
+// A provided public key is an identity policy of its own: only its holder
+// could have signed.
 func hasIdentityPolicy(opts PackOpts) bool {
-	return opts.Issuer != "" || opts.IssuerRegexp != "" || opts.Subject != "" || opts.SubjectRegexp != ""
+	return opts.Issuer != "" || opts.IssuerRegexp != "" || opts.Subject != "" || opts.SubjectRegexp != "" || len(opts.PublicKeys) > 0
 }
 
 // ErrNoIdentityPolicy is returned when attestation verification is attempted
@@ -292,6 +307,7 @@ func verifyAttestationsWorkflow(ctx context.Context, p *pack.Pack, manifest *pac
 		if result.Identity != nil {
 			detail.Issuer = result.Identity.Issuer
 			detail.Subject = result.Identity.Subject
+			detail.Method = result.Identity.Method
 		}
 		if len(result.Timestamps) > 0 {
 			detail.SignedAt = result.Timestamps[0].UTC().Format("2006-01-02T15:04:05Z")

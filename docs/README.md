@@ -38,6 +38,7 @@ These documents are for authors building collectors, tools, or remote adapters.
 | Document | Description |
 |----------|-------------|
 | [Releasing](releasing.md) | How to create a new epack release |
+| [Container Image](container-image.md) | What the published image promises a job |
 
 ## External Documentation
 

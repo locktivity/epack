@@ -100,18 +100,59 @@ func TestBuildFailureProvenance(t *testing.T) {
 	if provenance.FailureCode != "lock_config_mismatch" {
 		t.Fatalf("FailureCode = %q", provenance.FailureCode)
 	}
+	if provenance.Metadata != nil {
+		t.Fatalf("Metadata = %#v, want none without an epack.yaml", provenance.Metadata)
+	}
 }
 
-func TestBuildFailureRequiresFailureCode(t *testing.T) {
+func TestBuildRecordsTheConfigDigest(t *testing.T) {
 	t.Parallel()
 
-	if _, err := Build(Options{Outcome: OutcomeFailure}); err == nil {
-		t.Fatal("Build() expected failure_code validation error")
+	root := t.TempDir()
+	config := []byte("stream: northwind/production\ncollectors:\n  tls:\n    source: github.com/locktivity/epack-collector-tls\n")
+	if err := os.WriteFile(filepath.Join(root, "epack.yaml"), config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	provenance, err := Build(Options{
+		ProjectRoot: root,
+		Outcome:     OutcomeFailure,
+		FailureCode: "collect_failed",
+		Getenv:      envGetter(nil),
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256(config))
+	if got := provenance.Metadata["config_sha256"]; got != want {
+		t.Fatalf("Metadata[config_sha256] = %v, want %s", got, want)
 	}
 }
 
 func envGetter(values map[string]string) func(string) string {
 	return func(name string) string {
 		return values[name]
+	}
+}
+
+func TestBuildMergesCheckMetadataAndAcceptsTheCheckTrigger(t *testing.T) {
+	t.Parallel()
+
+	provenance, err := Build(Options{
+		ProjectRoot: t.TempDir(),
+		TriggerKind: TriggerCheck,
+		Outcome:     OutcomeFailure,
+		FailureCode: "check_failed",
+		Metadata:    map[string]any{"check": map[string]any{"env_missing": []string{"OKTA_PRIVATE_KEY"}}},
+		Getenv:      envGetter(nil),
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if provenance.TriggerKind != "check" {
+		t.Fatalf("TriggerKind = %q", provenance.TriggerKind)
+	}
+	if _, ok := provenance.Metadata["check"]; !ok {
+		t.Fatalf("Metadata = %v, want the check details", provenance.Metadata)
 	}
 }

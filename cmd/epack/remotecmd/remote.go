@@ -20,6 +20,12 @@ Examples:
   # List configured remotes
   epack remote list
 
+  # Sign in to a remote from this machine
+  epack remote login locktivity
+
+  # Fetch a configuration the remote generated
+  epack remote clone northwind-production
+
   # Show authentication status for a remote
   epack remote whoami locktivity
 
@@ -28,9 +34,12 @@ Examples:
 	}
 
 	// Add subcommands
+	cmd.AddCommand(newCloneCommand())
 	cmd.AddCommand(newListCommand())
+	cmd.AddCommand(newLoginCommand())
 	cmd.AddCommand(newReportLockCommand())
 	cmd.AddCommand(newWhoamiCommand())
+	cmd.AddCommand(newUpdateCommand())
 
 	return cmd
 }

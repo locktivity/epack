@@ -60,7 +60,7 @@ Examples:
 
 func runReportLock(cmd *cobra.Command, args []string) error {
 	remoteName := args[0]
-	out := outputWriter()
+	out := getOutput(cmd)
 	ctx := cmdContext(cmd)
 
 	projectRoot, cfg, remoteCfg, err := loadReportLockConfig(remoteName, reportLockEnv)

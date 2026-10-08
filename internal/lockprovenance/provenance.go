@@ -13,6 +13,7 @@ import (
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/safefile"
 )
 
@@ -20,6 +21,9 @@ const (
 	TriggerBootstrap   = "bootstrap"
 	TriggerRefresh     = "refresh"
 	TriggerFrozenCheck = "frozen_check"
+	// TriggerCheck is a run that verified sign-in, lock, secrets, and
+	// publishers and collected nothing.
+	TriggerCheck = "check"
 
 	OutcomeSuccess = "success"
 	OutcomeFailure = "failure"
@@ -33,6 +37,8 @@ type Options struct {
 	FailureMessage string
 	ReportedAt     time.Time
 	Getenv         func(string) string
+	// Metadata is merged into the report's metadata beside the config digest.
+	Metadata map[string]any
 }
 
 type Provenance struct {
@@ -120,7 +126,26 @@ func Build(opts Options) (*Provenance, error) {
 		TriggerKind:    opts.TriggerKind,
 		Outcome:        OutcomeSuccess,
 		ReportedAt:     opts.ReportedAt.UTC().Format(time.RFC3339),
+		Metadata:       metadata(opts.ProjectRoot, opts.Metadata),
 	}, nil
+}
+
+// metadata records the digest of the epack.yaml the run used, which is how
+// a remote tells which revision of a configuration it generated the run
+// was made from.
+func metadata(projectRoot string, extra map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range extra {
+		out[key] = value
+	}
+	if raw, err := safefile.ReadFile(filepath.Join(projectRoot, project.ConfigFileName), limits.ConfigFile); err == nil {
+		digest := sha256.Sum256(raw)
+		out["config_sha256"] = fmt.Sprintf("%x", digest[:])
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func normalizeOptions(opts Options) Options {
@@ -144,7 +169,7 @@ func normalizeOptions(opts Options) Options {
 
 func validateTrigger(trigger string) error {
 	switch trigger {
-	case TriggerBootstrap, TriggerRefresh, TriggerFrozenCheck:
+	case TriggerBootstrap, TriggerRefresh, TriggerFrozenCheck, TriggerCheck:
 		return nil
 	default:
 		return fmt.Errorf("invalid trigger kind %q", trigger)
@@ -173,6 +198,7 @@ func failureProvenance(opts Options) *Provenance {
 		FailureCode:    opts.FailureCode,
 		FailureMessage: opts.FailureMessage,
 		ReportedAt:     opts.ReportedAt.UTC().Format(time.RFC3339),
+		Metadata:       metadata(opts.ProjectRoot, opts.Metadata),
 	}
 }
 

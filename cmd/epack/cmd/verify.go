@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto"
 	"fmt"
 
 	"github.com/locktivity/epack/errors"
@@ -9,6 +10,7 @@ import (
 	"github.com/locktivity/epack/internal/securitypolicy"
 	"github.com/locktivity/epack/internal/verify"
 	"github.com/locktivity/epack/pack"
+	"github.com/locktivity/epack/sign"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +25,7 @@ var (
 	verifyInsecureSkipIdentityCheck  bool
 	verifyInsecureSkipEmbeddedVerify bool
 	verifyTrustRoot                  string
+	verifyPublicKeys                 []string
 )
 
 func init() {
@@ -39,6 +42,8 @@ func init() {
 		"INSECURE: accept any valid signer without identity verification (use --issuer/--subject instead)")
 	verifyCmd.Flags().BoolVar(&verifyInsecureSkipEmbeddedVerify, "insecure-skip-embedded-verify", false,
 		"INSECURE: skip verification of embedded attestations in merged pack provenance")
+	verifyCmd.Flags().StringArrayVar(&verifyPublicKeys, "public-key", nil,
+		"PEM public key a signer used instead of a certificate (repeatable); the matching key names the signer")
 	verifyCmd.Flags().StringVar(&verifyTrustRoot, "trust-root", "",
 		"path to Sigstore trust root JSON file (default: fetch from Sigstore TUF)")
 }
@@ -121,8 +126,14 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = p.Close() }()
 
+	publicKeys, err := loadVerifyPublicKeys(verifyPublicKeys)
+	if err != nil {
+		return exitError("%v", err)
+	}
+
 	// Build options from flags
 	opts := verify.PackOpts{
+		PublicKeys:                 publicKeys,
 		Issuer:                     verifyIssuer,
 		IssuerRegexp:               verifyIssuerRegexp,
 		Subject:                    verifySubject,
@@ -176,6 +187,18 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	return printVerifyResults(out, packPath, result)
 }
 
+func loadVerifyPublicKeys(paths []string) ([]crypto.PublicKey, error) {
+	keys := make([]crypto.PublicKey, 0, len(paths))
+	for _, path := range paths {
+		key, err := sign.LoadPublicKey(path)
+		if err != nil {
+			return nil, fmt.Errorf("--public-key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
 func validateVerifyFlags() error {
 	hasUnsafeOverrides := verifyInsecureSkipIdentityCheck || verifyInsecureSkipEmbeddedVerify
 	if err := securitypolicy.EnforceStrictProduction("verify_cli", hasUnsafeOverrides); err != nil {
@@ -221,6 +244,9 @@ func printVerifyResults(out *output.Writer, packPath string, result *verify.Pack
 			subject := att.Subject
 			if subject == "" {
 				subject = palette.Dim("(unknown)")
+			}
+			if att.Method == "key" {
+				subject = "key " + subject
 			}
 			out.Print("  %s %s\n", palette.Green("✓"), subject)
 			if att.Issuer != "" {

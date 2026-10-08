@@ -198,6 +198,7 @@ func PrepareAdapterExecutor(
 		// Unverified execution (PATH-based or explicitly allowed)
 		exec = NewExecutor(adapterPath, remoteCfg.EffectiveAdapter())
 	}
+	exec.ProjectRoot = projectRoot
 	exec.Stderr = opts.Stderr
 	exec.Secrets = remoteCfg.Secrets
 	exec.ManagedEnv = managedEnv

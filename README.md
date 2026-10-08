@@ -65,6 +65,13 @@ epack collect          # Lock deps → sync binaries → run collectors → buil
 epack sign *.epack
 ```
 
+Or run a configuration a remote generated, end to end:
+
+```bash
+epack remote login locktivity   # Allow epack in your browser once
+epack run northwind-production  # Fetch config, install, collect, sign, push
+```
+
 ## Core Commands
 
 | Command | What it does |
@@ -75,6 +82,7 @@ epack sign *.epack
 | `epack inspect` | Show pack contents and metadata |
 | `epack diff` | Compare two packs (what changed?) |
 | `epack collect` | Run collectors and build a pack |
+| `epack run` | Fetch a config from a remote, collect, run tools, sign, and push |
 
 ## What's in a Pack?
 

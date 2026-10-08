@@ -24,8 +24,8 @@ const (
 )
 
 var (
-	// ErrOIDCUnavailable indicates the runtime cannot present workload identity to the broker.
-	ErrOIDCUnavailable = errors.New("github actions oidc is not available")
+	// ErrOIDCUnavailable indicates the runtime cannot present an identity to the broker.
+	ErrOIDCUnavailable = errors.New("no runtime identity is available for the credential broker")
 )
 
 // CredentialBroker resolves Locktivity-managed credential-set IDs into an env bundle.
@@ -33,15 +33,28 @@ type CredentialBroker interface {
 	Resolve(ctx context.Context, req ResolveRequest, rt RuntimeContext) (ResolvedEnv, error)
 }
 
-// RuntimeContext describes the current execution environment.
+// RuntimeContext describes the current execution environment and the
+// identities it can present.
 type RuntimeContext struct {
 	InGitHubActions bool
 	OIDCAvailable   bool
+	InGitLabCI      bool
+	// GitLabIDToken is set when the job declared an ID token for Locktivity.
+	GitLabIDToken bool
+	// SigningKey is set when the environment points at a signing key.
+	SigningKey bool
 }
 
-// ResolveRequest is sent to the Locktivity credential broker.
+// IdentityAvailable reports whether the runtime can present an identity to the broker.
+func (rt RuntimeContext) IdentityAvailable() bool {
+	return (rt.InGitHubActions && rt.OIDCAvailable) || rt.GitLabIDToken || rt.SigningKey
+}
+
+// ResolveRequest is sent to the Locktivity credential broker. PipelineID
+// names the pipeline the run belongs to when the identity alone does not.
 type ResolveRequest struct {
 	CredentialSets []string `json:"credential_sets"`
+	PipelineID     string   `json:"pipeline_id,omitempty"`
 }
 
 // ResolvedEnv is the broker's env bundle response.
@@ -128,7 +141,7 @@ func (c *Client) withDefaults() (*Client, error) {
 }
 
 func validateResolveRuntime(rt RuntimeContext) error {
-	if !rt.InGitHubActions || !rt.OIDCAvailable {
+	if !rt.IdentityAvailable() {
 		return ErrOIDCUnavailable
 	}
 	return nil

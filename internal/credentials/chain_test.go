@@ -3,6 +3,7 @@ package credentials
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/locktivity/epack/internal/broker"
@@ -77,6 +78,90 @@ func TestResolverResolveComponentEnvErrorsWithoutOIDC(t *testing.T) {
 	if _, err := resolver.ResolveComponentEnv(context.Background(), cfg, []string{"github_repo"}); err == nil {
 		t.Fatal("ResolveComponentEnv() expected error when OIDC is unavailable, got nil")
 	}
+}
+
+func TestResolverExplainsWhichIdentityIsMissing(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.JobConfig{CredentialSets: map[string]string{"github_repo": "credset_abc123"}}
+	cases := []struct {
+		name string
+		env  map[string]string
+		want []string
+	}{
+		{"github actions", map[string]string{"GITHUB_ACTIONS": "true"}, []string{"id-token: write"}},
+		{"gitlab ci", map[string]string{"GITLAB_CI": "true"}, []string{
+			"declare id_tokens with LOCKTIVITY_ID_TOKEN",
+			"a signing key in EPACK_SIGNING_KEY with EPACK_PIPELINE_ID",
+		}},
+		{"elsewhere", nil, []string{
+			"a GitLab ID token in LOCKTIVITY_ID_TOKEN",
+			"a signing key in EPACK_SIGNING_KEY with EPACK_PIPELINE_ID",
+		}},
+	}
+	for _, tc := range cases {
+		resolver := Resolver{
+			Broker: stubBroker{err: broker.ErrOIDCUnavailable},
+			Getenv: func(name string) string { return tc.env[name] },
+		}
+		_, err := resolver.ResolveComponentEnv(context.Background(), cfg, []string{"github_repo"})
+		for _, want := range tc.want {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error = %v, want it to mention %q", tc.name, err, want)
+			}
+		}
+	}
+}
+
+func TestDetectRuntimeContextSeesGitLabAndSigningKeys(t *testing.T) {
+	t.Parallel()
+
+	rt := DetectRuntimeContext(func(name string) string {
+		return map[string]string{"GITLAB_CI": "true", "LOCKTIVITY_ID_TOKEN": "jwt"}[name]
+	})
+	if !rt.InGitLabCI || !rt.GitLabIDToken || rt.InGitHubActions || rt.SigningKey || !rt.IdentityAvailable() {
+		t.Fatalf("gitlab runtime = %+v", rt)
+	}
+
+	rt = DetectRuntimeContext(func(name string) string {
+		return map[string]string{"EPACK_SIGNING_KEY": "/keys/ci.pem"}[name]
+	})
+	if !rt.SigningKey || rt.GitLabIDToken || !rt.IdentityAvailable() {
+		t.Fatalf("signing key runtime = %+v", rt)
+	}
+
+	rt = DetectRuntimeContext(func(name string) string { return map[string]string{"EPACK_SIGNING_KEY": "  "}[name] })
+	if rt.SigningKey || rt.IdentityAvailable() {
+		t.Fatalf("blank signing key = %+v", rt)
+	}
+}
+
+func TestResolverNamesThePipelineFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.JobConfig{CredentialSets: map[string]string{"github_repo": "credset_abc123"}}
+	recorder := &recordingBroker{env: map[string]string{"LOCKTIVITY_ACCESS_TOKEN": "ltk"}}
+	resolver := Resolver{
+		Broker: recorder,
+		Getenv: func(name string) string { return map[string]string{broker.PipelineIDEnvVar: " pipe_1 "}[name] },
+	}
+
+	if _, err := resolver.ResolveComponentEnv(context.Background(), cfg, []string{"github_repo"}); err != nil {
+		t.Fatalf("ResolveComponentEnv() error = %v", err)
+	}
+	if recorder.request.PipelineID != "pipe_1" {
+		t.Fatalf("PipelineID = %q, want pipe_1", recorder.request.PipelineID)
+	}
+}
+
+type recordingBroker struct {
+	env     map[string]string
+	request broker.ResolveRequest
+}
+
+func (b *recordingBroker) Resolve(_ context.Context, req broker.ResolveRequest, _ broker.RuntimeContext) (broker.ResolvedEnv, error) {
+	b.request = req
+	return broker.ResolvedEnv{Env: b.env}, nil
 }
 
 type stubBroker struct {

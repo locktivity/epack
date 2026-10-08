@@ -3,14 +3,11 @@
 package remotecmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/locktivity/epack/internal/cli/output"
 )
 
 func TestRunList_NoRemotes(t *testing.T) {
@@ -33,12 +30,8 @@ collectors:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{})
-	defer func() { out = nil }()
-
 	// Run list
-	cmd := newListCommand()
+	cmd, stdout, _ := rootCommand(newListCommand())
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runList() error = %v", err)
@@ -83,12 +76,8 @@ remotes:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{})
-	defer func() { out = nil }()
-
 	// Run list
-	cmd := newListCommand()
+	cmd, stdout, _ := rootCommand(newListCommand())
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runList() error = %v", err)
@@ -135,12 +124,8 @@ remotes:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output with JSON mode
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{JSON: true})
-	defer func() { out = nil }()
-
 	// Run list
-	cmd := newListCommand()
+	cmd, stdout, _ := rootCommand(newListCommand(), "--json")
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runList() error = %v", err)
@@ -190,12 +175,8 @@ collectors:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output with JSON mode
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{JSON: true})
-	defer func() { out = nil }()
-
 	// Run list
-	cmd := newListCommand()
+	cmd, stdout, _ := rootCommand(newListCommand(), "--json")
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runList() error = %v", err)
@@ -226,12 +207,8 @@ func TestRunList_NotInProject(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{})
-	defer func() { out = nil }()
-
 	// Run list - should error
-	cmd := newListCommand()
+	cmd, _, _ := rootCommand(newListCommand())
 	err := cmd.Execute()
 	if err == nil {
 		t.Error("expected error when not in project")
@@ -265,12 +242,8 @@ remotes:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output with JSON mode for easier parsing
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{JSON: true})
-	defer func() { out = nil }()
-
 	// Run list
-	cmd := newListCommand()
+	cmd, stdout, _ := rootCommand(newListCommand(), "--json")
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runList() error = %v", err)

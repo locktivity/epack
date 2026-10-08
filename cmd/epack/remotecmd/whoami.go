@@ -54,7 +54,7 @@ Examples:
 }
 
 func runWhoami(cmd *cobra.Command, args []string) error {
-	out := outputWriter()
+	out := getOutput(cmd)
 	ctx := cmdContext(cmd)
 
 	// Find project root

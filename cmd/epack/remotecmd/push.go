@@ -110,7 +110,7 @@ Examples:
 func runPush(cmd *cobra.Command, args []string) error {
 	remoteName := args[0]
 	packPath := args[1]
-	out := outputWriter()
+	out := getOutput(cmd)
 	ctx := cmdContext(cmd)
 
 	packInfo, err := os.Stat(packPath)
@@ -221,10 +221,10 @@ func outputPushResult(out *output.Writer, remoteName, packPath string, result *p
 		}
 	}
 	if viewURL, ok := result.Links["view"]; ok {
-		out.Print("\nView:  %s\n", viewURL)
+		out.Print("\nView:  %s\n", output.Printable(viewURL))
 	}
 	if shareURL, ok := result.Links["share"]; ok {
-		out.Print("Share: %s\n", shareURL)
+		out.Print("Share: %s\n", output.Printable(shareURL))
 	}
 
 	p := out.Palette()

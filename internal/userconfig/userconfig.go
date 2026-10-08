@@ -6,19 +6,27 @@
 //
 //	~/.epack/
 //	  utilities.lock       # Pinned utility versions and digests
+//	  remotes.lock         # Pinned remote adapters reachable outside a project
 //	  bin/                 # Installed utility binaries
 //	    {name}/
 //	      {version}/
 //	        {os}-{arch}/
 //	          epack-util-{name}
+//	  remotes/             # Installed remote adapters, laid out like a project's .epack
+//	    {name}/
+//	      {version}/
+//	        {os}-{arch}/
+//	          {adapter}
 package userconfig
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strings"
 
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/componenttypes"
@@ -41,6 +49,22 @@ const UtilitiesLockFile = "utilities.lock"
 
 // BinDir is the subdirectory for installed utility binaries.
 const BinDir = "bin"
+
+// KeysDirName holds the signing keys epack made for this machine, one per
+// remote, readable only by the user.
+const KeysDirName = "keys"
+
+// KeyPath is where this machine's signing key for a remote lives.
+func KeyPath(remoteName string) (string, error) {
+	if err := config.ValidateRemoteName(remoteName); err != nil {
+		return "", err
+	}
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, KeysDirName, remoteName+".pem"), nil
+}
 
 // Dir returns the user config directory path (~/.epack).
 func Dir() (string, error) {
@@ -108,24 +132,33 @@ func UtilityBinaryPath(name string) (string, error) {
 	return path, nil
 }
 
-// EnsureDir creates the user config directory if it doesn't exist.
+// EnsureDir creates the user config directory if it doesn't exist. The
+// directory is the trusted base for everything beneath it, so it is created
+// directly; MkdirAll needs a base that already exists.
 func EnsureDir() error {
 	dir, err := Dir()
 	if err != nil {
 		return err
 	}
 
-	return safefile.MkdirAll(dir, dir)
+	return safefile.EnsureBaseDir(dir)
 }
 
 // EnsureBinDir creates the bin directory if it doesn't exist.
 func EnsureBinDir() error {
+	if err := EnsureDir(); err != nil {
+		return err
+	}
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
 	binDir, err := BinPath()
 	if err != nil {
 		return err
 	}
 
-	return safefile.MkdirAll(binDir, binDir)
+	return safefile.MkdirAll(dir, binDir)
 }
 
 // UtilitiesLock is the lockfile format for user-installed utilities.
@@ -266,7 +299,7 @@ func (lf *UtilitiesLock) SaveToPath(path string) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := validateUtilitiesLockPath(path, dir); err != nil {
+	if err := validateUserLockPath(path, dir); err != nil {
 		return err
 	}
 
@@ -281,7 +314,7 @@ func (lf *UtilitiesLock) SaveToPath(path string) error {
 	return nil
 }
 
-func validateUtilitiesLockPath(path, dir string) error {
+func validateUserLockPath(path, dir string) error {
 	if _, err := os.UserHomeDir(); err != nil {
 		return fmt.Errorf("getting home directory: %w", err)
 	}
@@ -290,10 +323,10 @@ func validateUtilitiesLockPath(path, dir string) error {
 		return fmt.Errorf("checking for symlinks: %w", err)
 	}
 	if hasSymlink {
-		return fmt.Errorf("refusing to save utilities lock: path contains symlink: %s", dir)
+		return fmt.Errorf("refusing to save lock: path contains symlink: %s", dir)
 	}
 	if err := safefile.MkdirAll(dir, dir); err != nil {
-		return fmt.Errorf("creating utilities lock dir: %w", err)
+		return fmt.Errorf("creating lock dir: %w", err)
 	}
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to overwrite symlink at %s", path)
@@ -424,6 +457,53 @@ func copyVerification(src *componenttypes.Verification) *componenttypes.Verifica
 // Config represents user configuration from ~/.epack/config.yaml
 type Config struct {
 	Component ComponentConfig `yaml:"component,omitempty"`
+
+	// DefaultRemote is the remote a bare configuration name refers to in
+	// commands such as 'epack run <name>'. The last successful login sets it.
+	DefaultRemote string `yaml:"default_remote,omitempty"`
+
+	// TrustedPublishers are the GitHub owners whose collectors, tools, and
+	// remotes a fetched configuration may run on this machine.
+	TrustedPublishers []string `yaml:"trusted_publishers,omitempty"`
+}
+
+var publisherPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$`)
+
+func normalizePublisher(name string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(name), "github.com/")))
+	if !publisherPattern.MatchString(normalized) {
+		return "", fmt.Errorf("invalid publisher name %q: expected a GitHub owner such as locktivity", name)
+	}
+	return normalized, nil
+}
+
+// TrustedPublishers returns the publishers recorded for fetched configurations.
+func TrustedPublishers() ([]string, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	return append([]string(nil), cfg.TrustedPublishers...), nil
+}
+
+// TrustPublisher records a publisher. It reports whether the name was new.
+func TrustPublisher(name string) (bool, error) {
+	normalized, err := normalizePublisher(name)
+	if err != nil {
+		return false, err
+	}
+	cfg, err := LoadConfig()
+	if err != nil {
+		return false, err
+	}
+	for _, existing := range cfg.TrustedPublishers {
+		if existing == normalized {
+			return false, nil
+		}
+	}
+	cfg.TrustedPublishers = append(cfg.TrustedPublishers, normalized)
+	sort.Strings(cfg.TrustedPublishers)
+	return true, SaveConfig(cfg)
 }
 
 // ComponentConfig holds component authoring settings.
@@ -501,10 +581,55 @@ func SetConfigValue(key string, value string) error {
 	switch key {
 	case "component.trust_local":
 		cfg.Component.TrustLocal = value == "true" || value == "1"
+	case "default_remote":
+		if err := config.ValidateRemoteName(value); err != nil {
+			return err
+		}
+		cfg.DefaultRemote = value
+	case "trusted_publishers":
+		var publishers []string
+		for _, name := range strings.Split(value, ",") {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			normalized, err := normalizePublisher(name)
+			if err != nil {
+				return err
+			}
+			publishers = append(publishers, normalized)
+		}
+		sort.Strings(publishers)
+		cfg.TrustedPublishers = publishers
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}
 
+	return SaveConfig(cfg)
+}
+
+// DefaultRemote returns the remote a bare configuration name refers to, or
+// an empty string when no login has set one.
+func DefaultRemote() (string, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return "", err
+	}
+	return cfg.DefaultRemote, nil
+}
+
+// SetDefaultRemote records the remote a bare configuration name refers to.
+func SetDefaultRemote(name string) error {
+	if err := config.ValidateRemoteName(name); err != nil {
+		return err
+	}
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.DefaultRemote == name {
+		return nil
+	}
+	cfg.DefaultRemote = name
 	return SaveConfig(cfg)
 }
 
@@ -521,6 +646,10 @@ func GetConfigValue(key string) (string, error) {
 			return "true", nil
 		}
 		return "false", nil
+	case "default_remote":
+		return cfg.DefaultRemote, nil
+	case "trusted_publishers":
+		return strings.Join(cfg.TrustedPublishers, ","), nil
 	default:
 		return "", fmt.Errorf("unknown config key: %s", key)
 	}

@@ -16,6 +16,7 @@ type Context struct {
 	HeadSHA  string
 	CIRunURL string
 	GitHub   *GitHubContext
+	GitLab   *GitLabContext
 }
 
 // GitHubContext contains GitHub Actions-specific build metadata.
@@ -27,6 +28,16 @@ type GitHubContext struct {
 	Actor      string
 }
 
+// GitLabContext contains GitLab CI-specific build metadata.
+type GitLabContext struct {
+	ProjectPath string
+	Ref         string
+	JobID       string
+	PipelineID  string
+	Source      string
+	Actor       string
+}
+
 // Build returns structured build metadata derived from the ambient runtime.
 // The result is suitable for JSON emission and future transport layers.
 func Build(getenv func(string) string) *Context {
@@ -36,13 +47,16 @@ func Build(getenv func(string) string) *Context {
 
 	ctx := &Context{}
 
-	if strings.EqualFold(strings.TrimSpace(getenv("GITHUB_ACTIONS")), "true") {
+	switch {
+	case strings.EqualFold(strings.TrimSpace(getenv("GITHUB_ACTIONS")), "true"):
 		ctx.RunnerType = "github_actions"
+	case strings.EqualFold(strings.TrimSpace(getenv("GITLAB_CI")), "true"):
+		ctx.RunnerType = "gitlab_ci"
 	}
 	ctx.PipelineID = trimmed(getenv("EPACK_PIPELINE_ID"))
-	ctx.GitSHA = trimmed(getenv("GITHUB_SHA"))
+	ctx.GitSHA = firstNonEmpty(trimmed(getenv("GITHUB_SHA")), trimmed(getenv("CI_COMMIT_SHA")))
 	ctx.HeadSHA = trimmed(getenv("EPACK_HEAD_SHA"))
-	ctx.CIRunURL = detectGitHubRunURL(getenv)
+	ctx.CIRunURL = firstNonEmpty(detectGitHubRunURL(getenv), trimmed(getenv("CI_JOB_URL")))
 
 	github := &GitHubContext{
 		Repository: trimmed(getenv("GITHUB_REPOSITORY")),
@@ -57,6 +71,17 @@ func Build(getenv func(string) string) *Context {
 	}
 	if !github.isZero() {
 		ctx.GitHub = github
+	}
+	gitlab := &GitLabContext{
+		ProjectPath: trimmed(getenv("CI_PROJECT_PATH")),
+		Ref:         trimmed(getenv("CI_COMMIT_REF_NAME")),
+		JobID:       trimmed(getenv("CI_JOB_ID")),
+		PipelineID:  trimmed(getenv("CI_PIPELINE_ID")),
+		Source:      trimmed(getenv("CI_PIPELINE_SOURCE")),
+		Actor:       trimmed(getenv("GITLAB_USER_LOGIN")),
+	}
+	if !gitlab.isZero() {
+		ctx.GitLab = gitlab
 	}
 	if ctx.isZero() {
 		return nil
@@ -77,6 +102,9 @@ func (c *Context) ToMap() map[string]any {
 	addAnyString(ctx, "ci_run_url", c.CIRunURL)
 	if github := c.GitHub.ToMap(); len(github) > 0 {
 		ctx["github"] = github
+	}
+	if gitlab := c.GitLab.ToMap(); len(gitlab) > 0 {
+		ctx["gitlab"] = gitlab
 	}
 	if len(ctx) == 0 {
 		return nil
@@ -112,7 +140,8 @@ func (c *Context) ReleaseFields() map[string]string {
 }
 
 func (c *Context) isZero() bool {
-	return c.RunnerType == "" && c.PipelineID == "" && c.GitSHA == "" && c.HeadSHA == "" && c.CIRunURL == "" && (c.GitHub == nil || c.GitHub.isZero())
+	return c.RunnerType == "" && c.PipelineID == "" && c.GitSHA == "" && c.HeadSHA == "" && c.CIRunURL == "" &&
+		(c.GitHub == nil || c.GitHub.isZero()) && (c.GitLab == nil || c.GitLab.isZero())
 }
 
 // ToMap converts the GitHub-specific context to the transport-friendly map shape.
@@ -134,6 +163,37 @@ func (g *GitHubContext) ToMap() map[string]string {
 
 func (g *GitHubContext) isZero() bool {
 	return g == nil || (g.Repository == "" && g.Workflow == "" && g.Ref == "" && g.RunID == "" && g.Actor == "")
+}
+
+// ToMap converts the GitLab-specific context to the transport-friendly map shape.
+func (g *GitLabContext) ToMap() map[string]string {
+	if g == nil || g.isZero() {
+		return nil
+	}
+	ctx := make(map[string]string)
+	addString(ctx, "project_path", g.ProjectPath)
+	addString(ctx, "ref", g.Ref)
+	addString(ctx, "job_id", g.JobID)
+	addString(ctx, "pipeline_id", g.PipelineID)
+	addString(ctx, "source", g.Source)
+	addString(ctx, "actor", g.Actor)
+	if len(ctx) == 0 {
+		return nil
+	}
+	return ctx
+}
+
+func (g *GitLabContext) isZero() bool {
+	return g == nil || (g.ProjectPath == "" && g.Ref == "" && g.JobID == "" && g.PipelineID == "" && g.Source == "" && g.Actor == "")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func addAnyString(dst map[string]any, key, value string) {

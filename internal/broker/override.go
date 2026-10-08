@@ -33,24 +33,28 @@ func ResolveCustomCredentialBrokerURL(getenv func(string) string) (string, bool,
 // ValidateCustomCredentialBrokerURL ensures the custom credential broker URL is
 // safe for explicit opt-in use.
 func ValidateCustomCredentialBrokerURL(rawURL string) error {
+	return validateOverrideURL(InsecureCredentialBrokerURLEnvVar, rawURL)
+}
+
+func validateOverrideURL(envVar, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("%s: invalid URL: %w", InsecureCredentialBrokerURLEnvVar, err)
+		return fmt.Errorf("%s: invalid URL: %w", envVar, err)
 	}
 	if !strings.EqualFold(u.Scheme, "https") {
-		return fmt.Errorf("%s: must use HTTPS (got %q)", InsecureCredentialBrokerURLEnvVar, u.Scheme)
+		return fmt.Errorf("%s: must use HTTPS (got %q)", envVar, u.Scheme)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("%s: missing host", InsecureCredentialBrokerURLEnvVar)
+		return fmt.Errorf("%s: missing host", envVar)
 	}
 	if u.User != nil {
-		return fmt.Errorf("%s: userinfo is not allowed", InsecureCredentialBrokerURLEnvVar)
+		return fmt.Errorf("%s: userinfo is not allowed", envVar)
 	}
 	if u.RawQuery != "" {
-		return fmt.Errorf("%s: query is not allowed", InsecureCredentialBrokerURLEnvVar)
+		return fmt.Errorf("%s: query is not allowed", envVar)
 	}
 	if u.Fragment != "" {
-		return fmt.Errorf("%s: fragment is not allowed", InsecureCredentialBrokerURLEnvVar)
+		return fmt.Errorf("%s: fragment is not allowed", envVar)
 	}
 	return nil
 }

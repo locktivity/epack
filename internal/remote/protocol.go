@@ -11,8 +11,10 @@
 //   - pull.finalize: Confirm download completion
 //   - runs.sync: Sync run ledgers to remote
 //   - lock.report: Report lockfile provenance without pushing a pack
-//   - auth.login: Authenticate with remote (adapter-managed)
+//   - auth.login: Start a browser sign-in that returns to a loopback redirect
+//   - auth.complete: Finish a browser sign-in with the code the browser returned
 //   - auth.whoami: Show current identity
+//   - config.pull: Fetch a named configuration (files, shas, revision) from the remote
 package remote
 
 import (
@@ -34,7 +36,9 @@ const (
 	CommandRunsSync     = "runs.sync"
 	CommandLockReport   = "lock.report"
 	CommandAuthLogin    = "auth.login"
+	CommandAuthComplete = "auth.complete"
 	CommandAuthWhoami   = "auth.whoami"
+	CommandConfigPull   = "config.pull"
 )
 
 // Request type strings.
@@ -46,7 +50,9 @@ const (
 	TypeRunsSync     = "runs.sync"
 	TypeLockReport   = "lock.report"
 	TypeAuthLogin    = "auth.login"
+	TypeAuthComplete = "auth.complete"
 	TypeAuthWhoami   = "auth.whoami"
+	TypeConfigPull   = "config.pull"
 )
 
 // Response type strings.
@@ -58,7 +64,9 @@ const (
 	TypeRunsSyncResult     = "runs.sync.result"
 	TypeLockReportResult   = "lock.report.result"
 	TypeAuthLoginResult    = "auth.login.result"
+	TypeAuthCompleteResult = "auth.complete.result"
 	TypeAuthWhoamiResult   = "auth.whoami.result"
+	TypeConfigPullResult   = "config.pull.result"
 	TypeError              = "error"
 )
 
@@ -171,11 +179,15 @@ type ActionHint struct {
 	URL     string `json:"url,omitempty"`
 }
 
-// AuthLoginInstructions provides device code flow instructions.
+// AuthLoginInstructions start a browser sign-in. AuthorizationURL is the page
+// the person allows epack on; State is also carried in that URL and comes back
+// with the redirect. Session is the adapter's handle for the sign-in in
+// flight: epack passes it back to auth.complete unchanged and never shows it.
 type AuthLoginInstructions struct {
-	UserCode        string `json:"user_code"`
-	VerificationURI string `json:"verification_uri"`
-	ExpiresInSecs   int    `json:"expires_in_seconds"`
+	AuthorizationURL string `json:"authorization_url"`
+	State            string `json:"state"`
+	Session          string `json:"session"`
+	ExpiresInSecs    int    `json:"expires_in_seconds"`
 }
 
 // IdentityResult contains current authentication identity.
@@ -233,11 +245,25 @@ type LockReportRequest struct {
 	Identity        *AuthHints                `json:"identity,omitempty"`
 }
 
-// AuthLoginRequest initiates authentication with the remote.
+// AuthLoginRequest starts a browser sign-in. RedirectURI is the loopback
+// address epack listens on for the browser to return to.
 type AuthLoginRequest struct {
 	Type            string `json:"type"` // "auth.login"
 	ProtocolVersion int    `json:"protocol_version"`
 	RequestID       string `json:"request_id"`
+	RedirectURI     string `json:"redirect_uri"`
+}
+
+// AuthCompleteRequest finishes a browser sign-in with the code and state the
+// browser returned. The adapter exchanges the code and stores the credentials
+// it gets.
+type AuthCompleteRequest struct {
+	Type            string `json:"type"` // "auth.complete"
+	ProtocolVersion int    `json:"protocol_version"`
+	RequestID       string `json:"request_id"`
+	Session         string `json:"session"`
+	Code            string `json:"code"`
+	State           string `json:"state"`
 }
 
 // AuthWhoamiRequest queries the current authentication state.
@@ -245,6 +271,22 @@ type AuthWhoamiRequest struct {
 	Type            string `json:"type"` // "auth.whoami"
 	ProtocolVersion int    `json:"protocol_version"`
 	RequestID       string `json:"request_id"`
+}
+
+// ConfigPullRequest asks the remote for a named configuration: the files a
+// project folder is made of, with their shas and the revision they came from.
+type ConfigPullRequest struct {
+	Type            string           `json:"type"` // "config.pull"
+	ProtocolVersion int              `json:"protocol_version"`
+	RequestID       string           `json:"request_id"`
+	Remote          string           `json:"remote"`
+	Target          TargetConfig     `json:"target"`
+	Config          ConfigPullTarget `json:"config"`
+}
+
+// ConfigPullTarget names the configuration to pull.
+type ConfigPullTarget struct {
+	Name string `json:"name"`
 }
 
 // PullPrepareRequest is sent to initiate a pull operation.
@@ -328,6 +370,7 @@ type LockReportResponse struct {
 	Outcome        string `json:"outcome,omitempty"`
 	LockfileSHA256 string `json:"lockfile_sha256,omitempty"`
 	RevisionID     string `json:"revision_id,omitempty"`
+	PipelineURL    string `json:"pipeline_url,omitempty"`
 }
 
 // FailedOutput describes an output file that failed to upload or confirm.
@@ -345,12 +388,46 @@ type AuthLoginResponse struct {
 	Instructions AuthLoginInstructions `json:"instructions"`
 }
 
+// AuthCompleteResponse is returned from auth.complete once the adapter has
+// stored the credentials.
+type AuthCompleteResponse struct {
+	OK        bool           `json:"ok"`
+	Type      string         `json:"type"` // "auth.complete.result"
+	RequestID string         `json:"request_id"`
+	Identity  IdentityResult `json:"identity"`
+}
+
 // AuthWhoamiResponse is returned from auth.whoami.
 type AuthWhoamiResponse struct {
 	OK        bool           `json:"ok"`
 	Type      string         `json:"type"` // "auth.whoami.result"
 	RequestID string         `json:"request_id"`
 	Identity  IdentityResult `json:"identity"`
+}
+
+// ConfigPullResponse is returned from config.pull.
+type ConfigPullResponse struct {
+	OK        bool             `json:"ok"`
+	Type      string           `json:"type"` // "config.pull.result"
+	RequestID string           `json:"request_id"`
+	Config    ConfigPullResult `json:"config"`
+}
+
+// ConfigPullResult is one revision of a named configuration. Files are keyed
+// by path relative to the project folder and shas are SHA-256 hex digests of
+// the managed files. Folder is where the same files live in a repository the
+// remote also generates for, when it does.
+type ConfigPullResult struct {
+	ID       string            `json:"id,omitempty"`
+	Name     string            `json:"name"`
+	Title    string            `json:"title,omitempty"`
+	Stream   string            `json:"stream,omitempty"`
+	RunsIn   string            `json:"runs_in,omitempty"`
+	Revision int               `json:"revision"`
+	Folder   string            `json:"folder,omitempty"`
+	Files    map[string]string `json:"files"`
+	Shas     map[string]string `json:"shas,omitempty"`
+	Lockfile string            `json:"lockfile,omitempty"`
 }
 
 // ErrorResponse is returned when an operation fails.
@@ -377,4 +454,134 @@ func (e *ErrorInfo) IsRetryable() bool {
 // IsAuthRequired returns true if authentication is required.
 func (e *ErrorInfo) IsAuthRequired() bool {
 	return e.Code == ErrCodeAuthRequired
+}
+
+// Signing key operations, for a remote that keeps the list of keys a
+// pipeline accepts signatures from. Only a signed-in person may use them.
+const (
+	CommandKeyRegister = "key.register"
+	CommandKeyList     = "key.list"
+	CommandKeyRetire   = "key.retire"
+	CommandKeyRevoke   = "key.revoke"
+	TypeKeyRegister    = "key.register"
+	TypeKeyList        = "key.list"
+	TypeKeyRetire      = "key.retire"
+	TypeKeyRevoke      = "key.revoke"
+)
+
+// KeyRegisterRequest asks the remote to accept a signing key for a
+// configuration, named as the remote knows it.
+type KeyRegisterRequest struct {
+	Type            string `json:"type"` // "key.register"
+	ProtocolVersion int    `json:"protocol_version"`
+	RequestID       string `json:"request_id"`
+	Config          string `json:"config"`
+	PublicKeyPEM    string `json:"public_key_pem"`
+	Name            string `json:"name,omitempty"`
+	ExpiresInDays   int    `json:"expires_in_days,omitempty"`
+}
+
+// Signing key statuses. Only a usable key is safe to sign with. A pending
+// key waits for a person to approve it and turns lapsed when nobody does in
+// time; denied, expired, retired, and revoked are final. Packs a key signed
+// before it expired or was retired stay trusted; revoking a key withdraws
+// trust from every pack it signed.
+const (
+	KeyStatusPending = "pending"
+	KeyStatusLapsed  = "lapsed"
+	KeyStatusUsable  = "usable"
+	KeyStatusDenied  = "denied"
+	KeyStatusExpired = "expired"
+	KeyStatusRetired = "retired"
+	KeyStatusRevoked = "revoked"
+)
+
+// SigningKey is one key a configuration accepts signatures from. Machine
+// names the machine that registered it. Approval comes only from
+// key.register, for a key that is pending.
+type SigningKey struct {
+	ID           string       `json:"id"`
+	Name         string       `json:"name,omitempty"`
+	Fingerprint  string       `json:"fingerprint"`
+	Algorithm    string       `json:"algorithm,omitempty"`
+	Status       string       `json:"status"`
+	RegisteredBy string       `json:"registered_by,omitempty"`
+	CreatedAt    string       `json:"created_at,omitempty"`
+	ExpiresAt    string       `json:"expires_at,omitempty"`
+	RevokedAt    string       `json:"revoked_at,omitempty"`
+	RetiredAt    string       `json:"retired_at,omitempty"`
+	Machine      string       `json:"machine,omitempty"`
+	Approval     *KeyApproval `json:"approval,omitempty"`
+}
+
+// KeyApproval is how a person approves a pending key: they type Code at URL
+// before ExpiresAt. Interval is how often to check back, in seconds.
+type KeyApproval struct {
+	Code      string `json:"code"`
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expires_at"`
+	Interval  int    `json:"interval,omitempty"`
+}
+
+// KeyRegisterResponse is the response for key.register operations. Created
+// is false when the remote already held the key.
+type KeyRegisterResponse struct {
+	OK          bool       `json:"ok"`
+	Type        string     `json:"type"` // "key.register.result"
+	RequestID   string     `json:"request_id"`
+	Key         SigningKey `json:"key"`
+	Created     bool       `json:"created"`
+	PipelineURL string     `json:"pipeline_url,omitempty"`
+}
+
+// KeyListRequest asks for the keys a configuration accepts.
+type KeyListRequest struct {
+	Type            string `json:"type"` // "key.list"
+	ProtocolVersion int    `json:"protocol_version"`
+	RequestID       string `json:"request_id"`
+	Config          string `json:"config"`
+}
+
+// KeyListResponse is the response for key.list operations.
+type KeyListResponse struct {
+	OK        bool         `json:"ok"`
+	Type      string       `json:"type"` // "key.list.result"
+	RequestID string       `json:"request_id"`
+	Keys      []SigningKey `json:"keys"`
+}
+
+// KeyRevokeRequest asks the remote to stop trusting a key, including the
+// packs it already signed.
+type KeyRevokeRequest struct {
+	Type            string `json:"type"` // "key.revoke"
+	ProtocolVersion int    `json:"protocol_version"`
+	RequestID       string `json:"request_id"`
+	Config          string `json:"config"`
+	ID              string `json:"id"`
+}
+
+// KeyRevokeResponse is the response for key.revoke operations.
+type KeyRevokeResponse struct {
+	OK        bool       `json:"ok"`
+	Type      string     `json:"type"` // "key.revoke.result"
+	RequestID string     `json:"request_id"`
+	Key       SigningKey `json:"key"`
+}
+
+// KeyRetireRequest asks the remote to stop accepting new signatures from a
+// key while still trusting the packs it signed, as a rotation does.
+type KeyRetireRequest struct {
+	Type            string `json:"type"` // "key.retire"
+	ProtocolVersion int    `json:"protocol_version"`
+	RequestID       string `json:"request_id"`
+	Config          string `json:"config"`
+	ID              string `json:"id"`
+}
+
+// KeyRetireResponse is the response for key.retire operations.
+type KeyRetireResponse struct {
+	OK        bool       `json:"ok"`
+	Type      string     `json:"type"` // "key.retire.result"
+	RequestID string     `json:"request_id"`
+	Key       SigningKey `json:"key"`
 }

@@ -162,7 +162,8 @@ Adapters declare their supported protocol version via `--capabilities`. Requests
 | `pull.finalize` | Confirm pack receipt |
 | `runs.sync` | Sync run ledgers to remote |
 | `lock.report` | Report lockfile provenance without pushing a pack |
-| `auth.login` | Authenticate with remote (interactive) |
+| `auth.login` | Start a browser sign-in that returns to a loopback redirect |
+| `auth.complete` | Finish a browser sign-in with the code the browser returned |
 | `auth.whoami` | Query current identity |
 
 ### Invocation
@@ -175,6 +176,10 @@ epack-remote-locktivity --capabilities
 echo '{"type":"push.prepare",...}' | epack-remote-locktivity push.prepare
 ```
 
+Every command runs with `EPACK_REMOTE_PROTOCOL_VERSION` set, and with
+`EPACK_PROJECT_ROOT` set to the project folder when there is one, so an
+adapter can read files it put there without being told where they are.
+
 ## Capabilities
 
 The `--capabilities` command returns adapter metadata:
@@ -184,6 +189,7 @@ The `--capabilities` command returns adapter metadata:
   "name": "locktivity",
   "kind": "remote_adapter",
   "deploy_protocol_version": 1,
+  "version": "v0.1.6",
   "features": {
     "prepare_finalize": true,
     "direct_upload": false,
@@ -191,12 +197,14 @@ The `--capabilities` command returns adapter metadata:
     "runs_sync": true,
     "lock_report": true,
     "auth_login": true,
+    "auth_browser": true,
     "whoami": true
   },
   "auth": {
-    "modes": ["device_code", "oidc_token", "api_key"],
+    "modes": ["browser", "oidc_token", "api_key"],
     "token_storage": "os_keychain"
   },
+  "files_dir": ".locktivity",
   "limits": {
     "max_pack_bytes": 104857600,
     "max_runs_per_sync": 100
@@ -214,13 +222,23 @@ The `--capabilities` command returns adapter metadata:
 | `runs_sync` | Supports run ledger syncing |
 | `lock_report` | Supports lockfile provenance reports through `lock.report` |
 | `auth_login` | Supports interactive authentication |
+| `auth_browser` | Signs in through the browser: `auth.login` takes a loopback `redirect_uri` and `auth.complete` finishes the sign-in. `epack remote login` requires it |
 | `whoami` | Supports identity query |
+| `config_pull` | Supports handing over a named configuration through `config.pull` |
+| `keys` | Manages the signing keys a pipeline accepts through `key.register`, `key.list`, `key.retire`, and `key.revoke` |
+
+`files_dir`, outside the feature flags, names the one hidden folder a fetched
+configuration from this adapter may carry for its own bookkeeping, such as
+`.locktivity`. It must be a single hidden folder name and may not be `.epack`
+or `.git`; an adapter that declares none may not put hidden files in a pull.
+Adapters released before `files_dir` declare none, so a pull through one is
+refused with a pointer to `epack remote update <remote>`.
 
 ### Authentication Modes
 
 | Mode | Description |
 |------|-------------|
-| `device_code` | Device code flow (opens browser) |
+| `browser` | Browser sign-in with a loopback redirect, through `auth.login` and `auth.complete` |
 | `oidc_token` | OIDC token injection (CI/CD) |
 | `api_key` | API key authentication |
 
@@ -598,7 +616,7 @@ Failure reports omit the raw lockfile and include a stable failure code:
 }
 ```
 
-Allowed `trigger_kind` values are `bootstrap`, `refresh`, and `frozen_check`.
+Allowed `trigger_kind` values are `bootstrap`, `refresh`, `frozen_check`, and `check`. A `check` report comes from `epack run --check` (or a run with `EPACK_CHECK=1`): the run signed in, verified the lock, the variables, the credentials, and the publishers, collected nothing, and put what it found under `metadata.check` (`signed_in_as`, `lock_present`, `lock_current`, `env_present`, `env_total`, `env_missing`, `env_covered`, `credentials`, `publishers_trusted`, `findings`); its outcome is `success` with the lockfile when the run would have everything it needs, otherwise `failure` with the code `check_failed`. A variable that only the remote reads, such as the remote's own fallback credential, is listed under `env_covered` rather than counted when the run is signed in: the session is the credential and the run will not read the variable.
 Allowed `outcome` values are `success` and `failure`.
 
 Stable frozen failure codes include:
@@ -625,7 +643,15 @@ CI extracts these codes without scraping logs: when the `EPACK_ERROR_FILE` envir
 }
 ```
 
+The `pipeline_url` field (optional) is the address of the pipeline's page on the remote; `epack run --check` shows it after the report when it is an http or https URL.
+
 ## Authentication
+
+`epack remote login <remote>` signs in through the browser with a loopback
+redirect. epack listens on `127.0.0.1`, on a free port or the one `--port`
+names, asks the adapter for a sign-in that returns there, and opens the link.
+When the browser comes back, epack hands what it brought to the adapter to
+finish. The adapter talks to its remote; epack only carries the redirect.
 
 ### auth.login Request
 
@@ -633,9 +659,13 @@ CI extracts these codes without scraping logs: when the `EPACK_ERROR_FILE` envir
 {
   "type": "auth.login",
   "protocol_version": 1,
-  "request_id": "req_jkl012"
+  "request_id": "req_jkl012",
+  "redirect_uri": "http://127.0.0.1:51234/callback"
 }
 ```
+
+`redirect_uri` is always `http://127.0.0.1:{port}/callback`, on the port epack
+is listening on.
 
 ### auth.login Response
 
@@ -645,12 +675,131 @@ CI extracts these codes without scraping logs: when the `EPACK_ERROR_FILE` envir
   "type": "auth.login.result",
   "request_id": "req_jkl012",
   "instructions": {
-    "user_code": "ABCD-1234",
-    "verification_uri": "https://auth.locktivity.com/device",
+    "authorization_url": "https://app.example.com/oauth/authorize?client_id=epack&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2Fcallback&state=af0ifjsldkj",
+    "state": "af0ifjsldkj",
+    "session": "opaque-session",
     "expires_in_seconds": 600
   }
 }
 ```
+
+`authorization_url` is the page where the person allows epack. epack opens it
+in the browser only when it is an http or https URL, and prints it either way.
+`state` is also carried in that URL. `session` is the adapter's handle for the
+sign-in in flight and carries what it needs for the code exchange. epack keeps
+it in memory, never shows or logs it, and passes it back unchanged to
+`auth.complete`. epack waits for the browser for at most `expires_in_seconds`,
+10 minutes when it is 0, and never longer than 15 minutes.
+
+The remote sends the browser back to `redirect_uri` with `code` and `state`
+once the person allows epack, or with `error`, `error_description`, and
+`state` when they do not (`access_denied` when they cancel). epack serves only
+`GET /callback`, turns away a callback whose `state` does not match, and lets
+the first one that matches decide the sign-in. A callback with an `error` ends
+the sign-in without calling the adapter again.
+
+### auth.complete Request
+
+```json
+{
+  "type": "auth.complete",
+  "protocol_version": 1,
+  "request_id": "req_jkl013",
+  "session": "opaque-session",
+  "code": "SplxlOBeZQQYbYS6WxSbIA",
+  "state": "af0ifjsldkj"
+}
+```
+
+### auth.complete Response
+
+```json
+{
+  "ok": true,
+  "type": "auth.complete.result",
+  "request_id": "req_jkl013",
+  "identity": {
+    "authenticated": true,
+    "subject": "dana@northwind.com"
+  }
+}
+```
+
+The adapter exchanges the code with its remote and stores the credentials it
+gets wherever it keeps them before it answers. A failed exchange answers with
+an [error response](#error-response), and epack shows its message.
+
+### config.pull Request
+
+A remote that generates project configuration (Locktivity generates one per
+pipeline) can hand it to a terminal with `config.pull`. The name is whatever the
+remote shows the person, such as `epack run northwind-production`.
+
+```json
+{
+  "type": "config.pull",
+  "protocol_version": 1,
+  "request_id": "req_mno014",
+  "remote": "locktivity",
+  "target": {},
+  "config": {"name": "northwind-production"}
+}
+```
+
+### config.pull Response
+
+```json
+{
+  "ok": true,
+  "type": "config.pull.result",
+  "request_id": "req_mno014",
+  "config": {
+    "id": "0b1c6f2e-5b1a-4f4e-9c3a-7d2e8a1b4c5d",
+    "name": "northwind-production",
+    "title": "Northwind production",
+    "stream": "northwind/production",
+    "runs_in": "My laptop",
+    "revision": 3,
+    "folder": "northwind/production",
+    "files": {"epack.yaml": "stream: northwind/production\n..."},
+    "shas": {"epack.yaml": "sha256 hex of the managed file"},
+    "lockfile": "schema_version: 1\n..."
+  }
+}
+```
+
+Files are keyed by path relative to the project folder and use LF line endings.
+`shas` covers managed files only; a file the person is expected to edit has no
+sha. `lockfile` is present once the remote has a pinned lock for the revision.
+`folder` is where the same files sit in a repository the remote generates for,
+for anyone laying out a repository by hand. A fetched configuration may name
+only published components: `epack run` refuses a `binary:` entry in it, and
+runs its collectors, tools, and remote only when their publishers (the GitHub
+owners of their sources) are trusted, by the person once in a terminal, by
+`EPACK_TRUSTED_PUBLISHERS` or `--trust-publisher` for one process, or by the
+`epack remote login` that recorded the adapter's own publisher. `id` is the remote's identifier
+for the configuration; `epack run` exports it as `EPACK_PIPELINE_ID` unless
+the environment already names one, so a push or a failure report from a
+cloned folder reaches the pipeline it came from. A folder laid out from a
+downloaded bundle has no pull record; the adapter that made the bundle can
+recognise the folder itself, since every command runs with
+`EPACK_PROJECT_ROOT` set to the project folder. A name the caller cannot see
+answers with the `not_found` error code.
+
+epack writes only what a project is made of. A path must stay inside the
+folder, contain no control characters, and carry no hidden segment, with two
+exceptions: anything under the folder the adapter declared as `files_dir`
+(`.locktivity/` for Locktivity) and hook scripts at `.epack/hooks/<name>.sh`. Everything else, including `.epack/collectors/`,
+`.epack/remotes/`, and `.git/`, is refused, so a remote cannot place a binary
+where sync would treat it as already verified. The folder is named by the
+person, not by the response.
+
+Files without a sha are the person's. epack writes them when absent, keeps
+them up to date with the remote's template until the person edits them, and
+then leaves them alone. A hook script that still matches the delivered
+template is never run, so a configuration cannot bring shell with it; hooks
+run once the person has made them their own. After a fetch that changed the
+configuration, epack prints what it will run and read, from the written files.
 
 ### auth.whoami Request
 
@@ -677,6 +826,155 @@ CI extracts these codes without scraping logs: when the `EPACK_ERROR_FILE` envir
   }
 }
 ```
+
+## Signing Keys
+
+A remote that keeps the list of keys a pipeline accepts signatures from
+advertises `keys`. `epack key create` makes a key on the person's machine,
+keeps the private half there, and registers the public half with these
+operations; `epack run` then signs with it, and `epack run --check` reports
+whether the pipeline accepts it. Only a signed-in person may use them: an
+adapter answers a job with `forbidden`, even one signed in with a key the
+pipeline approved, since a job must not mint its own trust. `config` is the
+configuration's name or the remote's identifier for it; left out, the
+adapter may recognise the folder itself, as the Locktivity adapter does for
+a bundle laid out by hand from its own manifest.
+
+### key.register Request
+
+```json
+{
+  "type": "key.register",
+  "protocol_version": 1,
+  "request_id": "req_mno345",
+  "config": "northwind-production",
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+  "name": "Michaels-MacBook-Pro-2",
+  "expires_in_days": 365
+}
+```
+
+`name` is how the key is listed, by default the machine's name. `expires_in_days`
+of 0 or absent means the remote's default, which may be no expiry.
+
+### key.register Response
+
+```json
+{
+  "ok": true,
+  "type": "key.register.result",
+  "request_id": "req_mno345",
+  "created": true,
+  "key": {
+    "id": "key_123",
+    "name": "Michaels-MacBook-Pro-2",
+    "fingerprint": "9f14322ec5bab3f56c2d773a9ad06cc30cef404fc2bdeb5e5105a8e3daf68c6d",
+    "algorithm": "ecdsa",
+    "status": "usable",
+    "registered_by": "dana@northwind.example",
+    "created_at": "2026-10-01T18:00:00Z",
+    "expires_at": "2027-10-01T18:00:00Z"
+  }
+}
+```
+
+`fingerprint` is the hex SHA-256 of the key's PKIX DER encoding, the identity
+a signature made with the key carries. Registering a key the pipeline already
+holds answers with that key and `created` false, so the command is safe to
+repeat.
+
+A remote may hold a new key as `pending` until a person approves it, and then
+also returns `approval`: the `code` to type at `url` before `expires_at`, and
+the `interval` in seconds between checks. `epack key create` shows the code,
+opens the link, and checks `key.list` until the key is `usable`, the only
+status a run signs with.
+
+The `pipeline_url` field (optional) is the address of the pipeline's page on
+the remote; `epack key create` and `epack key rotate` show it once the key is
+`usable`, when it is an http or https URL.
+
+### key.list Request
+
+```json
+{
+  "type": "key.list",
+  "protocol_version": 1,
+  "request_id": "req_pqr678",
+  "config": "northwind-production"
+}
+```
+
+### key.list Response
+
+```json
+{
+  "ok": true,
+  "type": "key.list.result",
+  "request_id": "req_pqr678",
+  "keys": [
+    {"id": "key_123", "name": "Michaels-MacBook-Pro-2", "fingerprint": "9f14...", "status": "usable", "expires_at": "2027-10-01T18:00:00Z"},
+    {"id": "key_122", "name": "old laptop", "fingerprint": "0a0a...", "status": "revoked", "revoked_at": "2026-09-01T00:00:00Z"}
+  ]
+}
+```
+
+`status` is `pending`, `lapsed`, `usable`, `denied`, `expired`, `retired`, or
+`revoked`, newest first. `machine` names the machine that registered the key, when the
+remote records it.
+
+### key.retire Request
+
+```json
+{
+  "type": "key.retire",
+  "protocol_version": 1,
+  "request_id": "req_vwx234",
+  "config": "northwind-production",
+  "id": "key_122"
+}
+```
+
+### key.retire Response
+
+```json
+{
+  "ok": true,
+  "type": "key.retire.result",
+  "request_id": "req_vwx234",
+  "key": {"id": "key_122", "fingerprint": "0a0a...", "status": "retired", "retired_at": "2026-10-01T18:05:00Z"}
+}
+```
+
+A retired key signs nothing new, and the packs it signed before then stay
+trusted. `epack key rotate` retires the old key once the new one is usable.
+Retiring a key that is already retired or revoked leaves it as it is.
+
+### key.revoke Request
+
+```json
+{
+  "type": "key.revoke",
+  "protocol_version": 1,
+  "request_id": "req_stu901",
+  "config": "northwind-production",
+  "id": "key_122"
+}
+```
+
+### key.revoke Response
+
+```json
+{
+  "ok": true,
+  "type": "key.revoke.result",
+  "request_id": "req_stu901",
+  "key": {"id": "key_122", "fingerprint": "0a0a...", "status": "revoked", "revoked_at": "2026-10-01T18:05:00Z"}
+}
+```
+
+Revoking a key withdraws trust from every pack it signed, so it is for a key
+that can no longer be trusted. To replace a key and keep what it signed
+trusted, retire it instead.
 
 ## Error Handling
 
@@ -757,6 +1055,7 @@ Receipt files include:
 ### Authentication Security
 
 - Authentication is managed by the adapter, not epack
+- Browser sign-in returns to a listener on `127.0.0.1` only; epack hands the code to the adapter and never stores or logs it
 - Credentials are stored per adapter (keychain, encrypted file, or env var)
 - OIDC tokens are passed through for CI/CD environments
 - API keys should be passed via environment variables
@@ -793,6 +1092,17 @@ epack push locktivity packs/evidence.epack --dry-run
 # Push in background (returns immediately)
 epack push locktivity packs/evidence.epack --detach
 
+# Move the adapter you signed in with to its newest release; the pin in
+# ~/.epack/remotes.lock never moves on its own
+epack remote update locktivity
+
+# Make a signing key for this machine and register it with the remote;
+# once the remote accepts it, runs from this machine sign with it instead of
+# the browser
+epack key create
+epack key list
+epack key rotate
+
 # Pull the latest pack from a remote
 epack pull locktivity
 
@@ -816,6 +1126,18 @@ epack pull locktivity --detach
 
 # Report a resolved lockfile during setup bootstrap
 epack remote report-lock locktivity --reason bootstrap
+
+# Sign in to a remote from this machine (adapter installed from the catalog if needed)
+epack remote login locktivity
+
+# Fetch a configuration the remote generated into ./northwind-production
+epack remote clone northwind-production
+
+# Fetch, install, collect, run tools, sign, and push in one command
+epack run northwind-production
+
+# The same inside an existing project, for a CI job
+epack run --yes
 ```
 
 ## Example Adapter Implementation
@@ -855,8 +1177,8 @@ func main() {
 
 The following features are reserved but not yet implemented:
 
-- **Remote management CLI**: `epack remote login`, `epack remote info`
-  - Currently implemented: `epack remote list`, `epack remote whoami`
+- **Remote management CLI**: `epack remote info`
+  - Currently implemented: `epack remote list`, `epack remote login`, `epack remote clone`, `epack remote whoami`
 - **List operations**: List releases on a remote
 - **Delete operations**: Remove releases from a remote
 - **Resume uploads/downloads**: Resume interrupted transfers

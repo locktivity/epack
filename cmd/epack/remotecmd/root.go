@@ -4,9 +4,11 @@
 // This package is only included when built with -tags components.
 //
 // Remote commands:
-//   - epack pull         Pull a pack from a remote registry
-//   - epack push         Push a pack to a remote registry
-//   - epack remote list  List configured remotes
+//   - epack pull          Pull a pack from a remote registry
+//   - epack push          Push a pack to a remote registry
+//   - epack remote list   List configured remotes
+//   - epack remote login  Sign in to a remote from this machine
+//   - epack remote clone  Fetch a configuration from a remote into a folder
 //   - epack remote whoami Show authentication status
 package remotecmd
 

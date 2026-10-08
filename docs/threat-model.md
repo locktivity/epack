@@ -28,6 +28,7 @@ Inputs crossing trust boundaries are treated as untrusted:
 - Collector metadata, release assets, and binaries before verification.
 - Collector runtime output and subprocess behavior.
 - **Tool catalog data** (publisher names, descriptions, tool listings).
+- Configuration, hooks, and lockfiles a remote hands over through `config.pull`, and the sign-in instructions it returns from `auth.login`.
 
 ## Attacker Model
 
@@ -41,6 +42,7 @@ We assume attackers can:
 - Influence runtime environment (hostile env vars, polluted `PATH`, hostile working directory).
 - Trigger resource exhaustion attempts (large input, decompression abuse, hanging subprocesses).
 - **Compromise or poison the tool catalog** (inject malicious tool listings, false publishers).
+- Operate a remote the person signed in to, or hold an admin account on one, and hand over hostile configuration.
 
 ## Security Goals
 
@@ -74,6 +76,24 @@ Collectors and tools only receive secrets explicitly listed in `epack.yaml`. Thi
 - `_*` - Reserved by shells and runtimes
 
 **Trust model:** The operator who writes `epack.yaml` is trusted - they control which collectors run and what credentials they receive. The protection is against malicious binaries accessing secrets not intended for them, not against malicious config authors (who already have RCE via `source:` or `binary:` fields).
+
+## Remote-Authored Configuration
+
+`epack remote clone <name>` and `epack run <name>` fetch a project from a remote through `config.pull` and run it. That makes the remote a configuration author with most of the powers the section above gives the operator: its `epack.yaml` decides which collectors and tools run and which `secrets:` reach them, and its lockfile decides which binaries are installed. In CI the lockfile pull request gives a person a look at every change. On a laptop the review is the summary epack prints after each fetch that changed something, and the person who signs in trusts the remote and the admins who configure it.
+
+**What epack enforces regardless:**
+
+- The adapter that performs `config.pull` is itself locked and digest-verified before it runs, and a project's own adapter configuration takes precedence over an adapter installed for the user.
+- Written paths stay inside the folder, carry no control characters, and have no hidden segments other than `.locktivity/` and `.epack/hooks/<name>.sh`. A remote cannot write into `.epack/collectors/`, `.epack/remotes/`, or `.git/`, so it cannot plant a binary that sync would treat as already verified or a hook git would run.
+- The folder is named by the person, never by the response, and a symlinked folder is refused.
+- Every binary the lockfile names is still downloaded through the registry and checked against the Sigstore identity recorded in the lock before it runs.
+- Managed files the person edited are never overwritten without `--force`. A hook script follows the remote's template only until the person edits it, and a hook that still matches the delivered template is never run, by `epack run` or by `epack hooks run`. A fetched configuration therefore cannot run shell on the machine; only the person's own hooks do.
+- After a fetch that changed the configuration, epack prints what it will run and read, derived from the written files: each collector, tool, and remote with its publisher and version, the environment variables it reads and which are set, and whether the hooks are still templates. A later revision prints only the differences.
+- Strings from the remote are stripped of control and formatting characters before they reach the terminal, and the sign-in link is opened only when it is an http or https URL. The browser sign-in listens on 127.0.0.1 only and for a bounded time, acts only on the first callback that carries the sign-in's state, and never prints or logs the code or the adapter's session.
+- Adapters installed for the user are locked from the catalog once, with the source repository shown and recorded, and never upgraded on their own.
+- A fetched configuration runs binaries only from publishers the person or the job named. A publisher is the GitHub owner of a component's source repository, the identity Sigstore attests when the binary is installed. `epack remote login` records the adapter's publisher as trusted, since signing in already means trusting what that publisher's remote sends. Before the install stage of `epack run`, a folder that carries a pull record must draw every collector, tool, and remote from a trusted publisher: in a terminal a new publisher is shown with its repositories and trusted once on a yes, recorded in `~/.epack/config.yaml`; without a terminal the run stops before any download and names `EPACK_TRUSTED_PUBLISHERS`. That variable and a repeatable `--trust-publisher` add trust for one process, `--yes` never widens it, and a fetched configuration that names a `binary:` is refused. In CI, trust therefore comes from the job environment, never from fetched files or from `--yes`. Folders without a pull record, which is every committed repository, are unaffected.
+
+**What remains the person's trust decision:** the collectors, tools, secrets, and hooks the remote names, within the publishers they trusted. A compromised remote account can still direct a laptop run to exfiltrate any environment variable the configuration lists to a collector from a trusted publisher. Treat admin access on the remote accordingly.
 
 ## Tool Catalog Security
 
@@ -121,6 +141,9 @@ To prevent resource exhaustion attacks, the following limits are enforced:
 - Many collectors producing large outputs (aggregate budget exhaustion).
 - Catalog with malicious entries attempting to influence execution (should have no effect).
 - Oversized catalog files attempting DoS.
+- A `config.pull` response with hidden paths, traversal, control characters, a hostile folder name, or a symlinked target folder (all refused).
+- An `auth.login` response with a non-web link, an unbounded lifetime, or terminal escape sequences in the link, and terminal escape sequences in the signed-in subject or a callback's error description.
+- A sign-in callback with a wrong state, on another path, or after the sign-in finished (turned away without reaching the adapter).
 
 ## Security Hardening Measures
 

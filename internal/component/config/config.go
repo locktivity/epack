@@ -298,7 +298,7 @@ type RemoteTarget struct {
 // RemoteAuth configures authentication preferences.
 type RemoteAuth struct {
 	// Mode is the authentication mode.
-	// Common values for the Locktivity adapter are "device_code", "access_token",
+	// Common values for the Locktivity adapter are "browser", "access_token",
 	// and "client_credentials".
 	Mode string `yaml:"mode,omitempty"`
 

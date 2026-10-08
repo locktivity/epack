@@ -3,7 +3,6 @@
 package remotecmd
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,8 +12,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/locktivity/epack/internal/cli/output"
 )
 
 func TestRunWhoami_NoRemotes(t *testing.T) {
@@ -37,12 +34,8 @@ collectors:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{})
-	defer func() { out = nil }()
-
 	// Run whoami with no args (all remotes)
-	cmd := newWhoamiCommand()
+	cmd, stdout, _ := rootCommand(newWhoamiCommand())
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runWhoami() error = %v", err)
@@ -78,13 +71,8 @@ remotes:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{})
-	defer func() { out = nil }()
-
 	// Run whoami with nonexistent remote
-	cmd := newWhoamiCommand()
-	cmd.SetArgs([]string{"nonexistent"})
+	cmd, _, _ := rootCommand(newWhoamiCommand(), "nonexistent")
 	err := cmd.Execute()
 	if err == nil {
 		t.Error("expected error for nonexistent remote")
@@ -106,12 +94,8 @@ func TestRunWhoami_NotInProject(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{})
-	defer func() { out = nil }()
-
 	// Run whoami - should error
-	cmd := newWhoamiCommand()
+	cmd, _, _ := rootCommand(newWhoamiCommand())
 	err := cmd.Execute()
 	if err == nil {
 		t.Error("expected error when not in project")
@@ -138,12 +122,8 @@ collectors:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output with JSON mode
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{JSON: true})
-	defer func() { out = nil }()
-
 	// Run whoami
-	cmd := newWhoamiCommand()
+	cmd, stdout, _ := rootCommand(newWhoamiCommand(), "--json")
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runWhoami() error = %v", err)
@@ -230,13 +210,8 @@ remotes:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output with JSON mode
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{JSON: true})
-	defer func() { out = nil }()
-
 	// Run whoami
-	cmd := newWhoamiCommand()
-	cmd.SetArgs([]string{"mock"})
+	cmd, stdout, stderr := rootCommand(newWhoamiCommand(), "mock", "--json")
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runWhoami() error = %v, stderr: %s", err, stderr.String())
@@ -343,13 +318,8 @@ remotes:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output with JSON mode
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{JSON: true})
-	defer func() { out = nil }()
-
 	// Run whoami
-	cmd := newWhoamiCommand()
-	cmd.SetArgs([]string{"mock"})
+	cmd, stdout, _ := rootCommand(newWhoamiCommand(), "mock", "--json")
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runWhoami() error = %v", err)
@@ -439,13 +409,8 @@ remotes:
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	// Capture output with JSON mode
-	var stdout, stderr bytes.Buffer
-	out = output.New(&stdout, &stderr, output.Options{JSON: true})
-	defer func() { out = nil }()
-
 	// Run whoami
-	cmd := newWhoamiCommand()
-	cmd.SetArgs([]string{"mock"})
+	cmd, stdout, _ := rootCommand(newWhoamiCommand(), "mock", "--json")
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("runWhoami() error = %v", err)

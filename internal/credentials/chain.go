@@ -33,13 +33,14 @@ func (r Resolver) ResolveComponentEnv(ctx context.Context, cfg *config.JobConfig
 	}
 	getenv := r.getenv()
 	rt := DetectRuntimeContext(getenv)
-	resolved, err := r.broker().Resolve(ctx, broker.ResolveRequest{CredentialSets: ids}, rt)
+	request := broker.ResolveRequest{
+		CredentialSets: ids,
+		PipelineID:     strings.TrimSpace(getenv(broker.PipelineIDEnvVar)),
+	}
+	resolved, err := r.broker(rt).Resolve(ctx, request, rt)
 	if err != nil {
 		if errors.Is(err, broker.ErrOIDCUnavailable) {
-			if rt.InGitHubActions {
-				return nil, fmt.Errorf("locktivity-managed credentials require GitHub Actions OIDC; ensure workflow permissions include id-token: write")
-			}
-			return nil, fmt.Errorf("locktivity-managed credentials require GitHub Actions OIDC at runtime")
+			return nil, identityUnavailableError(rt)
 		}
 		return nil, err
 	}
@@ -47,7 +48,8 @@ func (r Resolver) ResolveComponentEnv(ctx context.Context, cfg *config.JobConfig
 	return cloneEnv(resolved.Env), nil
 }
 
-// DetectRuntimeContext inspects the ambient environment for GitHub Actions OIDC support.
+// DetectRuntimeContext inspects the ambient environment for the identities a
+// run can present: GitHub Actions OIDC, a GitLab ID token, or a signing key.
 func DetectRuntimeContext(getenv func(string) string) broker.RuntimeContext {
 	if getenv == nil {
 		getenv = os.Getenv
@@ -58,10 +60,26 @@ func DetectRuntimeContext(getenv func(string) string) broker.RuntimeContext {
 		OIDCAvailable: inGitHubActions &&
 			strings.TrimSpace(getenv("ACTIONS_ID_TOKEN_REQUEST_URL")) != "" &&
 			strings.TrimSpace(getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")) != "",
+		InGitLabCI:    strings.EqualFold(strings.TrimSpace(getenv("GITLAB_CI")), "true"),
+		GitLabIDToken: strings.TrimSpace(getenv(broker.GitLabIDTokenEnvVar)) != "",
+		SigningKey:    strings.TrimSpace(getenv(broker.SigningKeyEnvVar)) != "",
 	}
 }
 
-func (r Resolver) broker() broker.CredentialBroker {
+func identityUnavailableError(rt broker.RuntimeContext) error {
+	switch {
+	case rt.InGitHubActions:
+		return fmt.Errorf("locktivity-managed credentials require GitHub Actions OIDC; ensure workflow permissions include id-token: write")
+	case rt.InGitLabCI:
+		return fmt.Errorf("locktivity-managed credentials require the job's identity; declare id_tokens with %s and the audience shown on the pipeline page, or use a signing key in %s with %s",
+			broker.GitLabIDTokenEnvVar, broker.SigningKeyEnvVar, broker.PipelineIDEnvVar)
+	default:
+		return fmt.Errorf("locktivity-managed credentials require a runtime identity: GitHub Actions OIDC, a GitLab ID token in %s, or a signing key in %s with %s",
+			broker.GitLabIDTokenEnvVar, broker.SigningKeyEnvVar, broker.PipelineIDEnvVar)
+	}
+}
+
+func (r Resolver) broker(rt broker.RuntimeContext) broker.CredentialBroker {
 	if r.Broker != nil {
 		return r.Broker
 	}
@@ -70,7 +88,7 @@ func (r Resolver) broker() broker.CredentialBroker {
 	if err != nil {
 		return errorBroker{err: err}
 	}
-	return broker.NewClient(apiBase)
+	return broker.NewClientForRuntime(apiBase, rt, r.getenv())
 }
 
 func (r Resolver) getenv() func(string) string {

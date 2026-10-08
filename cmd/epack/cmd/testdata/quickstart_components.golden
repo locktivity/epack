@@ -20,6 +20,10 @@ Quick Start:
   # Push pack to a remote registry
   epack push locktivity evidence.epack
 
+  # Or do it all: fetch a config, collect, sign, and push
+  epack remote login locktivity
+  epack run my-pipeline
+
   # Pull pack from a remote registry
   epack pull locktivity
 
@@ -27,6 +31,7 @@ Commands:
   new        Create a new evidence pack project
   init       Initialize epack in current directory
   collect    Run collectors and build evidence pack
+  run        Collect, sign, and send a pack in one command
   install    Lock and sync dependencies
   lock       Lock collector and tool dependencies
   sync       Install collectors and tools from lockfile

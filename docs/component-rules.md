@@ -380,7 +380,7 @@ Remote adapters handle communication with registry backends.
 | ID | Level | Requirement |
 |----|-------|-------------|
 | REM-080 | MUST | Handle authentication internally (epack does not manage credentials) |
-| REM-081 | SHOULD | Support at least one of: `device_code`, `oidc_token`, `api_key` auth modes |
+| REM-081 | SHOULD | Support at least one of: `browser` (the browser sign-in with a loopback redirect), `oidc_token`, `api_key` auth modes |
 | REM-082 | MUST | Accept identity token via `identity` field in requests |
 | REM-083 | SHOULD | Use OS keychain or secure storage for persistent credentials |
 | REM-084 | MUST NOT | Log or expose credentials |

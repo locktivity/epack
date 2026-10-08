@@ -7,6 +7,7 @@ package verify
 
 import (
 	"context"
+	"crypto"
 	"regexp"
 	"time"
 
@@ -45,8 +46,13 @@ type Identity struct {
 	// Issuer is the OIDC issuer that authenticated the signer (e.g., "https://accounts.google.com").
 	Issuer string
 
-	// Subject is the subject alternative name from the certificate (e.g., email or URI).
+	// Subject is the subject alternative name from the certificate (e.g., email or URI),
+	// or the fingerprint of the public key for a key signature.
 	Subject string
+
+	// Method is "certificate" for a Fulcio-issued identity and "key" for a
+	// signature made with a key the verifier was given.
+	Method string
 
 	// SubjectAlternativeNames contains all SANs from the certificate.
 	SubjectAlternativeNames []string
@@ -83,6 +89,7 @@ type Verifier interface {
 
 // config holds verifier configuration.
 type config struct {
+	publicKeys                []crypto.PublicKey
 	issuer                    string
 	issuerRegexp              *regexp.Regexp
 	subject                   string
@@ -122,6 +129,15 @@ func WithSubject(subject string) Option {
 func WithSubjectRegexp(pattern *regexp.Regexp) Option {
 	return func(c *config) {
 		c.subjectRegexp = pattern
+	}
+}
+
+// WithPublicKeys accepts attestations signed with one of these keys rather
+// than a certificate. The key that verifies becomes the signer identity, as
+// the hex SHA-256 of its DER encoding.
+func WithPublicKeys(keys ...crypto.PublicKey) Option {
+	return func(c *config) {
+		c.publicKeys = append(c.publicKeys, keys...)
 	}
 }
 

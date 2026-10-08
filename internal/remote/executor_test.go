@@ -2,9 +2,12 @@ package remote_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -302,6 +305,114 @@ func TestProtocolConstants(t *testing.T) {
 	}
 	if remote.TypePullPrepare == "" {
 		t.Error("TypePullPrepare is empty")
+	}
+	if remote.CommandAuthComplete != "auth.complete" || remote.TypeAuthComplete != "auth.complete" || remote.TypeAuthCompleteResult != "auth.complete.result" {
+		t.Error("auth.complete command and types must match the protocol")
+	}
+	if remote.CommandConfigPull != "config.pull" || remote.TypeConfigPull != "config.pull" {
+		t.Error("config.pull command and type must match the protocol")
+	}
+}
+
+// recordingAdapter writes an adapter that saves the command it ran and the
+// request it read into dir, then prints response and exits with exitCode.
+func recordingAdapter(t *testing.T, response string, exitCode int) (script, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows - no shell scripts")
+	}
+	dir = t.TempDir()
+	script = filepath.Join(dir, "adapter")
+	content := "#!/bin/sh\n" +
+		"printf '%s' \"$1\" > '" + filepath.Join(dir, "command") + "'\n" +
+		"cat > '" + filepath.Join(dir, "request.json") + "'\n" +
+		"echo '" + response + "'\n" +
+		"exit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatalf("creating test script: %v", err)
+	}
+	return script, dir
+}
+
+func recordedRequest(t *testing.T, dir string) (string, map[string]any) {
+	t.Helper()
+	command, err := os.ReadFile(filepath.Join(dir, "command"))
+	if err != nil {
+		t.Fatalf("reading command: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "request.json"))
+	if err != nil {
+		t.Fatalf("reading request: %v", err)
+	}
+	var request map[string]any
+	if err := json.Unmarshal(data, &request); err != nil {
+		t.Fatalf("parsing request %s: %v", data, err)
+	}
+	return string(command), request
+}
+
+func TestExecutor_AuthLoginSendsTheRedirectAndReadsTheInstructions(t *testing.T) {
+	script, dir := recordingAdapter(t, `{"ok":true,"type":"auth.login.result","request_id":"req-1","instructions":{"authorization_url":"https://app.example.com/oauth/authorize?state=st-123","state":"st-123","session":"sess-1","expires_in_seconds":600}}`, 0)
+
+	resp, err := remote.NewExecutor(script, "test").AuthLogin(context.Background(), "http://127.0.0.1:8400/callback")
+	if err != nil {
+		t.Fatalf("AuthLogin: %v", err)
+	}
+	want := remote.AuthLoginInstructions{
+		AuthorizationURL: "https://app.example.com/oauth/authorize?state=st-123",
+		State:            "st-123",
+		Session:          "sess-1",
+		ExpiresInSecs:    600,
+	}
+	if resp.Instructions != want {
+		t.Errorf("instructions = %+v, want %+v", resp.Instructions, want)
+	}
+
+	command, request := recordedRequest(t, dir)
+	if command != "auth.login" {
+		t.Errorf("command = %q, want auth.login", command)
+	}
+	if request["type"] != "auth.login" || request["protocol_version"] != float64(remote.ProtocolVersion) ||
+		request["redirect_uri"] != "http://127.0.0.1:8400/callback" || request["request_id"] == "" {
+		t.Errorf("request = %v", request)
+	}
+	if len(request) != 4 {
+		t.Errorf("request carries fields the protocol does not name: %v", request)
+	}
+}
+
+func TestExecutor_AuthCompleteHandsBackTheSessionAndReadsTheIdentity(t *testing.T) {
+	script, dir := recordingAdapter(t, `{"ok":true,"type":"auth.complete.result","request_id":"req-2","identity":{"authenticated":true,"subject":"dana@example.com","issuer":"https://app.example.com","expires_at":"2026-11-01T00:00:00Z"}}`, 0)
+
+	resp, err := remote.NewExecutor(script, "test").AuthComplete(context.Background(), "sess-1", "code-abc", "st-123")
+	if err != nil {
+		t.Fatalf("AuthComplete: %v", err)
+	}
+	want := remote.IdentityResult{Authenticated: true, Subject: "dana@example.com", Issuer: "https://app.example.com", ExpiresAt: "2026-11-01T00:00:00Z"}
+	if resp.Identity != want {
+		t.Errorf("identity = %+v, want %+v", resp.Identity, want)
+	}
+
+	command, request := recordedRequest(t, dir)
+	if command != "auth.complete" {
+		t.Errorf("command = %q, want auth.complete", command)
+	}
+	if request["type"] != "auth.complete" || request["protocol_version"] != float64(remote.ProtocolVersion) || request["request_id"] == "" ||
+		request["session"] != "sess-1" || request["code"] != "code-abc" || request["state"] != "st-123" {
+		t.Errorf("request = %v", request)
+	}
+	if len(request) != 6 {
+		t.Errorf("request carries fields the protocol does not name: %v", request)
+	}
+}
+
+func TestExecutor_AuthCompleteReturnsTheAdaptersError(t *testing.T) {
+	script, _ := recordingAdapter(t, `{"ok":false,"type":"error","error":{"code":"invalid_request","message":"the sign-in expired"}}`, 1)
+
+	_, err := remote.NewExecutor(script, "test").AuthComplete(context.Background(), "sess-1", "code-abc", "st-123")
+	var adapterErr *remote.AdapterError
+	if !errors.As(err, &adapterErr) || adapterErr.Code != "invalid_request" || adapterErr.Message != "the sign-in expired" {
+		t.Fatalf("err = %v, want the adapter's invalid_request error", err)
 	}
 }
 

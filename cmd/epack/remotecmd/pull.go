@@ -119,7 +119,7 @@ Examples:
 
 func runPull(cmd *cobra.Command, args []string) error {
 	remoteName := args[0]
-	out := outputWriter()
+	out := getOutput(cmd)
 	ctx := cmdContext(cmd)
 
 	ref := buildPullRef(args)

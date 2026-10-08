@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/locktivity/epack/internal/redact"
 )
 
 func TestNew(t *testing.T) {
@@ -131,6 +133,28 @@ func TestWriter_Verbose(t *testing.T) {
 				t.Errorf("Verbose() = %q, want %q", got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestWriter_Notice(t *testing.T) {
+	redact.Enable()
+	defer redact.Disable()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	w := New(stdout, stderr, Options{JSON: true})
+
+	w.Notice("open %s\n", "https://app.example.com/oauth/authorize?code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+	if got, want := stderr.String(), "open https://app.example.com/oauth/authorize?code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM\n"; got != want {
+		t.Errorf("Notice() = %q, want %q", got, want)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("Notice() wrote to stdout: %q", stdout.String())
+	}
+
+	quiet := &bytes.Buffer{}
+	New(&bytes.Buffer{}, quiet, Options{Quiet: true}).Notice("hello")
+	if quiet.Len() != 0 {
+		t.Errorf("Notice() in quiet mode = %q, want empty", quiet.String())
 	}
 }
 

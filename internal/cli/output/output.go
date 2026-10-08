@@ -108,6 +108,15 @@ func (w *Writer) Verbose(format string, args ...interface{}) {
 	}
 }
 
+// Notice writes to stderr (respects quiet mode), for text the person needs
+// while stdout carries JSON, such as a link to open. Unlike Error it is not
+// redacted, since redaction can break a long link: never pass it a secret.
+func (w *Writer) Notice(format string, args ...interface{}) {
+	if !w.opts.Quiet {
+		_, _ = fmt.Fprintf(w.stderr, format, args...)
+	}
+}
+
 // Error writes to stderr. File paths are redacted when redaction is enabled.
 func (w *Writer) Error(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)

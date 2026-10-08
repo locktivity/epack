@@ -34,7 +34,7 @@ Examples:
 }
 
 func runList(cmd *cobra.Command, args []string) error {
-	out := outputWriter()
+	out := getOutput(cmd)
 
 	// Find project root
 	projectRoot, err := project.FindRoot("")
@@ -60,7 +60,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		out.Print("\nTo add a remote, edit epack.yaml:\n")
 		out.Print("  remotes:\n")
 		out.Print("    locktivity:\n")
-			out.Print("      source: locktivity/epack-remote-locktivity@^0.1.0\n")
+		out.Print("      source: locktivity/epack-remote-locktivity@^0.1.0\n")
 		out.Print("      target:\n")
 		out.Print("        workspace: my-workspace\n")
 		return nil

@@ -20,17 +20,23 @@ import (
 
 // GetOutput returns an output writer configured from the command's flags.
 func GetOutput(cmd *cobra.Command) *output.Writer {
+	return output.New(os.Stdout, os.Stderr, OutputOptions(cmd))
+}
+
+// OutputOptions reads the global output flags (--quiet, --json, --no-color,
+// --verbose) from the command.
+func OutputOptions(cmd *cobra.Command) output.Options {
 	quiet, _ := cmd.Flags().GetBool("quiet")
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	noColor, _ := cmd.Flags().GetBool("no-color")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
-	return output.New(os.Stdout, os.Stderr, output.Options{
+	return output.Options{
 		Quiet:   quiet,
 		JSON:    jsonOut,
 		NoColor: noColor || os.Getenv("NO_COLOR") != "",
 		Verbose: verbose,
-	})
+	}
 }
 
 // LoadConfig loads the component configuration from the given path.

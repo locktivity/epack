@@ -391,6 +391,15 @@ func (l *Locker) lockExternalTool(ctx context.Context, name string, cfg config.T
 }
 
 // lockSourceRemote locks a source-based remote adapter.
+// LockRemote resolves one remote's source into lf without saving it. The
+// user-level remotes lock lives outside any project and is saved by its owner.
+func (l *Locker) LockRemote(ctx context.Context, name string, cfg config.RemoteConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
+	if cfg.Source == "" {
+		return nil, fmt.Errorf("remote %q has no source to lock", name)
+	}
+	return l.lockSourceRemote(ctx, name, cfg, lf, opts)
+}
+
 // Remote adapters use the same locking mechanism as collectors and tools.
 func (l *Locker) lockSourceRemote(ctx context.Context, name string, cfg config.RemoteConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
 	adapterName := cfg.EffectiveAdapter()

@@ -46,13 +46,20 @@ type RemoteFeatures struct {
 	// AuthLogin indicates support for auth.login.
 	AuthLogin bool `json:"auth_login,omitempty"`
 
+	// AuthBrowser indicates auth.login starts a browser sign-in that returns
+	// to a loopback redirect, and auth.complete finishes it.
+	AuthBrowser bool `json:"auth_browser,omitempty"`
+
 	// Whoami indicates support for auth.whoami.
 	Whoami bool `json:"whoami,omitempty"`
 }
 
 // RemoteAuth describes authentication capabilities.
 type RemoteAuth struct {
-	Modes []string `json:"modes"` // e.g., ["device_code", "oidc_token", "api_key"]
+	// Modes lists the supported authentication modes, e.g. ["browser",
+	// "oidc_token", "api_key"], where "browser" is the browser sign-in with a
+	// loopback redirect.
+	Modes []string `json:"modes"`
 }
 
 // RemoteLimits describes size and rate limits.

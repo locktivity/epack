@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/locktivity/epack/internal/execsafe"
@@ -52,6 +54,10 @@ type Executor struct {
 	// Stderr is where adapter stderr output is written.
 	// If nil, stderr is discarded.
 	Stderr io.Writer
+
+	// ProjectRoot is the project folder a command runs for, handed to the
+	// adapter as EPACK_PROJECT_ROOT so it can read files it put there.
+	ProjectRoot string
 
 	// Secrets is a list of env var names to pass through to the adapter.
 	// These are passed as-is (not renamed) to allow adapter-specific auth.
@@ -308,12 +314,13 @@ func (e *Executor) ReportLock(ctx context.Context, req *LockReportRequest) (*Loc
 	return &resp, nil
 }
 
-// AuthLogin initiates interactive authentication.
-func (e *Executor) AuthLogin(ctx context.Context) (*AuthLoginResponse, error) {
+// AuthLogin starts a browser sign-in that returns to redirectURI.
+func (e *Executor) AuthLogin(ctx context.Context, redirectURI string) (*AuthLoginResponse, error) {
 	req := &AuthLoginRequest{
 		Type:            TypeAuthLogin,
 		ProtocolVersion: ProtocolVersion,
 		RequestID:       uuid.New().String(),
+		RedirectURI:     redirectURI,
 	}
 
 	var resp AuthLoginResponse
@@ -323,6 +330,53 @@ func (e *Executor) AuthLogin(ctx context.Context) (*AuthLoginResponse, error) {
 
 	if !resp.OK {
 		return nil, fmt.Errorf("auth login failed: unexpected response")
+	}
+
+	return &resp, nil
+}
+
+// AuthComplete finishes the sign-in AuthLogin started, with the code and
+// state the browser returned. session is passed back as AuthLogin gave it.
+func (e *Executor) AuthComplete(ctx context.Context, session, code, state string) (*AuthCompleteResponse, error) {
+	req := &AuthCompleteRequest{
+		Type:            TypeAuthComplete,
+		ProtocolVersion: ProtocolVersion,
+		RequestID:       uuid.New().String(),
+		Session:         session,
+		Code:            code,
+		State:           state,
+	}
+
+	var resp AuthCompleteResponse
+	if err := e.execute(ctx, CommandAuthComplete, req, &resp); err != nil {
+		return nil, err
+	}
+
+	if !resp.OK {
+		return nil, fmt.Errorf("auth complete failed: unexpected response")
+	}
+
+	return &resp, nil
+}
+
+// ConfigPull fetches a named configuration from the remote.
+func (e *Executor) ConfigPull(ctx context.Context, remoteName string, target TargetConfig, name string) (*ConfigPullResponse, error) {
+	req := &ConfigPullRequest{
+		Type:            TypeConfigPull,
+		ProtocolVersion: ProtocolVersion,
+		RequestID:       uuid.New().String(),
+		Remote:          remoteName,
+		Target:          target,
+		Config:          ConfigPullTarget{Name: name},
+	}
+
+	var resp ConfigPullResponse
+	if err := e.execute(ctx, CommandConfigPull, req, &resp); err != nil {
+		return nil, err
+	}
+
+	if !resp.OK {
+		return nil, fmt.Errorf("config pull failed: unexpected response")
 	}
 
 	return &resp, nil
@@ -345,6 +399,84 @@ func (e *Executor) AuthWhoami(ctx context.Context) (*AuthWhoamiResponse, error) 
 		return nil, fmt.Errorf("auth whoami failed: unexpected response")
 	}
 
+	return &resp, nil
+}
+
+// KeyRegister asks the remote to accept a signing key for a configuration.
+func (e *Executor) KeyRegister(ctx context.Context, req *KeyRegisterRequest) (*KeyRegisterResponse, error) {
+	req.Type = TypeKeyRegister
+	req.ProtocolVersion = ProtocolVersion
+	if req.RequestID == "" {
+		req.RequestID = uuid.New().String()
+	}
+
+	var resp KeyRegisterResponse
+	if err := e.execute(ctx, CommandKeyRegister, req, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("key register failed: unexpected response")
+	}
+	return &resp, nil
+}
+
+// KeyList asks for the keys a configuration accepts.
+func (e *Executor) KeyList(ctx context.Context, config string) (*KeyListResponse, error) {
+	req := &KeyListRequest{
+		Type:            TypeKeyList,
+		ProtocolVersion: ProtocolVersion,
+		RequestID:       uuid.New().String(),
+		Config:          config,
+	}
+
+	var resp KeyListResponse
+	if err := e.execute(ctx, CommandKeyList, req, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("key list failed: unexpected response")
+	}
+	return &resp, nil
+}
+
+// KeyRevoke asks the remote to stop trusting a key and what it signed.
+func (e *Executor) KeyRevoke(ctx context.Context, config, id string) (*KeyRevokeResponse, error) {
+	req := &KeyRevokeRequest{
+		Type:            TypeKeyRevoke,
+		ProtocolVersion: ProtocolVersion,
+		RequestID:       uuid.New().String(),
+		Config:          config,
+		ID:              id,
+	}
+
+	var resp KeyRevokeResponse
+	if err := e.execute(ctx, CommandKeyRevoke, req, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("key revoke failed: unexpected response")
+	}
+	return &resp, nil
+}
+
+// KeyRetire asks the remote to stop accepting new signatures from a key while
+// still trusting the packs it signed.
+func (e *Executor) KeyRetire(ctx context.Context, config, id string) (*KeyRetireResponse, error) {
+	req := &KeyRetireRequest{
+		Type:            TypeKeyRetire,
+		ProtocolVersion: ProtocolVersion,
+		RequestID:       uuid.New().String(),
+		Config:          config,
+		ID:              id,
+	}
+
+	var resp KeyRetireResponse
+	if err := e.execute(ctx, CommandKeyRetire, req, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("key retire failed: unexpected response")
+	}
 	return &resp, nil
 }
 
@@ -386,6 +518,9 @@ func runAdapterCommand(ctx context.Context, e *Executor, command string, reqJSON
 	var stdout, stderr bytes.Buffer
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), true)
 	env = append(env, "EPACK_REMOTE_PROTOCOL_VERSION=1")
+	if e.ProjectRoot != "" {
+		env = append(env, ProjectRootEnvVar+"="+e.ProjectRoot)
+	}
 	env = execsafe.AppendExplicitEnv(env, e.ExplicitEnv)
 	env = execsafe.AppendAllowedSecrets(env, e.Secrets, os.Getenv)
 	env = execsafe.AppendExplicitEnv(env, e.ManagedEnv)
@@ -487,4 +622,33 @@ func (r *redactingWriter) Write(p []byte) (n int, err error) {
 	// Return original length to satisfy io.Writer contract
 	// (caller expects len(p) bytes to be "consumed")
 	return len(p), err
+}
+
+// ProjectRootEnvVar tells an adapter which project folder a command runs
+// for, so it can read files it put there without being told where.
+const ProjectRootEnvVar = "EPACK_PROJECT_ROOT"
+
+// MachineName is the hostname as a remote may show it: printable and bounded.
+func MachineName() string {
+	host, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return printableMachineName(host)
+}
+
+// printableMachineName drops control and format characters and bounds the
+// result so a hostile hostname cannot flood the approval page.
+func printableMachineName(host string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(host) {
+		if r < 0x20 || r == 0x7f || !unicode.IsPrint(r) {
+			continue
+		}
+		b.WriteRune(r)
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return b.String()
 }
