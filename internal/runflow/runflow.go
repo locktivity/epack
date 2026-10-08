@@ -343,25 +343,12 @@ func stage(opts Options, name, code string, fn func() error) error {
 }
 
 func install(ctx context.Context, cfg *config.JobConfig, opts Options, result *Result) error {
-	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
-	needsLock, err := lockNeeded(cfg, opts.WorkDir, platformKey)
+	locked, lockResults, err := lockIfNeeded(ctx, cfg, opts)
 	if err != nil {
 		return err
 	}
-	if needsLock {
-		opts.OnStep("Locking dependencies", true)
-		platforms := cfg.Platforms
-		if len(platforms) == 0 {
-			platforms = []string{platformKey}
-		}
-		results, err := sync.NewLocker(opts.WorkDir).Lock(ctx, cfg, sync.LockOpts{Platforms: platforms})
-		if err != nil {
-			return fmt.Errorf("locking dependencies: %w", err)
-		}
-		result.LockedNow = true
-		result.LockResults = results
-		opts.OnStep("Locked dependencies", false)
-	}
+	result.LockedNow = locked
+	result.LockResults = lockResults
 	syncOpts := sync.SyncOpts{Secure: sync.SyncSecureOptions{Locked: true}}
 	results, err := sync.NewSyncer(opts.WorkDir).Sync(ctx, cfg, syncOpts)
 	if err != nil {
@@ -369,6 +356,27 @@ func install(ctx context.Context, cfg *config.JobConfig, opts Options, result *R
 	}
 	result.SyncResults = results
 	return nil
+}
+
+// lockIfNeeded locks the configuration when its lock is missing or behind,
+// for the platforms the configuration lists or else this machine's.
+func lockIfNeeded(ctx context.Context, cfg *config.JobConfig, opts Options) (bool, []sync.LockResult, error) {
+	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
+	needsLock, err := lockNeeded(cfg, opts.WorkDir, platformKey)
+	if err != nil || !needsLock {
+		return false, nil, err
+	}
+	opts.OnStep("Locking dependencies", true)
+	platforms := cfg.Platforms
+	if len(platforms) == 0 {
+		platforms = []string{platformKey}
+	}
+	results, err := sync.NewLocker(opts.WorkDir).Lock(ctx, cfg, sync.LockOpts{Platforms: platforms})
+	if err != nil {
+		return false, nil, fmt.Errorf("locking dependencies: %w", err)
+	}
+	opts.OnStep("Locked dependencies", false)
+	return true, results, nil
 }
 
 func lockNeeded(cfg *config.JobConfig, workDir, platformKey string) (bool, error) {

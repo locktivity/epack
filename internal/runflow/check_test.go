@@ -83,8 +83,12 @@ func TestCheck_StopsAtUntrustedPublishersInAFetchedFolder(t *testing.T) {
 	if result.PublishersTrusted {
 		t.Fatal("locktivity is not trusted in this HOME")
 	}
-	if !strings.Contains(strings.Join(result.Findings, "\n"), "publishers not trusted: github.com/locktivity (set EPACK_TRUSTED_PUBLISHERS)") {
+	joined := strings.Join(result.Findings, "\n")
+	if !strings.Contains(joined, "publishers not trusted: github.com/locktivity (set EPACK_TRUSTED_PUBLISHERS)") {
 		t.Errorf("findings = %v", result.Findings)
+	}
+	if strings.Contains(joined, "epack.lock.yaml") {
+		t.Errorf("a fetched folder is locked by its run, never committed:\n%s", joined)
 	}
 }
 

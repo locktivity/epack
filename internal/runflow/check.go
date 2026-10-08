@@ -59,9 +59,10 @@ type CheckResult struct {
 }
 
 // Check does everything a run does before collecting and nothing after:
-// trusts publishers, checks the lock, checks the variables the configuration
-// reads, resolves the credentials the broker provides, signs in to the
-// remote, and reports what it found so the pipeline page can show it.
+// trusts publishers, locks a fetched configuration and checks a committed
+// one's lock, checks the variables the configuration reads, resolves the
+// credentials the broker provides, signs in to the remote, and reports what
+// it found so the pipeline page can show it.
 func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 	opts, err := withDefaults(opts)
 	if err != nil {
@@ -89,7 +90,11 @@ func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 	}
 
 	checkTrust(cfg, state, opts, result)
-	checkLock(cfg, opts.WorkDir, result)
+	fetched := state != nil
+	if fetched && result.PublishersTrusted {
+		lockFetched(ctx, cfg, opts, result)
+	}
+	checkLock(cfg, opts.WorkDir, fetched, result)
 	var session *remoteSession
 	if result.Remote != "" {
 		session = openRemote(ctx, cfg, opts, result)
@@ -215,7 +220,16 @@ func checkTrust(cfg *config.JobConfig, state *remoteconfig.State, opts Options, 
 	result.Findings = append(result.Findings, err.Error())
 }
 
-func checkLock(cfg *config.JobConfig, workDir string, result *CheckResult) {
+// lockFetched locks a fetched configuration the way its first run would.
+// Nobody commits the lock of a folder epack fetched, so the check makes it
+// rather than asking for it.
+func lockFetched(ctx context.Context, cfg *config.JobConfig, opts Options, result *CheckResult) {
+	if _, _, err := lockIfNeeded(ctx, cfg, opts); err != nil {
+		result.Findings = append(result.Findings, err.Error())
+	}
+}
+
+func checkLock(cfg *config.JobConfig, workDir string, fetched bool, result *CheckResult) {
 	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
 	_, statErr := os.Stat(filepath.Join(workDir, lockfile.FileName))
 	result.LockPresent = statErr == nil
@@ -225,6 +239,9 @@ func checkLock(cfg *config.JobConfig, workDir string, result *CheckResult) {
 		return
 	}
 	result.LockCurrent = !needsLock
+	if fetched {
+		return
+	}
 	lockCommand := "epack lock"
 	if len(cfg.Platforms) > 0 {
 		lockCommand += " --all-platforms"
