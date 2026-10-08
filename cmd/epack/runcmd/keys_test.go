@@ -142,6 +142,20 @@ func TestResolveRunKey_SignsOnlyWithAUsableKey(t *testing.T) {
 	}
 }
 
+func TestMachineKeyRegister_AsksOnlyInATerminal(t *testing.T) {
+	signer, err := sign.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	out := output.New(&stdout, &stderr, output.Options{})
+
+	_, registered, err := newMachineKey("mock.pem", "", "mock", "").register(context.Background(), out, nil, signer, "")
+	if err != nil || registered || stdout.Len() != 0 {
+		t.Fatalf("registered %v, err %v, stdout %q; want no question and no registration without a terminal", registered, err, stdout.String())
+	}
+}
+
 func TestMachineKeyCommand_NamesTheConfigurationWhenThereIsOne(t *testing.T) {
 	named := machineKey{remoteName: "mock", config: "northwind-production"}
 	if got := named.command("create"); got != "epack key create mock --for northwind-production" {

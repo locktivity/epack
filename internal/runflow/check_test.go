@@ -2,6 +2,8 @@ package runflow
 
 import (
 	"context"
+	"crypto"
+	"errors"
 	"fmt"
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/testutil/testhome"
@@ -268,11 +270,87 @@ func TestCheckSigning_SaysWhenTheKeyWaitsForApproval(t *testing.T) {
 		}
 		session := &remoteSession{exec: remote.NewExecutor(adapter, "mock"), caps: &remote.Capabilities{Features: remote.CapabilityFeatures{Keys: true}}}
 		result := &CheckResult{SignedInAs: "dana@example.com"}
+		opts := Options{
+			Sign: sign.SignPackOptions{KeyPath: keyPath},
+			RegisterKey: func(context.Context, *remote.Executor, crypto.Signer, string) (remote.SigningKey, bool, error) {
+				t.Errorf("%s: offered to register a key the remote already holds", status)
+				return remote.SigningKey{}, false, nil
+			},
+		}
 
-		checkSigning(context.Background(), session, Options{Sign: sign.SignPackOptions{KeyPath: keyPath}}, result)
+		checkSigning(context.Background(), session, opts, result)
 		findings := strings.Join(result.Findings, "\n")
 		if result.Signing != want.signing || (want.finding == "") != (findings == "") || !strings.Contains(findings, want.finding) {
 			t.Errorf("%s: signing %q, findings %q; want %q and %q", status, result.Signing, findings, want.signing, want.finding)
+		}
+	}
+}
+
+func TestCheckSigning_OffersToRegisterAKeyTheRemoteDoesNotHold(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script adapters are not available on Windows")
+	}
+	t.Setenv(PipelineIDEnvVar, "pipe-123")
+	key, err := sign.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemBytes, _ := sign.MarshalPrivateKeyPEM(key)
+	keyPath := filepath.Join(t.TempDir(), "signing-key.pem")
+	if err := sign.SavePrivateKey(keyPath, pemBytes); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, _ := sign.Fingerprint(key.Public())
+	adapter := filepath.Join(t.TempDir(), "adapter")
+	if err := os.WriteFile(adapter, []byte("#!/bin/sh\ncat > /dev/null\necho '{\"ok\":true,\"type\":\"key.list.result\",\"keys\":[]}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unregistered := "the signing key " + fingerprint[:8] + " is not registered for this configuration; run epack key create, or pass --browser to sign in the browser"
+
+	for name, tc := range map[string]struct {
+		register         func() (remote.SigningKey, bool, error)
+		signing, finding string
+	}{
+		"not offered": {signing: "with the key signing-key.pem", finding: unregistered},
+		"declined": {
+			register: func() (remote.SigningKey, bool, error) { return remote.SigningKey{}, false, nil },
+			signing:  "with the key signing-key.pem", finding: unregistered,
+		},
+		"approved": {
+			register: func() (remote.SigningKey, bool, error) {
+				return remote.SigningKey{Name: "laptop", Status: remote.KeyStatusUsable}, true, nil
+			},
+			signing: "with the key laptop",
+		},
+		"waiting": {
+			register: func() (remote.SigningKey, bool, error) {
+				return remote.SigningKey{Name: "laptop", Status: remote.KeyStatusPending}, true, nil
+			},
+			signing: "unsigned; the key laptop is waiting for approval", finding: "is waiting for approval",
+		},
+		"failed": {
+			register: func() (remote.SigningKey, bool, error) {
+				return remote.SigningKey{}, false, errors.New("adapter crashed")
+			},
+			signing: "with the key signing-key.pem", finding: "registering the signing key " + fingerprint[:8] + ": adapter crashed",
+		},
+	} {
+		opts := Options{Sign: sign.SignPackOptions{KeyPath: keyPath}}
+		if tc.register != nil {
+			opts.RegisterKey = func(_ context.Context, _ *remote.Executor, signer crypto.Signer, config string) (remote.SigningKey, bool, error) {
+				if got, _ := sign.Fingerprint(signer.Public()); got != fingerprint || config != "pipe-123" {
+					t.Errorf("%s: asked to register %s for %q", name, got, config)
+				}
+				return tc.register()
+			}
+		}
+		session := &remoteSession{exec: remote.NewExecutor(adapter, "mock"), caps: &remote.Capabilities{Features: remote.CapabilityFeatures{Keys: true}}}
+		result := &CheckResult{SignedInAs: "dana@example.com"}
+
+		checkSigning(context.Background(), session, opts, result)
+		findings := strings.Join(result.Findings, "\n")
+		if result.Signing != tc.signing || (tc.finding == "") != (findings == "") || !strings.Contains(findings, tc.finding) {
+			t.Errorf("%s: signing %q, findings %q; want %q and %q", name, result.Signing, findings, tc.signing, tc.finding)
 		}
 	}
 }

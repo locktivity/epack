@@ -143,9 +143,17 @@ func checkSigning(ctx context.Context, session *remoteSession, opts Options, res
 		return
 	}
 	key, found := FindKey(list.Keys, fingerprint)
+	if !found && opts.RegisterKey != nil {
+		registered, ok, registerErr := opts.RegisterKey(ctx, session.exec, signer, config)
+		if registerErr != nil {
+			result.Findings = append(result.Findings, fmt.Sprintf("registering the signing key %s: %v", fingerprint[:8], registerErr))
+			return
+		}
+		key, found = registered, ok
+	}
 	switch {
 	case !found:
-		result.Findings = append(result.Findings, fmt.Sprintf("the signing key %s is not registered for this configuration; run epack key create", fingerprint[:8]))
+		result.Findings = append(result.Findings, fmt.Sprintf("the signing key %s is not registered for this configuration; run epack key create, or pass --browser to sign in the browser", fingerprint[:8]))
 	case key.Status == remote.KeyStatusUsable:
 		result.Signing = "with the key " + DescribeKey(key)
 	case key.Status == remote.KeyStatusPending || key.Status == remote.KeyStatusLapsed:

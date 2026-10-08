@@ -6,6 +6,7 @@ package runflow
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"fmt"
 	"io"
@@ -86,6 +87,11 @@ type Options struct {
 	// Unsigned skips the sign stage, for a run whose key the remote does not
 	// accept yet; the pack is pushed without a signature.
 	Unsigned bool
+	// RegisterKey offers to register the Sign key for the configuration when
+	// the remote does not hold it, and returns the key as the remote then
+	// holds it, or false after a no. Without it a check reports the key as
+	// unregistered.
+	RegisterKey func(ctx context.Context, exec *remote.Executor, signer crypto.Signer, config string) (remote.SigningKey, bool, error)
 
 	Stdout io.Writer
 	Stderr io.Writer

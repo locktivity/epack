@@ -6,6 +6,7 @@ package runcmd
 
 import (
 	"context"
+	"crypto"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/redact"
+	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/runflow"
 	"github.com/locktivity/epack/internal/trustedpublishers"
 	"github.com/locktivity/epack/sign"
@@ -169,8 +171,8 @@ func checkRequestedByEnv() bool {
 }
 
 func runCheckOnly(ctx context.Context, out *output.Writer, ui *stageUI, workDir, pushRemote string) error {
-	keyPath, _ := localRunKey(workDir, pushRemote)
-	result, err := runflow.Check(ctx, runflow.Options{
+	keyPath, remoteName := localRunKey(workDir, pushRemote)
+	opts := runflow.Options{
 		WorkDir:         workDir,
 		Remote:          pushRemote,
 		AllowUnpinned:   runInsecureAllowUnpinned,
@@ -186,7 +188,16 @@ func runCheckOnly(ctx context.Context, out *output.Writer, ui *stageUI, workDir,
 		PromptTrustPublisher: func(req trustedpublishers.Requirement) bool {
 			return ui.promptTrustPublisher(req, !runYes)
 		},
-	})
+	}
+	if remoteName != "" {
+		opts.RegisterKey = func(ctx context.Context, exec *remote.Executor, signer crypto.Signer, configRef string) (remote.SigningKey, bool, error) {
+			ui.stopSpinner()
+			fingerprint, _ := sign.Fingerprint(signer.Public())
+			_, configName, _ := runflow.ConfigReference(workDir)
+			return newMachineKey(keyPath, fingerprint, remoteName, configName).register(ctx, out, exec, signer, configRef)
+		}
+	}
+	result, err := runflow.Check(ctx, opts)
 	if err != nil {
 		ui.fail()
 		return cmdutil.HandleError(err)

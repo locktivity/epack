@@ -4,6 +4,7 @@ package runcmd
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"fmt"
 	"os"
@@ -69,10 +70,6 @@ func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir
 	if err != nil {
 		return withKey, nil
 	}
-	label := configName
-	if label == "" {
-		label = "this configuration"
-	}
 	key, err := sign.LoadPrivateKey(keyPath)
 	if err != nil {
 		return runSigning{}, fmt.Errorf("reading this machine's signing key: %w", err)
@@ -115,38 +112,21 @@ func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir
 		}
 		return withKey, nil
 	}
-	machine := machineKey{path: keyPath, fingerprint: fingerprint, remoteName: remoteName, config: configName, label: label}
+	machine := newMachineKey(keyPath, fingerprint, remoteName, configName)
 	registered, found := runflow.FindKey(list.Keys, fingerprint)
 	ui.stopSpinner()
 	if found {
 		return machine.signing(out, registered.Status)
 	}
-	if runYes || !out.PromptConfirm("This machine's signing key is not registered for %s yet. Register it now?", label) {
-		return runSigning{}, fmt.Errorf("this machine's signing key %s is not registered for %s; run '%s', or pass --browser to sign in the browser",
-			fingerprint[:8], label, machine.command("create"))
-	}
-	publicPEM, err := sign.MarshalPublicKeyPEM(key.Public())
+	registered, found, err = machine.register(ctx, out, exec, key, configRef)
 	if err != nil {
 		return runSigning{}, err
 	}
-	resp, err := exec.KeyRegister(ctx, &remote.KeyRegisterRequest{
-		Config: configRef, PublicKeyPEM: string(publicPEM), Name: remote.MachineName(), ExpiresInDays: 365,
-	})
-	if err != nil {
-		return runSigning{}, fmt.Errorf("registering this machine's key: %w", err)
+	if !found {
+		return runSigning{}, fmt.Errorf("this machine's signing key %s is not registered for %s; run '%s', or pass --browser to sign in the browser",
+			fingerprint[:8], machine.label, machine.command("create"))
 	}
-	out.Success("Registered this machine's key for %s as %q", label, resp.Key.Name)
-	status := resp.Key.Status
-	if status == remote.KeyStatusPending && resp.Key.Approval != nil {
-		status, err = remotecmd.AwaitKeyApproval(ctx, out, remotecmd.PendingKey{
-			Remote: remoteName, Config: configRef, Key: resp.Key, Lister: exec,
-			Resume: fmt.Sprintf("run '%s'", machine.command("create")),
-		})
-		if err != nil {
-			return runSigning{}, err
-		}
-	}
-	return machine.signing(out, status)
+	return machine.signing(out, registered.Status)
 }
 
 // machineKey is this machine's key for the remote a run pushes to. config
@@ -157,6 +137,45 @@ type machineKey struct {
 	remoteName  string
 	config      string
 	label       string
+}
+
+func newMachineKey(path, fingerprint, remoteName, configName string) machineKey {
+	label := configName
+	if label == "" {
+		label = "this configuration"
+	}
+	return machineKey{path: path, fingerprint: fingerprint, remoteName: remoteName, config: configName, label: label}
+}
+
+// register offers to register the key for the configuration and, after a
+// yes, waits for the approval the remote asks for. It returns the key as
+// the remote then holds it, and false after a no.
+func (k machineKey) register(ctx context.Context, out *output.Writer, exec *remote.Executor, signer crypto.Signer, configRef string) (remote.SigningKey, bool, error) {
+	if runYes || !out.PromptConfirm("This machine's signing key is not registered for %s yet. Register it now?", k.label) {
+		return remote.SigningKey{}, false, nil
+	}
+	publicPEM, err := sign.MarshalPublicKeyPEM(signer.Public())
+	if err != nil {
+		return remote.SigningKey{}, false, err
+	}
+	resp, err := exec.KeyRegister(ctx, &remote.KeyRegisterRequest{
+		Config: configRef, PublicKeyPEM: string(publicPEM), Name: remote.MachineName(), ExpiresInDays: 365,
+	})
+	if err != nil {
+		return remote.SigningKey{}, false, fmt.Errorf("registering this machine's key: %w", err)
+	}
+	out.Success("Registered this machine's key for %s as %q", k.label, resp.Key.Name)
+	key := resp.Key
+	if key.Status == remote.KeyStatusPending && key.Approval != nil {
+		key.Status, err = remotecmd.AwaitKeyApproval(ctx, out, remotecmd.PendingKey{
+			Remote: k.remoteName, Config: configRef, Key: resp.Key, Lister: exec,
+			Resume: fmt.Sprintf("run '%s'", k.command("create")),
+		})
+		if err != nil {
+			return remote.SigningKey{}, false, err
+		}
+	}
+	return key, true, nil
 }
 
 // command is the epack key command that works on this key, as in
