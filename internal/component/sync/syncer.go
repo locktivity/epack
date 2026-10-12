@@ -715,7 +715,7 @@ func (s *Syncer) downloadAndInstallComponent(
 	installPath, installDir string,
 	opts SyncOpts,
 ) error {
-	owner, repo, release, asset, err := s.resolveReleaseAsset(ctx, name, locked)
+	owner, repo, release, asset, err := s.resolveReleaseAsset(ctx, name, locked, platformEntry)
 	if err != nil {
 		return err
 	}
@@ -752,12 +752,16 @@ func (s *Syncer) downloadAndInstallComponent(
 	return nil
 }
 
-func (s *Syncer) resolveReleaseAsset(ctx context.Context, name string, locked *lockedComponent) (owner, repo string, release *ReleaseInfo, asset *AssetInfo, err error) {
+func (s *Syncer) resolveReleaseAsset(ctx context.Context, name string, locked *lockedComponent, platformEntry componenttypes.LockedPlatform) (owner, repo string, release *ReleaseInfo, asset *AssetInfo, err error) {
 	owner, repo, err = ParseSourceURI(locked.Source)
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 	source := fmt.Sprintf("%s/%s", owner, repo)
+
+	if release, asset, ok := s.lockedReleaseAsset(source, locked, platformEntry); ok {
+		return owner, repo, release, asset, nil
+	}
 
 	release, err = s.Registry.FetchRelease(ctx, source, locked.Version)
 	if err != nil {
@@ -771,6 +775,33 @@ func (s *Syncer) resolveReleaseAsset(ctx context.Context, name string, locked *l
 		return "", "", nil, nil, fmt.Errorf("finding binary asset: %w", err)
 	}
 	return owner, repo, release, asset, nil
+}
+
+// lockedReleaseAsset builds the asset and bundle URLs from the lockfile so
+// the install doesn't call the rate-limited releases API.
+func (s *Syncer) lockedReleaseAsset(source string, locked *lockedComponent, platformEntry componenttypes.LockedPlatform) (*ReleaseInfo, *AssetInfo, bool) {
+	locator, ok := s.Registry.(LockedAssetLocator)
+	if !ok || platformEntry.Asset == "" {
+		return nil, nil, false
+	}
+	if safe, err := SanitizeAssetName(platformEntry.Asset); err != nil || safe != platformEntry.Asset {
+		return nil, nil, false
+	}
+	bundleName := platformEntry.Asset + ".sigstore.json"
+	binaryURL, err := locator.LockedAssetURL(source, locked.Version, platformEntry.Asset)
+	if err != nil {
+		return nil, nil, false
+	}
+	bundleURL, err := locator.LockedAssetURL(source, locked.Version, bundleName)
+	if err != nil {
+		return nil, nil, false
+	}
+	asset := AssetInfo{Name: platformEntry.Asset, URL: binaryURL, Platform: platform.Key(runtime.GOOS, runtime.GOARCH)}
+	release := &ReleaseInfo{
+		Version: locked.Version,
+		Assets:  []AssetInfo{asset, {Name: bundleName, URL: bundleURL, IsSigstoreBundle: true}},
+	}
+	return release, &asset, true
 }
 
 func (s *Syncer) verifyDownloadedBinary(

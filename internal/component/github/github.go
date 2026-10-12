@@ -142,6 +142,17 @@ type Asset struct {
 	Size               int64  `json:"size"`
 }
 
+// ReleaseDownloadURL returns the browser download URL for a release asset.
+// SECURITY: All path segments are URL-escaped to prevent path/query injection.
+func (c *Client) ReleaseDownloadURL(owner, repo, tag, asset string) string {
+	base := "https://github.com"
+	if c.baseURL != "https://api.github.com" {
+		base = strings.TrimSuffix(c.baseURL, "/")
+	}
+	return fmt.Sprintf("%s/%s/%s/releases/download/%s/%s",
+		base, url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(tag), url.PathEscape(asset))
+}
+
 // FetchRelease fetches a specific release by tag from owner/repo.
 // SECURITY: All path segments are URL-escaped to prevent path/query injection.
 func (c *Client) FetchRelease(ctx context.Context, owner, repo, tag string) (*Release, error) {

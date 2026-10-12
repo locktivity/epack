@@ -40,7 +40,9 @@ user-level cache between runs.
 
 ```yaml
 evidence-pack:
-  image: ghcr.io/locktivity/epack@sha256:<digest from the release>
+  image:
+    name: ghcr.io/locktivity/epack@sha256:<digest from the release>
+    entrypoint: [""]
   script:
     - cd northwind/production
     - epack run --yes

@@ -36,6 +36,12 @@ type RegistryClient interface {
 	FindSigstoreBundle(release *ReleaseInfo, binaryAssetName string) (*AssetInfo, error)
 }
 
+// LockedAssetLocator returns download URLs for assets named in the lockfile,
+// without fetching the release.
+type LockedAssetLocator interface {
+	LockedAssetURL(source, version, assetName string) (string, error)
+}
+
 // ReleaseInfo contains metadata about a component release.
 // This is a registry-agnostic representation of release data.
 type ReleaseInfo struct {
@@ -135,6 +141,15 @@ func (r *GitHubRegistry) ResolveVersion(ctx context.Context, source, constraint 
 
 	// Find best matching version using semver
 	return semver.SelectVersion(releaseTags(releases), c)
+}
+
+// LockedAssetURL returns the release download URL for an asset in the lockfile.
+func (r *GitHubRegistry) LockedAssetURL(source, version, assetName string) (string, error) {
+	owner, repo, _, err := github.ParseSource(source + "@" + version)
+	if err != nil {
+		return "", err
+	}
+	return r.client.ReleaseDownloadURL(owner, repo, version, assetName), nil
 }
 
 // FetchRelease fetches release metadata for a specific version.
