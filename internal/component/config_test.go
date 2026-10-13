@@ -291,8 +291,8 @@ remotes:
 			t.Errorf("missing secret at index %d: want %q", i, want)
 			continue
 		}
-		if remote.Secrets[i] != want {
-			t.Errorf("Secrets[%d] = %q, want %q", i, remote.Secrets[i], want)
+		if remote.Secrets[i].Name != want {
+			t.Errorf("Secrets[%d] = %q, want %q", i, remote.Secrets[i].Name, want)
 		}
 	}
 }
@@ -580,7 +580,7 @@ collectors:
 		t.Fatalf("config.Load() error: %v", err)
 	}
 	got := cfg.Collectors["github"].Secrets
-	if len(got) != 2 || got[0] != "ACTIONS_ID_TOKEN_REQUEST_URL" || got[1] != "ACTIONS_ID_TOKEN_REQUEST_TOKEN" {
+	if len(got) != 2 || got[0].Name != "ACTIONS_ID_TOKEN_REQUEST_URL" || got[1].Name != "ACTIONS_ID_TOKEN_REQUEST_TOKEN" {
 		t.Fatalf("collector secrets = %v, want raw OIDC passthrough preserved", got)
 	}
 }

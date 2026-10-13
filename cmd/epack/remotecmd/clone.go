@@ -290,11 +290,18 @@ func printComponents(out *output.Writer, label string, components []remoteconfig
 func envList(vars []remoteconfig.EnvVar) string {
 	parts := make([]string, 0, len(vars))
 	for _, v := range vars {
-		if v.Set {
-			parts = append(parts, v.Name+" (set)")
-		} else {
-			parts = append(parts, v.Name)
+		var notes []string
+		if v.Optional {
+			notes = append(notes, "optional")
 		}
+		if v.Set {
+			notes = append(notes, "set")
+		}
+		part := v.Name
+		if len(notes) > 0 {
+			part += " (" + strings.Join(notes, ", ") + ")"
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, ", ")
 }

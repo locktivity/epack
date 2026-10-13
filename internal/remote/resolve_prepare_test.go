@@ -245,7 +245,7 @@ func TestPrepareAdapterExecutor_SecretsPassedThrough(t *testing.T) {
 	remoteCfg := &config.RemoteConfig{
 		Adapter: "test",
 		Binary:  adapter,
-		Secrets: []string{"MY_SECRET", "OTHER_TOKEN"},
+		Secrets: config.SecretNames("MY_SECRET", "OTHER_TOKEN"),
 	}
 
 	exec, _, err := remote.PrepareAdapterExecutor(context.Background(), projectRoot, "origin", cfg, remoteCfg, remote.AdapterExecutorOptions{})

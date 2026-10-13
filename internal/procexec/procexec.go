@@ -38,6 +38,12 @@ type Spec struct {
 	// Optional output redaction hooks used by RunCapture.
 	RedactStdout func([]byte) []byte
 	RedactStderr func([]byte) []byte
+
+	// IsolateProcessGroup runs the child in its own process group and kills
+	// the whole group when the context ends, so a process the child forked
+	// cannot outlive the run holding the child's environment. Unix only. Not
+	// for interactive children, which must stay in the terminal's group.
+	IsolateProcessGroup bool
 }
 
 // Result contains captured process output and metadata from RunCapture.
@@ -47,6 +53,14 @@ type Result struct {
 	ExitCode int
 	TimedOut bool
 }
+
+// WaitDelay bounds how long Wait blocks after the context ends on a child
+// that ignores the kill, or on a grandchild still holding the output pipes.
+const WaitDelay = 5 * time.Second
+
+// ErrWaitDelay is returned when a child exited but WaitDelay passed with its
+// output pipes still held open by a process it left behind.
+var ErrWaitDelay = exec.ErrWaitDelay
 
 // Command builds an exec.Cmd from the given spec.
 // This is a low-level constructor and does not enforce Spec policy fields.
@@ -63,6 +77,12 @@ func Command(ctx context.Context, spec Spec) *exec.Cmd {
 	cmd.Stdin = spec.Stdin
 	cmd.Stdout = spec.Stdout
 	cmd.Stderr = spec.Stderr
+	// A child that forks a process holding stdout would otherwise keep Wait
+	// blocked past the context's deadline until that process exits.
+	cmd.WaitDelay = WaitDelay
+	if spec.IsolateProcessGroup {
+		isolateProcessGroup(cmd, ctx != nil)
+	}
 	return cmd
 }
 

@@ -73,6 +73,12 @@ collectors:
     secrets:
       - JIRA_API_TOKEN
       - JIRA_EMAIL
+
+  aws:
+    source: locktivity/epack-collector-aws@^0.4
+    secrets:
+      - name: AWS_PROFILE
+        optional: true
 ```
 
 ### Configuration Fields
@@ -82,7 +88,7 @@ collectors:
 | `source` | One of source/binary | Source repository with version constraint |
 | `binary` | One of source/binary | Absolute path to external binary |
 | `config` | No | Collector-specific configuration (passed as JSON) |
-| `secrets` | No | Environment variable names to pass through |
+| `secrets` | No | Environment variables to pass through. A bare name is required; `{name: AWS_PROFILE, optional: true}` is passed through only when set |
 
 ### Version Constraints
 
@@ -598,7 +604,7 @@ Collectors run with:
 - Safe PATH (no PATH injection)
 - Timeout enforcement
 - Output size limits
-- stderr sanitization (truncated, control chars escaped)
+- stderr sanitization (passed secret values replaced, truncated, control chars escaped, secret patterns redacted; a value shorter than six characters is not matched)
 
 ### Supply Chain Security
 

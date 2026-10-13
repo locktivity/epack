@@ -104,7 +104,7 @@ func buildProtocolEnv(in protocolEnvInput) []string {
 	// Pass through secrets listed in epack.yaml.
 	// Only explicitly configured secrets are passed to tools.
 	// Reserved prefixes (EPACK_, LD_, DYLD_, _) are blocked.
-	env = execsafe.AppendAllowedSecrets(env, in.toolCfg.Secrets, os.Getenv)
+	env = execsafe.AppendAllowedSecrets(env, in.toolCfg.Secrets.Names(), os.Getenv)
 	env = execsafe.AppendExplicitEnv(env, in.managedEnv)
 
 	return env

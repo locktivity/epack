@@ -144,3 +144,57 @@ func TestDiff(t *testing.T) {
 		t.Error("a revision compared with itself should show no changes")
 	}
 }
+
+func TestSummarize_KeepsOptionalVariablesVisible(t *testing.T) {
+	dir := writeSummaryProject(t, `stream: northwind/production
+collectors:
+  aws:
+    source: locktivity/epack-collector-aws@^0.5
+    secrets:
+      - AWS_WEB_IDENTITY_TOKEN_FILE
+      - name: AWS_PROFILE
+        optional: true
+  other:
+    source: locktivity/epack-collector-okta@^0.1
+    secrets:
+      - AWS_PROFILE
+`)
+	getenv := func(name string) string {
+		if name == "AWS_PROFILE" {
+			return "northwind"
+		}
+		return ""
+	}
+
+	summary, err := Summarize(dir, getenv)
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	byName := map[string]EnvVar{}
+	for _, env := range summary.Env {
+		byName[env.Name] = env
+	}
+	if token := byName["AWS_WEB_IDENTITY_TOKEN_FILE"]; token.Optional || token.Set {
+		t.Errorf("AWS_WEB_IDENTITY_TOKEN_FILE = %+v, want required and unset", token)
+	}
+	// A name any component requires stays required.
+	if profile := byName["AWS_PROFILE"]; profile.Optional || !profile.Set || strings.Join(profile.UsedBy, ",") != "aws,other" {
+		t.Errorf("AWS_PROFILE = %+v, want required, set, used by both", profile)
+	}
+
+	dir = writeSummaryProject(t, `stream: northwind/production
+collectors:
+  aws:
+    source: locktivity/epack-collector-aws@^0.5
+    secrets:
+      - name: AWS_PROFILE
+        optional: true
+`)
+	summary, err = Summarize(dir, getenv)
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	if len(summary.Env) != 1 || !summary.Env[0].Optional || !summary.Env[0].Set {
+		t.Errorf("env = %+v, want AWS_PROFILE optional and set", summary.Env)
+	}
+}

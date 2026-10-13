@@ -41,11 +41,14 @@ func (c Component) Label() string {
 }
 
 // EnvVar is an environment variable the configuration reads, with the
-// components that receive it and whether it is set right now.
+// components that receive it and whether it is set right now. Optional
+// means every component that reads it listed it as optional, so it is
+// passed through when set and not required.
 type EnvVar struct {
-	Name   string   `json:"name"`
-	Set    bool     `json:"set"`
-	UsedBy []string `json:"used_by"`
+	Name     string   `json:"name"`
+	Set      bool     `json:"set"`
+	Optional bool     `json:"optional,omitempty"`
+	UsedBy   []string `json:"used_by"`
 }
 
 // Hook is a hook script in the folder and whether it is still the remote's
@@ -83,10 +86,12 @@ func Summarize(dir string, getenv func(string) string) (*Summary, error) {
 	}
 
 	summary := &Summary{Locked: locked}
+	if !locked {
+		lf = &lockfile.LockFile{}
+	}
 	env := map[string]*EnvVar{}
-	collect := func(kind, name, source, binary string, secrets []string, version string) {
-		component := describeComponent(kind, name, source, binary, version)
-		switch kind {
+	collect := func(component Component, secrets config.SecretList) {
+		switch component.Kind {
 		case "collector":
 			summary.Collectors = append(summary.Collectors, component)
 		case "tool":
@@ -95,44 +100,30 @@ func Summarize(dir string, getenv func(string) string) (*Summary, error) {
 			summary.Remotes = append(summary.Remotes, component)
 		}
 		for _, secret := range secrets {
-			entry, ok := env[secret]
+			entry, ok := env[secret.Name]
 			if !ok {
-				entry = &EnvVar{Name: secret, Set: getenv(secret) != ""}
-				env[secret] = entry
+				entry = &EnvVar{Name: secret.Name, Set: getenv(secret.Name) != "", Optional: true}
+				env[secret.Name] = entry
 			}
-			entry.UsedBy = append(entry.UsedBy, name)
+			entry.Optional = entry.Optional && secret.Optional
+			entry.UsedBy = append(entry.UsedBy, component.Name)
 		}
 	}
 
 	for _, name := range sortedKeys(cfg.Collectors) {
 		c := cfg.Collectors[name]
-		version := ""
-		if locked {
-			if entry, ok := lf.GetCollector(name); ok {
-				version = entry.Version
-			}
-		}
-		collect("collector", name, c.Source, c.Binary, c.Secrets, version)
+		pinned, _ := lf.GetCollector(name)
+		collect(describeComponent("collector", name, c.Source, c.Binary, pinned.Version), c.Secrets)
 	}
 	for _, name := range sortedKeys(cfg.Tools) {
 		t := cfg.Tools[name]
-		version := ""
-		if locked {
-			if entry, ok := lf.GetTool(name); ok {
-				version = entry.Version
-			}
-		}
-		collect("tool", name, t.Source, t.Binary, t.Secrets, version)
+		pinned, _ := lf.GetTool(name)
+		collect(describeComponent("tool", name, t.Source, t.Binary, pinned.Version), t.Secrets)
 	}
 	for _, name := range sortedKeys(cfg.Remotes) {
 		r := cfg.Remotes[name]
-		version := ""
-		if locked {
-			if entry, ok := lf.GetRemote(name); ok {
-				version = entry.Version
-			}
-		}
-		collect("remote", name, r.Source, r.Binary, r.Secrets, version)
+		pinned, _ := lf.GetRemote(name)
+		collect(describeComponent("remote", name, r.Source, r.Binary, pinned.Version), r.Secrets)
 	}
 
 	for _, name := range sortedKeys(env) {

@@ -703,7 +703,7 @@ func (r *Runner) runOne(ctx context.Context, jobCfg *config.JobConfig, run singl
 		Name:           run.Name,
 		ExecPath:       execPath,
 		Config:         run.Config.Config,
-		Secrets:        run.Config.Secrets,
+		Secrets:        run.Config.Secrets.Names(),
 		ManagedEnv:     managedEnv,
 		OutputDir:      outputDir,
 		CollectorIndex: run.CollectorIndex,
@@ -804,8 +804,7 @@ func (r *Runner) executeCollector(ctx context.Context, req ExecutionRequest, opt
 		defer configCleanup()
 	}
 
-	// Build restricted environment with protocol variables
-	env := collectorexec.BuildEnv(collectorexec.EnvInput{
+	env := collectorexec.EnvInput{
 		BaseEnv:             os.Environ(),
 		Name:                req.Name,
 		ConfigPath:          configPath,
@@ -814,7 +813,7 @@ func (r *Runner) executeCollector(ctx context.Context, req ExecutionRequest, opt
 		ManagedEnv:          req.ManagedEnv,
 		Getenv:              os.Getenv,
 		InsecureInheritPath: opts.Unsafe.InheritPath,
-	})
+	}
 
 	// Create progress callback that forwards to the progress hooks
 	var onProgress func(collectorexec.ProgressMessage)
@@ -842,7 +841,6 @@ func (r *Runner) executeCollector(ctx context.Context, req ExecutionRequest, opt
 
 	// Execute collector with timeout and output limits
 	result := collectorexec.Run(ctx, collectorexec.Invocation{
-		Name:       req.Name,
 		ExecPath:   req.ExecPath,
 		Env:        env,
 		Timeout:    opts.Secure.Timeout,

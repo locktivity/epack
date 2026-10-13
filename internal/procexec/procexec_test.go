@@ -129,3 +129,20 @@ func TestRunWithTimeout(t *testing.T) {
 		t.Fatalf("timeout not enforced, elapsed=%s", elapsed)
 	}
 }
+
+func TestRunReturnsSoonAfterTimeoutWhenAGrandchildHoldsStdout(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "linger.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30 &\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	var stdout bytes.Buffer
+	started := time.Now()
+	cmd := Command(ctx, Spec{Path: script, Stdout: &stdout})
+	_ = cmd.Run()
+	if elapsed := time.Since(started); elapsed > WaitDelay+5*time.Second {
+		t.Fatalf("Run took %v; the lingering grandchild should be abandoned after WaitDelay", elapsed)
+	}
+}

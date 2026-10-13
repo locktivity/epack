@@ -1,6 +1,7 @@
 package remote_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -648,5 +650,43 @@ func TestDefaultTimeout(t *testing.T) {
 	}
 	if remote.DefaultTimeout > 10*time.Minute {
 		t.Errorf("DefaultTimeout %v seems too long", remote.DefaultTimeout)
+	}
+}
+
+func TestExecutor_RedactsPassedSecretValuesInStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows - no shell scripts")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "leaky-adapter")
+	content := `#!/bin/sh
+case "$1" in
+  --capabilities)
+    echo '{"name":"leaky","kind":"remote_adapter","deploy_protocol_version":1,"features":{"prepare_finalize":true,"whoami":true}}'
+    ;;
+  auth.whoami)
+    echo "auth failed for token $TEST_SECRET" >&2
+    exit 1
+    ;;
+esac
+`
+	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
+		t.Fatalf("creating test script: %v", err)
+	}
+	t.Setenv("TEST_SECRET", "test-secret-value")
+
+	var streamed bytes.Buffer
+	exec := remote.NewExecutor(script, "leaky")
+	exec.Secrets = []string{"TEST_SECRET"}
+	exec.Stderr = &streamed
+
+	_, err := exec.AuthWhoami(context.Background())
+	if err == nil {
+		t.Fatal("expected the adapter failure")
+	}
+	for name, text := range map[string]string{"error": err.Error(), "streamed stderr": streamed.String()} {
+		if strings.Contains(text, "test-secret-value") || !strings.Contains(text, "[REDACTED]") {
+			t.Errorf("%s leaked the passed value: %s", name, text)
+		}
 	}
 }

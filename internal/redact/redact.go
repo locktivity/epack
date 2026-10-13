@@ -34,6 +34,7 @@ package redact
 import (
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -293,4 +294,32 @@ func SanitizeURLHost(rawURL string) string {
 	// Return only scheme://host (no path, query, or fragment)
 	result := u.Scheme + "://" + u.Host
 	return result
+}
+
+// MinValueLength keeps trivial values such as "1" or "true" from shredding
+// the output when redacting by value; nothing that short is a secret.
+const MinValueLength = 6
+
+// Values replaces every occurrence of the given secret values in s with the
+// placeholder, longest first so a value that is part of another cannot
+// expose the rest of it. Each value is also matched trimmed of surrounding
+// whitespace, since a file-backed value often ends with a newline. Values
+// shorter than MinValueLength are ignored.
+func Values(s string, values ...string) string {
+	candidates := make([]string, 0, 2*len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		for _, form := range []string{value, strings.TrimSpace(value)} {
+			if len(form) < MinValueLength || seen[form] {
+				continue
+			}
+			seen[form] = true
+			candidates = append(candidates, form)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return len(candidates[i]) > len(candidates[j]) })
+	for _, value := range candidates {
+		s = strings.ReplaceAll(s, value, Placeholder)
+	}
+	return s
 }

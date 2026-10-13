@@ -38,7 +38,8 @@ func TestCheck_NamesWhatTheRunWouldMiss(t *testing.T) {
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 
-	dir := writeCheckProject(t, "stream: northwind/production\ncollectors:\n  okta:\n    source: locktivity/epack-collector-okta@^0.1\n    secrets: [OKTA_PRIVATE_KEY, SENTRY_AUTH_TOKEN]\n")
+	t.Setenv("AWS_PROFILE", "")
+	dir := writeCheckProject(t, "stream: northwind/production\ncollectors:\n  okta:\n    source: locktivity/epack-collector-okta@^0.1\n    secrets: [OKTA_PRIVATE_KEY, SENTRY_AUTH_TOKEN, {name: AWS_PROFILE, optional: true}]\n")
 
 	result, err := Check(context.Background(), Options{WorkDir: dir, NonInteractive: true})
 	if err != nil {
@@ -52,6 +53,12 @@ func TestCheck_NamesWhatTheRunWouldMiss(t *testing.T) {
 	}
 	if result.EnvTotal != 2 || result.EnvPresent != 1 || strings.Join(result.EnvMissing, ",") != "OKTA_PRIVATE_KEY" {
 		t.Errorf("env = %d/%d missing %v", result.EnvPresent, result.EnvTotal, result.EnvMissing)
+	}
+	if len(result.EnvOptional) != 1 || result.EnvOptional[0].Name != "AWS_PROFILE" || result.EnvOptional[0].Set {
+		t.Errorf("optional env = %+v, want AWS_PROFILE unset and uncounted", result.EnvOptional)
+	}
+	if strings.Contains(strings.Join(result.Findings, "\n"), "AWS_PROFILE") {
+		t.Errorf("an unset optional variable must not be a finding: %v", result.Findings)
 	}
 	joined := strings.Join(result.Findings, "\n")
 	for _, want := range []string{"no epack.lock.yaml; run epack lock and commit it", "not set: OKTA_PRIVATE_KEY"} {

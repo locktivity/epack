@@ -47,6 +47,9 @@ type CheckResult struct {
 	// EnvCovered are variables only the remote reads, left out of the count
 	// because the run is signed in and the remote will not need them.
 	EnvCovered []string
+	// EnvOptional are variables the configuration may read, passed through
+	// when set and left out of the count. Listed so a reviewer sees them.
+	EnvOptional []remoteconfig.EnvVar
 	// Signing says how the run would sign: in the browser, or with which key.
 	Signing           string
 	Credentials       []CredentialCheck
@@ -286,6 +289,10 @@ func checkEnv(cfg *config.JobConfig, workDir string, result *CheckResult) {
 			result.EnvCovered = append(result.EnvCovered, env.Name)
 			continue
 		}
+		if env.Optional {
+			result.EnvOptional = append(result.EnvOptional, env)
+			continue
+		}
 		result.EnvTotal++
 		if env.Set {
 			result.EnvPresent++
@@ -430,6 +437,7 @@ func checkProvenanceOptions(workDir string, result *CheckResult) lockprovenance.
 		"env_total":          result.EnvTotal,
 		"env_missing":        result.EnvMissing,
 		"env_covered":        result.EnvCovered,
+		"env_optional":       result.EnvOptional,
 		"signing":            result.Signing,
 		"credentials":        credentials,
 		"publishers_trusted": result.PublishersTrusted,

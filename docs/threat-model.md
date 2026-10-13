@@ -77,6 +77,8 @@ Collectors and tools only receive secrets explicitly listed in `epack.yaml`. Thi
 
 **Trust model:** The operator who writes `epack.yaml` is trusted - they control which collectors run and what credentials they receive. The protection is against malicious binaries accessing secrets not intended for them, not against malicious config authors (who already have RCE via `source:` or `binary:` fields).
 
+**Known limit:** a collector's or adapter's stderr is reported with every passed secret value replaced, then truncated and pattern-redacted. A value shorter than six characters is not matched, so a short password listed as a secret can appear in an error message if the component prints it. Tools write to the terminal directly and are not redacted.
+
 ## Remote-Authored Configuration
 
 `epack remote clone <name>` and `epack run <name>` fetch a project from a remote through `config.pull` and run it. That makes the remote a configuration author with most of the powers the section above gives the operator: its `epack.yaml` decides which collectors and tools run and which `secrets:` reach them, and its lockfile decides which binaries are installed. In CI the lockfile pull request gives a person a look at every change. On a laptop the review is the summary epack prints after each fetch that changed something, and the person who signs in trusts the remote and the admins who configure it.

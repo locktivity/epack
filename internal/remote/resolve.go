@@ -200,7 +200,7 @@ func PrepareAdapterExecutor(
 	}
 	exec.ProjectRoot = projectRoot
 	exec.Stderr = opts.Stderr
-	exec.Secrets = remoteCfg.Secrets
+	exec.Secrets = remoteCfg.Secrets.Names()
 	exec.ManagedEnv = managedEnv
 	exec.ExplicitEnv = customEndpoints.ExplicitEnv()
 

@@ -120,8 +120,8 @@ collectors:
 			for _, collector := range cfg.Collectors {
 				for _, secret := range collector.Secrets {
 					for _, prefix := range reservedPrefixes {
-						if strings.HasPrefix(strings.ToUpper(secret), prefix) {
-							t.Errorf("SECURITY: accepted reserved secret name: %q", secret)
+						if strings.HasPrefix(strings.ToUpper(secret.Name), prefix) {
+							t.Errorf("SECURITY: accepted reserved secret name: %q", secret.Name)
 						}
 					}
 				}
@@ -129,8 +129,8 @@ collectors:
 			for _, tool := range cfg.Tools {
 				for _, secret := range tool.Secrets {
 					for _, prefix := range reservedPrefixes {
-						if strings.HasPrefix(strings.ToUpper(secret), prefix) {
-							t.Errorf("SECURITY: accepted reserved secret name: %q", secret)
+						if strings.HasPrefix(strings.ToUpper(secret.Name), prefix) {
+							t.Errorf("SECURITY: accepted reserved secret name: %q", secret.Name)
 						}
 					}
 				}

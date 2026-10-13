@@ -107,7 +107,7 @@ type CollectorConfig struct {
 	Source  string         `yaml:"source,omitempty"`
 	Binary  string         `yaml:"binary,omitempty"`
 	Config  map[string]any `yaml:"config,omitempty"`
-	Secrets []string       `yaml:"secrets,omitempty"` // Env var names to pass through to collector
+	Secrets SecretList     `yaml:"secrets,omitempty"` // Env var names to pass through to collector; see SecretRef
 	// Credentials references Locktivity-managed credential set refs declared in credential_sets.
 	Credentials []string `yaml:"credentials,omitempty"`
 }
@@ -118,7 +118,7 @@ type ToolConfig struct {
 	Source  string         `yaml:"source,omitempty"`
 	Binary  string         `yaml:"binary,omitempty"`
 	Config  map[string]any `yaml:"config,omitempty"`  // Config values passed as EPACK_CFG_* env vars
-	Secrets []string       `yaml:"secrets,omitempty"` // Env var names to pass as EPACK_SECRET_* vars
+	Secrets SecretList     `yaml:"secrets,omitempty"` // Env var names to pass as EPACK_SECRET_* vars; see SecretRef
 	// Credentials references Locktivity-managed credential set refs declared in credential_sets.
 	Credentials []string `yaml:"credentials,omitempty"`
 }
@@ -280,7 +280,7 @@ type RemoteConfig struct {
 
 	// Secrets is a list of env var names to pass through to the remote adapter.
 	// These are passed as-is (not renamed) to allow adapter-specific auth.
-	Secrets []string `yaml:"secrets,omitempty"`
+	Secrets SecretList `yaml:"secrets,omitempty"`
 
 	// Credentials is a list of Locktivity-managed credential set refs declared in credential_sets.
 	Credentials []string `yaml:"credentials,omitempty"`
@@ -690,15 +690,7 @@ func (c *JobConfig) validateCollectors() error {
 			return fmt.Errorf("collector %q: source and binary are mutually exclusive", name)
 		}
 
-		// SECURITY: Validate secret names to prevent passing dangerous env vars
-		// like PATH, LD_PRELOAD, or EPACK_* protocol variables.
-		if err := execsafe.ValidateSecretNames(collector.Secrets); err != nil {
-			return fmt.Errorf("collector %q: %w", name, err)
-		}
-		if err := validateManagedCredentialIsolation("collector", name, collector.Secrets, collector.Credentials); err != nil {
-			return err
-		}
-		if err := c.validateCredentialRefs("collector", name, collector.Credentials); err != nil {
+		if err := c.validateComponentSecrets("collector", name, collector.Secrets, collector.Credentials); err != nil {
 			return err
 		}
 	}
@@ -719,15 +711,7 @@ func (c *JobConfig) validateTools() error {
 			return fmt.Errorf("tool %q: source and binary are mutually exclusive", name)
 		}
 
-		// SECURITY: Validate secret names to prevent passing dangerous env vars
-		// like PATH, LD_PRELOAD, or EPACK_* protocol variables.
-		if err := execsafe.ValidateSecretNames(tool.Secrets); err != nil {
-			return fmt.Errorf("tool %q: %w", name, err)
-		}
-		if err := validateManagedCredentialIsolation("tool", name, tool.Secrets, tool.Credentials); err != nil {
-			return err
-		}
-		if err := c.validateCredentialRefs("tool", name, tool.Credentials); err != nil {
+		if err := c.validateComponentSecrets("tool", name, tool.Secrets, tool.Credentials); err != nil {
 			return err
 		}
 	}
@@ -758,19 +742,26 @@ func (c *JobConfig) validateRemotes() error {
 			}
 		}
 
-		// SECURITY: Validate secret names to prevent passing dangerous env vars
-		// like PATH, LD_PRELOAD, or EPACK_* protocol variables.
-		if err := execsafe.ValidateSecretNames(remote.Secrets); err != nil {
-			return fmt.Errorf("remote %q: %w", name, err)
-		}
-		if err := validateManagedCredentialIsolation("remote", name, remote.Secrets, remote.Credentials); err != nil {
-			return err
-		}
-		if err := c.validateCredentialRefs("remote", name, remote.Credentials); err != nil {
+		if err := c.validateComponentSecrets("remote", name, remote.Secrets, remote.Credentials); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// validateComponentSecrets applies the checks every component kind shares:
+// secret names that are safe to pass, managed credentials kept apart from
+// raw OIDC variables, and credential refs that are declared.
+func (c *JobConfig) validateComponentSecrets(kind, name string, secrets SecretList, credentials []string) error {
+	// SECURITY: Validate secret names to prevent passing dangerous env vars
+	// like PATH, LD_PRELOAD, or EPACK_* protocol variables.
+	if err := execsafe.ValidateSecretNames(secrets.Names()); err != nil {
+		return fmt.Errorf("%s %q: %w", kind, name, err)
+	}
+	if err := validateManagedCredentialIsolation(kind, name, secrets.Names(), credentials); err != nil {
+		return err
+	}
+	return c.validateCredentialRefs(kind, name, credentials)
 }
 
 func validateManagedCredentialIsolation(kind, name string, secrets, refs []string) error {

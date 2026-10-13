@@ -510,7 +510,7 @@ func (e *Executor) execute(ctx context.Context, command string, req any, resp an
 	defer cancel()
 	stdout, stderr, runErr := runAdapterCommand(ctx, e, command, reqJSON)
 	if runErr != nil {
-		return handleAdapterExecutionError(e.AdapterName, command, stdout, stderr, runErr)
+		return handleAdapterExecutionError(e.AdapterName, command, stdout, stderr, runErr, e.secretValues())
 	}
 	if err := safejson.Unmarshal(stdout.Bytes(), limits.JSONResponse, resp); err != nil {
 		return fmt.Errorf("parsing adapter response: %w", err)
@@ -548,20 +548,36 @@ func runAdapterCommand(ctx context.Context, e *Executor, command string, reqJSON
 
 	stderrWriter := io.Writer(&stderr)
 	if e.Stderr != nil {
-		stderrWriter = io.MultiWriter(&stderr, &redactingWriter{w: e.Stderr})
+		stderrWriter = io.MultiWriter(&stderr, &redactingWriter{w: e.Stderr, values: e.secretValues()})
 	}
 	err := procexec.Run(ctx, procexec.Spec{
-		Path:   e.BinaryPath,
-		Args:   []string{command},
-		Env:    env,
-		Stdin:  bytes.NewReader(reqJSON),
-		Stdout: &stdout,
-		Stderr: stderrWriter,
+		Path:                e.BinaryPath,
+		Args:                []string{command},
+		Env:                 env,
+		Stdin:               bytes.NewReader(reqJSON),
+		Stdout:              &stdout,
+		Stderr:              stderrWriter,
+		IsolateProcessGroup: true,
 	})
 	return &stdout, &stderr, err
 }
 
-func handleAdapterExecutionError(adapterName, command string, stdout, stderr *bytes.Buffer, runErr error) error {
+// secretValues are the values the adapter receives for its listed secrets
+// and managed credentials, replaced wherever its stderr is reported.
+func (e *Executor) secretValues() []string {
+	var values []string
+	for _, name := range e.Secrets {
+		if value := os.Getenv(name); value != "" {
+			values = append(values, value)
+		}
+	}
+	for _, value := range e.ManagedEnv {
+		values = append(values, value)
+	}
+	return values
+}
+
+func handleAdapterExecutionError(adapterName, command string, stdout, stderr *bytes.Buffer, runErr error, secretValues []string) error {
 	if len(stdout.Bytes()) > 0 {
 		var errResp ErrorResponse
 		if err := safejson.Unmarshal(stdout.Bytes(), limits.JSONResponse, &errResp); err == nil && !errResp.OK {
@@ -575,7 +591,7 @@ func handleAdapterExecutionError(adapterName, command string, stdout, stderr *by
 		}
 	}
 	return fmt.Errorf("adapter %q command %q failed: %w (stderr: %s)",
-		adapterName, command, runErr, redact.Sensitive(stderr.String()))
+		adapterName, command, runErr, redact.Sensitive(redact.Values(stderr.String(), secretValues...)))
 }
 
 func parseAdapterErrorResponse(adapterName string, data []byte) error {
@@ -633,12 +649,13 @@ func (e *AdapterError) HasAction() bool {
 // SECURITY: This prevents malicious or buggy adapters from leaking secrets
 // via stderr output that gets displayed to users or written to logs.
 type redactingWriter struct {
-	w io.Writer
+	w      io.Writer
+	values []string
 }
 
 func (r *redactingWriter) Write(p []byte) (n int, err error) {
 	// Apply redaction to the output before writing
-	redacted := redact.Sensitive(string(p))
+	redacted := redact.Sensitive(redact.Values(string(p), r.values...))
 	_, err = r.w.Write([]byte(redacted))
 	// Return original length to satisfy io.Writer contract
 	// (caller expects len(p) bytes to be "consumed")

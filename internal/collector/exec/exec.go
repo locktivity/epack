@@ -68,9 +68,10 @@ type EnvInput struct {
 
 // Invocation is a prepared collector execution request.
 type Invocation struct {
-	Name     string
 	ExecPath string
-	Env      []string
+	// Env describes the collector's environment. Run builds it and takes the
+	// secret values it carries, to replace them in reported stderr.
+	Env EnvInput
 
 	// Timeout for collector execution. 0 uses DefaultCollectorTimeout.
 	Timeout time.Duration
@@ -83,7 +84,6 @@ type Invocation struct {
 // RunResult contains the result of executing a collector process.
 type RunResult struct {
 	Stdout []byte
-	Stderr string
 	Err    error
 }
 
@@ -197,39 +197,39 @@ func Run(ctx context.Context, inv Invocation) RunResult {
 	stderrWriter := limits.NewLimitedWriter(&stderr, limits.CollectorOutput.Bytes())
 
 	err := procexec.Run(execCtx, procexec.Spec{
-		Path:   inv.ExecPath,
-		Env:    inv.Env,
-		Stdout: stdoutWriter,
-		Stderr: stderrWriter,
+		Path:                inv.ExecPath,
+		Env:                 BuildEnv(inv.Env),
+		Stdout:              stdoutWriter,
+		Stderr:              stderrWriter,
+		IsolateProcessGroup: true,
 	})
 	if err != nil {
 		// Check if this was a timeout
 		if execCtx.Err() == context.DeadlineExceeded {
 			return RunResult{
-				Stderr: stderr.String(),
 				Err: errors.WithHint(errors.Timeout, exitcode.Timeout,
-					fmt.Sprintf("collector %q timed out after %s", inv.Name, timeout),
+					fmt.Sprintf("collector %q timed out after %s", inv.Env.Name, timeout),
 					"Increase timeout or check collector for hanging operations", nil),
 			}
+		}
+		if stderrors.Is(err, procexec.ErrWaitDelay) {
+			return RunResult{Err: fmt.Errorf("collector %q exited but a process it started still holds its output open; collectors must not leave background processes behind", inv.Env.Name)}
 		}
 		var exitErr interface{ ExitCode() int }
 		if stderrors.As(err, &exitErr) {
 			// SECURITY: Sanitize stderr before including in error messages.
-			sanitized := SanitizeStderr(stderr.String())
+			sanitized := SanitizeStderr(stderr.String(), secretValues(inv.Env)...)
 			return RunResult{
-				Stderr: stderr.String(),
-				Err:    fmt.Errorf("collector exited with code %d: %s", exitErr.ExitCode(), sanitized),
+				Err: fmt.Errorf("collector exited with code %d: %s", exitErr.ExitCode(), sanitized),
 			}
 		}
 		return RunResult{
-			Stderr: stderr.String(),
-			Err:    fmt.Errorf("executing collector: %w", err),
+			Err: fmt.Errorf("executing collector: %w", err),
 		}
 	}
 
 	return RunResult{
 		Stdout: streamingStdout.Result(),
-		Stderr: stderr.String(),
 	}
 }
 
@@ -295,8 +295,10 @@ func WriteConfig(config map[string]interface{}) (string, func(), error) {
 //   - Truncates to a reasonable length (first 500 bytes)
 //   - Escapes control characters (newlines, tabs, etc.)
 //   - Redacts patterns that look like secrets (via redact.Sensitive)
-func SanitizeStderr(stderr string) string {
-	stderr = strings.TrimRight(stderr, " \t\r\n")
+//   - Replaces every passed secret value first, so truncation and pattern
+//     redaction cannot split one
+func SanitizeStderr(stderr string, secretValues ...string) string {
+	stderr = strings.TrimRight(redact.Values(stderr, secretValues...), " \t\r\n")
 	if stderr == "" {
 		return "(no stderr)"
 	}
@@ -306,10 +308,40 @@ func SanitizeStderr(stderr string) string {
 		stderr = stderr[:maxStderrLen] + "... [truncated]"
 	}
 
-	// Escape control characters to prevent log injection
+	// SECURITY: Redact sensitive patterns (tokens, secrets, API keys) AFTER
+	// escaping to ensure the redaction patterns can match the escaped output.
+	return redact.Sensitive(escapeControl(stderr))
+}
+
+// secretValues returns the values the collector's environment carries for
+// the listed secrets, the managed credentials, and the identity passthrough,
+// for redaction.
+func secretValues(input EnvInput) []string {
+	getenv := input.getenv()
+	seen := map[string]bool{}
+	var values []string
+	add := func(value string) {
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		values = append(values, value)
+	}
+	for _, name := range input.Secrets {
+		add(getenv(name))
+	}
+	for _, value := range input.ManagedEnv {
+		add(value)
+	}
+	add(getenv("EPACK_IDENTITY"))
+	return values
+}
+
+// escapeControl escapes control characters to prevent log injection.
+func escapeControl(s string) string {
 	var sanitized strings.Builder
-	sanitized.Grow(len(stderr))
-	for _, r := range stderr {
+	sanitized.Grow(len(s))
+	for _, r := range s {
 		switch {
 		case r == '\n':
 			sanitized.WriteString("\\n")
@@ -318,14 +350,10 @@ func SanitizeStderr(stderr string) string {
 		case r == '\t':
 			sanitized.WriteString("\\t")
 		case r < 32 || r == 127:
-			// Escape other control characters as \xNN
 			sanitized.WriteString(fmt.Sprintf("\\x%02x", r))
 		default:
 			sanitized.WriteRune(r)
 		}
 	}
-
-	// SECURITY: Redact sensitive patterns (tokens, secrets, API keys) AFTER
-	// escaping to ensure the redaction patterns can match the escaped output.
-	return redact.Sensitive(sanitized.String())
+	return sanitized.String()
 }
