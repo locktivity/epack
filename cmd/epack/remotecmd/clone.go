@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -381,6 +382,28 @@ func printCloneResult(out *output.Writer, target ConfigTarget, result *CloneResu
 	}
 	PrintFetched(out, result)
 	out.Print("\n%s\n", p.Dim("Next:"))
-	out.Print("%s  cd %s && epack run\n", p.Dim("  •"), relDir)
+	if job := ciJobFile(result.Config.Files); job != "" {
+		out.Print("%s  cd %s && epack lock --all-platforms\n", p.Dim("  •"), relDir)
+		out.Print("%s  commit the folder with epack.lock.yaml; %s runs it from CI\n", p.Dim("  •"), job)
+	} else {
+		out.Print("%s  cd %s && epack run\n", p.Dim("  •"), relDir)
+	}
 	return nil
+}
+
+// ciJobFile names the CI job definition a pulled configuration carries, or
+// "" for one that runs where it was cloned. CI runs from a committed lock,
+// so the next step there is to lock, not to run.
+func ciJobFile(files map[string]string) string {
+	paths := make([]string, 0, len(files))
+	for path := range files {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		if strings.HasSuffix(path, ".gitlab-ci.yml") || strings.HasPrefix(path, ".github/workflows/") {
+			return path
+		}
+	}
+	return ""
 }

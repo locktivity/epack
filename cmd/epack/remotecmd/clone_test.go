@@ -195,10 +195,45 @@ func TestRunClone_WritesConfigFromAdapter(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Cloned Northwind production (revision 3)") {
 		t.Errorf("unexpected output: %s", stdout.String())
 	}
-	for _, want := range []string{"Collects with", "Hooks", "pre-collect.sh is the remote's template", "Lock"} {
+	for _, want := range []string{"Collects with", "Hooks", "pre-collect.sh is the remote's template", "Lock", "&& epack run"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("summary missing %q:\n%s", want, stdout.String())
 		}
+	}
+}
+
+const ciConfigPullAdapter = `#!/bin/sh
+case "$1" in
+  --capabilities)
+    echo '{"name":"mock","kind":"remote_adapter","deploy_protocol_version":1,"version":"1.0.0","features":{"prepare_finalize":true,"config_pull":true}}'
+    ;;
+  config.pull)
+    printf '%s\n' '{"ok":true,"type":"config.pull.result","config":{"name":"northwind-production","title":"Northwind production","stream":"northwind/production","revision":3,"files":{"epack.yaml":"stream: northwind/production\ncollectors:\n  tls:\n    source: locktivity/epack-collector-tls@^0.1.0\n","epack.gitlab-ci.yml":"include: []\n"},"shas":{"epack.yaml":"abc"}}}'
+    ;;
+  *)
+    echo '{"ok":false,"error":{"code":"unknown_command","message":"unknown command"}}'
+    exit 1
+    ;;
+esac
+`
+
+func TestRunClone_TellsACIConfigurationToLockRatherThanRun(t *testing.T) {
+	isolateHome(t)
+	projectDir := writeMockAdapterProject(t, ciConfigPullAdapter)
+	dest := filepath.Join(projectDir, "cloned")
+	cmd, stdout, stderr := rootCommand(newCloneCommand(), "northwind-production", dest, "--remote", "mock")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("clone: %v (stderr: %s)", err, stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{"&& epack lock --all-platforms", "commit the folder with epack.lock.yaml; epack.gitlab-ci.yml runs it from CI"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("next step missing %q:\n%s\nstderr:\n%s", want, out, stderr.String())
+		}
+	}
+	if strings.Contains(out, "&& epack run") {
+		t.Errorf("a CI configuration must not be told to run here:\n%s", out)
 	}
 }
 
