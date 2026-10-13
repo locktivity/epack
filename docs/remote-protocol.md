@@ -789,9 +789,11 @@ recognise the folder itself, since every command runs with
 answers with the `not_found` error code.
 
 epack writes only what a project is made of. A path must stay inside the
-folder, contain no control characters, and carry no hidden segment, with two
+folder, contain no control characters, and carry no hidden segment, with three
 exceptions: anything under the folder the adapter declared as `files_dir`
-(`.locktivity/` for Locktivity) and hook scripts at `.epack/hooks/<name>.sh`. Everything else, including `.epack/collectors/`,
+(`.locktivity/` for Locktivity), hook scripts at `.epack/hooks/<name>.sh`, and
+the profile and mapping files epack reads as data, at `.epack/profiles/<name>.yaml`
+and `.epack/mappings/<name>.yaml`. Everything else, including `.epack/collectors/`,
 `.epack/remotes/`, and `.git/`, is refused, so a remote cannot place a binary
 where sync would treat it as already verified. The folder is named by the
 person, not by the response.

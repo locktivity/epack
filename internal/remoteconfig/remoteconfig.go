@@ -199,8 +199,9 @@ func targetDir(cfg remote.ConfigPullResult, opts Options) (string, error) {
 
 // allowedPath keeps a pulled configuration to what a project is made of.
 // Hidden paths are refused except the folder the remote declared for its
-// own files and the hook scripts, so a remote cannot plant files where
-// sync, git, or a shell would pick them up as something already trusted.
+// own files, the hook scripts, and the profile and mapping files epack
+// reads as data, so a remote cannot plant files where sync, git, or a
+// shell would pick them up as something already trusted.
 func allowedPath(path, filesDir string) bool {
 	segments := strings.Split(filepath.ToSlash(filepath.Clean(path)), "/")
 	if !anyHidden(segments) {
@@ -209,8 +210,16 @@ func allowedPath(path, filesDir string) bool {
 	if filesDir != "" && segments[0] == filesDir && len(segments) > 1 && !anyHidden(segments[1:]) {
 		return true
 	}
-	return len(segments) == 3 && segments[0] == ".epack" && segments[1] == "hooks" &&
-		strings.HasSuffix(segments[2], ".sh") && !strings.HasPrefix(segments[2], ".")
+	if len(segments) != 3 || segments[0] != ".epack" || strings.HasPrefix(segments[2], ".") {
+		return false
+	}
+	switch segments[1] {
+	case "hooks":
+		return strings.HasSuffix(segments[2], ".sh")
+	case "profiles", "mappings":
+		return strings.HasSuffix(segments[2], ".yaml") || strings.HasSuffix(segments[2], ".yml")
+	}
+	return false
 }
 
 // HiddenPathError is a pulled file at a hidden path the remote may not
@@ -222,7 +231,7 @@ type HiddenPathError struct {
 }
 
 func (e *HiddenPathError) Error() string {
-	return fmt.Sprintf("configuration file %q is not a path epack writes: hidden paths other than %s.epack/hooks/*.sh are refused", e.Path, filesDirHint(e.FilesDir))
+	return fmt.Sprintf("configuration file %q is not a path epack writes: hidden paths other than %s.epack/hooks/*.sh, .epack/profiles/*.yaml, and .epack/mappings/*.yaml are refused", e.Path, filesDirHint(e.FilesDir))
 }
 
 func filesDirHint(filesDir string) string {

@@ -86,7 +86,7 @@ Collectors and tools only receive secrets explicitly listed in `epack.yaml`. Thi
 **What epack enforces regardless:**
 
 - The adapter that performs `config.pull` is itself locked and digest-verified before it runs, and a project's own adapter configuration takes precedence over an adapter installed for the user.
-- Written paths stay inside the folder, carry no control characters, and have no hidden segments other than `.locktivity/` and `.epack/hooks/<name>.sh`. A remote cannot write into `.epack/collectors/`, `.epack/remotes/`, or `.git/`, so it cannot plant a binary that sync would treat as already verified or a hook git would run.
+- Written paths stay inside the folder, carry no control characters, and have no hidden segments other than `.locktivity/`, `.epack/hooks/<name>.sh`, and the `.epack/profiles/<name>.yaml` and `.epack/mappings/<name>.yaml` files epack reads as data. A remote cannot write into `.epack/collectors/`, `.epack/remotes/`, or `.git/`, so it cannot plant a binary that sync would treat as already verified or a hook git would run.
 - The folder is named by the person, never by the response, and a symlinked folder is refused.
 - Every binary the lockfile names is still downloaded through the registry and checked against the Sigstore identity recorded in the lock before it runs.
 - Managed files the person edited are never overwritten without `--force`. A hook script follows the remote's template only until the person edits it, and a hook that still matches the delivered template is never run, by `epack run` or by `epack hooks run`. A fetched configuration therefore cannot run shell on the machine; only the person's own hooks do.

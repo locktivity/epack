@@ -357,3 +357,24 @@ func TestWriteNamesTheRefusedHiddenPathAndTheDeclaredFolder(t *testing.T) {
 		t.Fatalf("want the declared folder on the error, got %v", err)
 	}
 }
+
+func TestAllowedPathAcceptsEpacksOwnDataFilesAndNothingElseHidden(t *testing.T) {
+	for path, want := range map[string]bool{
+		"epack.yaml":                                            true,
+		".locktivity/state.json":                                true,
+		".epack/hooks/pre-collect.sh":                           true,
+		".epack/profiles/cloud_security_baseline.yaml":          true,
+		".epack/mappings/cloud_security_baseline-mappings.yaml": true,
+		".epack/profiles/baseline.yml":                          true,
+		".epack/profiles/.hidden.yaml":                          false,
+		".epack/profiles/nested/baseline.yaml":                  false,
+		".epack/profiles/run.sh":                                false,
+		".epack/collectors/aws":                                 false,
+		".epack/hooks/pre-collect.yaml":                         false,
+		".git/hooks/pre-commit":                                 false,
+	} {
+		if got := allowedPath(path, ".locktivity"); got != want {
+			t.Errorf("allowedPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
