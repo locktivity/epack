@@ -45,6 +45,10 @@ type AdapterExecutorOptions struct {
 
 	// Verification configures adapter security checks.
 	Verification VerificationOptions
+
+	// Getenv reads the variables the adapter lists under secrets:; nil means
+	// the process environment.
+	Getenv func(string) string
 }
 
 // ResolveAdapterPathWithInstall resolves the adapter path, offering to install if missing.
@@ -201,6 +205,7 @@ func PrepareAdapterExecutor(
 	exec.ProjectRoot = projectRoot
 	exec.Stderr = opts.Stderr
 	exec.Secrets = remoteCfg.Secrets.Names()
+	exec.Getenv = opts.Getenv
 	exec.ManagedEnv = managedEnv
 	exec.ExplicitEnv = customEndpoints.ExplicitEnv()
 

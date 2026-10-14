@@ -28,3 +28,11 @@ func TestCapabilities_AuthBrowserAndConfigPullFeatures(t *testing.T) {
 		t.Error("an adapter that does not declare the features must not get them")
 	}
 }
+
+func TestCapabilities_RunProgressFlag(t *testing.T) {
+	with := remote.Capabilities{Features: remote.CapabilityFeatures{RunProgress: true}}
+	without := remote.Capabilities{}
+	if !with.SupportsRunProgress() || without.SupportsRunProgress() {
+		t.Error("run_progress must be read from the features block alone")
+	}
+}

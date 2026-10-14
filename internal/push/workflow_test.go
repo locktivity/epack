@@ -373,9 +373,12 @@ func TestBuildReleaseInfo_AttachesLockProvenance(t *testing.T) {
 }
 
 func TestBuildReleaseInfo_NoLockfileMeansNoProvenance(t *testing.T) {
-	info, err := buildReleaseInfo(t.TempDir(), &config.RemoteConfig{}, Options{})
+	info, err := buildReleaseInfo(t.TempDir(), &config.RemoteConfig{}, Options{RunID: "20261014T150211Z-9f3a1c2b"})
 	if err != nil {
 		t.Fatalf("buildReleaseInfo() error: %v", err)
+	}
+	if info.RunID != "20261014T150211Z-9f3a1c2b" {
+		t.Errorf("RunID = %q", info.RunID)
 	}
 	if info.LockProvenance != nil {
 		t.Fatalf("LockProvenance = %+v, want nil without a lockfile", info.LockProvenance)

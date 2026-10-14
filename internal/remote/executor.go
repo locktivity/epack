@@ -69,6 +69,10 @@ type Executor struct {
 	// ExplicitEnv is trusted adapter-specific configuration that epack passes directly.
 	ExplicitEnv map[string]string
 
+	// Getenv reads the variables the adapter lists under secrets:; nil means
+	// the process environment.
+	Getenv func(string) string
+
 	// cleanup is called when the executor is closed to remove verified binary copies.
 	cleanup func()
 }
@@ -314,6 +318,25 @@ func (e *Executor) ReportLock(ctx context.Context, req *LockReportRequest) (*Loc
 	return &resp, nil
 }
 
+// RunProgress reports one event of a run. The caller decides what a
+// failure means; the run itself never waits on one.
+func (e *Executor) RunProgress(ctx context.Context, req *RunProgressRequest) error {
+	req.Type = TypeRunProgress
+	req.ProtocolVersion = ProtocolVersion
+	if req.RequestID == "" {
+		req.RequestID = uuid.New().String()
+	}
+
+	var resp RunProgressResponse
+	if err := e.execute(ctx, CommandRunProgress, req, &resp); err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("run progress failed: unexpected response")
+	}
+	return nil
+}
+
 // AuthLogin starts a browser sign-in that returns to redirectURI.
 func (e *Executor) AuthLogin(ctx context.Context, redirectURI string) (*AuthLoginResponse, error) {
 	req := &AuthLoginRequest{
@@ -543,7 +566,7 @@ func runAdapterCommand(ctx context.Context, e *Executor, command string, reqJSON
 		env = append(env, ProjectRootEnvVar+"="+e.ProjectRoot)
 	}
 	env = execsafe.AppendExplicitEnv(env, e.ExplicitEnv)
-	env = execsafe.AppendAllowedSecrets(env, e.Secrets, os.Getenv)
+	env = execsafe.AppendAllowedSecrets(env, e.Secrets, e.getenv())
 	env = execsafe.AppendExplicitEnv(env, e.ManagedEnv)
 
 	stderrWriter := io.Writer(&stderr)
@@ -566,8 +589,9 @@ func runAdapterCommand(ctx context.Context, e *Executor, command string, reqJSON
 // and managed credentials, replaced wherever its stderr is reported.
 func (e *Executor) secretValues() []string {
 	var values []string
+	getenv := e.getenv()
 	for _, name := range e.Secrets {
-		if value := os.Getenv(name); value != "" {
+		if value := getenv(name); value != "" {
 			values = append(values, value)
 		}
 	}
@@ -575,6 +599,13 @@ func (e *Executor) secretValues() []string {
 		values = append(values, value)
 	}
 	return values
+}
+
+func (e *Executor) getenv() func(string) string {
+	if e.Getenv != nil {
+		return e.Getenv
+	}
+	return os.Getenv
 }
 
 func handleAdapterExecutionError(adapterName, command string, stdout, stderr *bytes.Buffer, runErr error, secretValues []string) error {

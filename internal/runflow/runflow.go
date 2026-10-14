@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/locktivity/epack/internal/broker"
 	"github.com/locktivity/epack/internal/cmdutil"
@@ -33,6 +34,7 @@ import (
 	"github.com/locktivity/epack/internal/redact"
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/remoteconfig"
+	"github.com/locktivity/epack/internal/secrets"
 	"github.com/locktivity/epack/internal/trustedpublishers"
 	"github.com/locktivity/epack/internal/userconfig"
 	"github.com/locktivity/epack/sign"
@@ -107,10 +109,26 @@ type Options struct {
 	PromptInstallAdapter func(remoteName, adapterName string) bool
 	// ToolOutput receives tool wrapper warnings; nil means stderr.
 	ToolOutput dispatch.Output
+
+	// SecretStore holds the values a configuration lists under secrets:
+	// beside the environment; nil means the operating system keychain.
+	SecretStore secrets.Store
+	// SecretPaths is where epack keeps what it knows about stored secrets;
+	// the zero value means ~/.epack.
+	SecretPaths secrets.Paths
+	// SkipSecretStore leaves the store alone, as a CI job does.
+	SkipSecretStore bool
+
+	// progress reports the run's stages to the remote as they happen; nil
+	// when the configuration has no remote.
+	progress *progressReporter
 }
 
 // Result is what a run produced, including partial results when a stage failed.
 type Result struct {
+	// RunID names this run in the progress events it sent, the release it
+	// pushed, and the failure it reported.
+	RunID           string
 	PackPath        string
 	Remote          string
 	LockedNow       bool
@@ -121,6 +139,10 @@ type Result struct {
 	Signed          bool
 	Push            *push.Result
 	FailureReported bool
+
+	// getenv hands components the values the run resolved; nil until the
+	// collect stage resolved them.
+	getenv func(string) string
 }
 
 // StageError says which stage failed and the code reported to the remote.
@@ -165,11 +187,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := &Result{PackPath: opts.PackPath, Remote: remoteName}
+	startedAt := time.Now()
+	result := &Result{RunID: newRunID(startedAt), PackPath: opts.PackPath, Remote: remoteName}
+	opts.progress = newProgressReporter(cfg, opts, remoteName, result.RunID, startedAt)
+	defer opts.progress.close()
 	err = runStages(ctx, cfg, opts, result)
 	var stageErr *StageError
 	if errors.As(err, &stageErr) && remoteName != "" {
-		result.FailureReported = reportFailure(ctx, cfg, opts, remoteName, stageErr)
+		result.FailureReported = reportFailure(ctx, cfg, opts, remoteName, stageErr, result)
 	}
 	return result, err
 }
@@ -304,6 +329,16 @@ func withDefaults(opts Options) (Options, error) {
 	if opts.ToolOutput == nil {
 		opts.ToolOutput = dispatch.StdOutput{}
 	}
+	if opts.SecretStore == nil {
+		opts.SecretStore = secrets.NewKeychain()
+	}
+	if opts.SecretPaths.Root == "" {
+		paths, err := secrets.DefaultPaths()
+		if err != nil {
+			return opts, err
+		}
+		opts.SecretPaths = paths
+	}
 	return opts, nil
 }
 
@@ -311,6 +346,9 @@ func runStages(ctx context.Context, cfg *config.JobConfig, opts Options, result 
 	if err := stage(opts, StageInstall, FailureInstall, func() error { return install(ctx, cfg, opts, result) }); err != nil {
 		return err
 	}
+	// The adapter that takes progress is installed now, so the queued
+	// install events and everything after them can go.
+	opts.progress.start(ctx)
 	if err := stage(opts, StagePreCollect, FailureHook, func() error { return runHook(ctx, opts, "pre-collect") }); err != nil {
 		return err
 	}
@@ -343,10 +381,13 @@ func runStages(ctx context.Context, cfg *config.JobConfig, opts Options, result 
 
 func stage(opts Options, name, code string, fn func() error) error {
 	opts.OnStage(name, true)
+	opts.progress.stage(name, ProgressStarted)
 	if err := fn(); err != nil {
+		opts.progress.stage(name, ProgressFailed)
 		return &StageError{Stage: name, Code: code, Err: err}
 	}
 	opts.OnStage(name, false)
+	opts.progress.stage(name, ProgressFinished)
 	return nil
 }
 
@@ -426,8 +467,25 @@ func runHook(ctx context.Context, opts Options, name string) error {
 	return hooks.Runner{WorkDir: opts.WorkDir, Stdout: opts.Stdout, Stderr: opts.Stderr}.Run(ctx, name)
 }
 
+// collect resolves the variables the components read, stops when a
+// required one is not ready, and runs the collectors with the rest.
 func collect(ctx context.Context, cfg *config.JobConfig, opts Options, result *Result) error {
-	session, closeSession := credentialSession(ctx, cfg, opts, result.Remote)
+	resolution, err := resolveSecrets(cfg, opts, result.Remote, nil)
+	if err != nil {
+		return err
+	}
+	remoteOnly := remoteOnlyNames(cfg)
+	var blocking []secrets.Row
+	for _, row := range resolution.Blocking() {
+		if !remoteOnly[row.Name] {
+			blocking = append(blocking, row)
+		}
+	}
+	if len(blocking) > 0 {
+		return &secretsError{rows: blocking}
+	}
+	result.getenv = resolution.Getenv
+	session, closeSession := credentialSession(ctx, cfg, opts, result.Remote, resolution.Getenv)
 	defer closeSession()
 	collected, err := collector.Collect(ctx, cfg, collector.CollectOpts{
 		Secure:           collector.SecureRunOptions{Frozen: !opts.AllowUnpinned},
@@ -435,8 +493,9 @@ func collect(ctx context.Context, cfg *config.JobConfig, opts Options, result *R
 		WorkDir:          opts.WorkDir,
 		Stderr:           opts.Stderr,
 		OutputPath:       opts.PackPath,
-		OnCollectorEvent: opts.OnCollectorEvent,
+		OnCollectorEvent: collectorEvents(opts),
 		Credentials:      credentials.Resolver{Session: session},
+		Getenv:           resolution.Getenv,
 	})
 	result.Collect = collected
 	return err
@@ -445,7 +504,7 @@ func collect(ctx context.Context, cfg *config.JobConfig, opts Options, result *R
 // credentialSession lets collectors get their Locktivity-managed credentials
 // through the remote's sign-in when the run has no CI identity to resolve
 // them with, as on a laptop.
-func credentialSession(ctx context.Context, cfg *config.JobConfig, opts Options, remoteName string) (broker.CredentialBroker, func()) {
+func credentialSession(ctx context.Context, cfg *config.JobConfig, opts Options, remoteName string, getenv func(string) string) (broker.CredentialBroker, func()) {
 	noop := func() {}
 	if remoteName == "" || !collectorsNeedCredentials(cfg) || credentials.DetectRuntimeContext(os.Getenv).IdentityAvailable() {
 		return nil, noop
@@ -457,6 +516,7 @@ func credentialSession(ctx context.Context, cfg *config.JobConfig, opts Options,
 	exec, caps, err := remote.PrepareAdapterExecutor(ctx, opts.WorkDir, remoteName, cfg, remoteCfg, remote.AdapterExecutorOptions{
 		Stderr:       opts.Stderr,
 		Verification: remote.VerificationOptions{Unsafe: remote.VerificationUnsafeOverrides{AllowUnverifiedSource: opts.AllowUnpinned}},
+		Getenv:       getenv,
 	})
 	if err != nil {
 		return sessionUnavailable{err: fmt.Errorf("remote %s: %w", remoteName, err)}, noop
@@ -466,6 +526,17 @@ func credentialSession(ctx context.Context, cfg *config.JobConfig, opts Options,
 		return sessionUnavailable{err: fmt.Errorf("remote %s's adapter does not resolve credentials with a sign-in", remoteName)}, noop
 	}
 	return remote.SessionBroker{Executor: exec}, exec.Close
+}
+
+// collectorEvents fans a collector event out to the terminal and to the
+// progress report.
+func collectorEvents(opts Options) func(collector.CollectorEvent) {
+	return func(event collector.CollectorEvent) {
+		if opts.OnCollectorEvent != nil {
+			opts.OnCollectorEvent(event)
+		}
+		opts.progress.collector(event)
+	}
 }
 
 func collectorsNeedCredentials(cfg *config.JobConfig) bool {
@@ -486,14 +557,18 @@ func (s sessionUnavailable) Resolve(context.Context, broker.ResolveRequest, brok
 }
 
 func runTools(ctx context.Context, cfg *config.JobConfig, opts Options, result *Result) error {
-	for _, name := range sortedNames(cfg.Tools) {
+	names := sortedNames(cfg.Tools)
+	for i, name := range names {
 		opts.OnStep(fmt.Sprintf("Running %s", name), true)
-		flags := dispatch.WrapperFlags{PackPath: opts.PackPath, InsecureAllowUnpinned: opts.AllowUnpinned}
+		opts.progress.step(StageTools, name, i+1, len(names), ProgressStarted, "")
+		flags := dispatch.WrapperFlags{PackPath: opts.PackPath, InsecureAllowUnpinned: opts.AllowUnpinned, Getenv: result.getenv}
 		if err := dispatch.ToolWithFlags(ctx, opts.ToolOutput, name, nil, flags); err != nil {
+			opts.progress.step(StageTools, name, i+1, len(names), ProgressFailed, progressNote(err.Error()))
 			return fmt.Errorf("tool %s: %w", name, err)
 		}
 		result.Tools = append(result.Tools, name)
 		opts.OnStep(fmt.Sprintf("Ran %s", name), false)
+		opts.progress.step(StageTools, name, i+1, len(names), ProgressFinished, "")
 	}
 	return nil
 }
@@ -519,6 +594,8 @@ func pushPack(ctx context.Context, opts Options, result *Result) error {
 		OnStep:               opts.OnStep,
 		OnUploadProgress:     opts.OnUploadProgress,
 		PromptInstallAdapter: opts.PromptInstallAdapter,
+		Getenv:               result.getenv,
+		RunID:                result.RunID,
 	}
 	pushOpts.Unsafe.AllowUnpinned = opts.AllowUnpinned
 	pushed, err := push.Push(ctx, pushOpts)
@@ -531,7 +608,7 @@ func pushPack(ctx context.Context, opts Options, result *Result) error {
 
 // reportFailure tells the remote which stage failed. It is best effort: a
 // report that cannot be sent is noted on stderr and never masks the failure.
-func reportFailure(ctx context.Context, cfg *config.JobConfig, opts Options, remoteName string, stageErr *StageError) bool {
+func reportFailure(ctx context.Context, cfg *config.JobConfig, opts Options, remoteName string, stageErr *StageError, result *Result) bool {
 	remoteCfg, err := remote.ResolveRemoteConfig(cfg, remoteName, "")
 	if err != nil {
 		return false
@@ -550,12 +627,21 @@ func reportFailure(ctx context.Context, cfg *config.JobConfig, opts Options, rem
 	if !caps.SupportsLockReport() {
 		return false
 	}
+	failureMessage := redact.Error(stageErr.Err.Error())
+	metadata := map[string]any{"run_id": result.RunID}
+	if stageErr.Stage == StageCollect {
+		if failures := collectFailures(result.Collect); len(failures) > 0 {
+			failureMessage = collectFailureMessage(failures)
+			metadata["collect"] = map[string]any{"failures": failures}
+		}
+	}
 	provenance, err := lockprovenance.Build(lockprovenance.Options{
 		ProjectRoot:    opts.WorkDir,
 		TriggerKind:    lockprovenance.TriggerFrozenCheck,
 		Outcome:        lockprovenance.OutcomeFailure,
 		FailureCode:    stageErr.Code,
-		FailureMessage: redact.Error(stageErr.Err.Error()),
+		FailureMessage: failureMessage,
+		Metadata:       metadata,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(opts.Stderr, "Warning: could not report the failure to %s: %v\n", remoteName, err)
@@ -571,6 +657,43 @@ func reportFailure(ctx context.Context, cfg *config.JobConfig, opts Options, rem
 		return false
 	}
 	return true
+}
+
+// collectFailure is one failed collector as the report carries it: its
+// name and its error, with every secret value already replaced.
+type collectFailure struct {
+	Collector string `json:"collector"`
+	Error     string `json:"error"`
+}
+
+func collectFailures(collected *collector.CollectWorkflowResult) []collectFailure {
+	if collected == nil {
+		return nil
+	}
+	var failures []collectFailure
+	for _, result := range collected.CollectorResults {
+		if result.Success || result.Error == nil {
+			continue
+		}
+		failures = append(failures, collectFailure{
+			Collector: result.Collector,
+			Error:     redact.Error(strings.TrimPrefix(result.Error.Error(), "collector ")),
+		})
+	}
+	return failures
+}
+
+// collectFailureMessage names the failed collectors in the report's one-line
+// message: one collector with its error, several by name.
+func collectFailureMessage(failures []collectFailure) string {
+	if len(failures) == 1 {
+		return failures[0].Collector + ": " + failures[0].Error
+	}
+	names := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		names = append(names, failure.Collector)
+	}
+	return fmt.Sprintf("%d collectors failed: %s", len(failures), strings.Join(names, ", "))
 }
 
 func sortedNames[T any](m map[string]T) []string {

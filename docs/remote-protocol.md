@@ -162,6 +162,7 @@ Adapters declare their supported protocol version via `--capabilities`. Requests
 | `pull.finalize` | Confirm pack receipt |
 | `runs.sync` | Sync run ledgers to remote |
 | `lock.report` | Report lockfile provenance without pushing a pack |
+| `run.progress` | Report one step of a run while it is going |
 | `auth.login` | Start a browser sign-in that returns to a loopback redirect |
 | `auth.complete` | Finish a browser sign-in with the code the browser returned |
 | `auth.whoami` | Query current identity |
@@ -222,6 +223,7 @@ The `--capabilities` command returns adapter metadata:
 | `pull` | Supports two-phase download (pull.prepare + pull.finalize) |
 | `runs_sync` | Supports run ledger syncing |
 | `lock_report` | Supports lockfile provenance reports through `lock.report` |
+| `run_progress` | Takes `run.progress` events while a run is going, for a live view of it on the remote |
 | `auth_login` | Supports interactive authentication |
 | `auth_browser` | Signs in through the browser: `auth.login` takes a loopback `redirect_uri` and `auth.complete` finishes the sign-in. `epack remote login` requires it |
 | `whoami` | Supports identity query |
@@ -280,6 +282,7 @@ The push workflow consists of:
   "release": {
     "labels": ["monthly", "soc2"],
     "notes": "Monthly evidence collection",
+    "run_id": "20261014T150211Z-9f3a1c2b",
     "build_context": {
       "git_sha": "abc123def456",
       "ci_run_url": "https://github.com/..."
@@ -549,6 +552,51 @@ The `failed_outputs` field (optional) lists output files that could not be uploa
 - File exceeds maximum size (50MB)
 - File path outside result directory
 - Upload or confirmation failure
+
+## Run Progress
+
+Adapters that advertise `features.run_progress: true` accept `run.progress`. `epack run` sends one event as each stage starts, finishes, or fails, and one for each collector and tool inside its stage, so the remote can show the run while it is going. Sending is best effort: epack sends each event in the background with a short timeout, never waits on the remote, and drops everything after the first failure to open the adapter. An adapter without the flag receives nothing.
+
+Every event of a run carries the same run id. The release the run pushes carries it as `release.run_id` in `push.prepare` and `push.finalize`, and a failure the run reports carries it as `metadata.run_id` in `lock.report`, so the remote can join the events to how the run ended.
+
+Stages are `install`, `pre-collect`, `collect`, `post-collect`, `tools`, `sign`, and `push`. Inside `collect` and `tools`, `step` names the collector or tool and `index` and `total` place it in the sequence. `state` is `started`, `finished`, or `failed`. `note` is a short line, such as a collector's own status message or the first part of its error, with every secret value already replaced.
+
+### run.progress Request
+
+```json
+{
+  "type": "run.progress",
+  "protocol_version": 1,
+  "request_id": "req_jkl012",
+  "remote": "locktivity",
+  "target": {
+    "workspace": "acme",
+    "environment": "prod"
+  },
+  "run": {
+    "id": "20261014T150211Z-9f3a1c2b",
+    "started_at": "2026-10-14T15:02:11Z"
+  },
+  "event": {
+    "at": "2026-10-14T15:02:40Z",
+    "stage": "collect",
+    "step": "okta",
+    "index": 2,
+    "total": 5,
+    "state": "started"
+  }
+}
+```
+
+### run.progress Response
+
+```json
+{
+  "ok": true,
+  "type": "run.progress.result",
+  "request_id": "req_jkl012"
+}
+```
 
 ## Lock Reporting
 

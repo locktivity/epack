@@ -35,6 +35,7 @@ const (
 	CommandPullFinalize = "pull.finalize"
 	CommandRunsSync     = "runs.sync"
 	CommandLockReport   = "lock.report"
+	CommandRunProgress  = "run.progress"
 	CommandAuthLogin    = "auth.login"
 	CommandAuthComplete = "auth.complete"
 	CommandAuthWhoami   = "auth.whoami"
@@ -49,6 +50,7 @@ const (
 	TypePullFinalize = "pull.finalize"
 	TypeRunsSync     = "runs.sync"
 	TypeLockReport   = "lock.report"
+	TypeRunProgress  = "run.progress"
 	TypeAuthLogin    = "auth.login"
 	TypeAuthComplete = "auth.complete"
 	TypeAuthWhoami   = "auth.whoami"
@@ -63,6 +65,7 @@ const (
 	TypePullFinalizeResult = "pull.finalize.result"
 	TypeRunsSyncResult     = "runs.sync.result"
 	TypeLockReportResult   = "lock.report.result"
+	TypeRunProgressResult  = "run.progress.result"
 	TypeAuthLoginResult    = "auth.login.result"
 	TypeAuthCompleteResult = "auth.complete.result"
 	TypeAuthWhoamiResult   = "auth.whoami.result"
@@ -106,6 +109,50 @@ type ReleaseInfo struct {
 	Notes          string                     `json:"notes,omitempty"`
 	BuildContext   map[string]string          `json:"build_context,omitempty"`
 	LockProvenance *lockprovenance.Provenance `json:"lock_provenance,omitempty"`
+	// RunID names the epack run that built the pack, the same id its
+	// progress events carried, so the remote can join them.
+	RunID string `json:"run_id,omitempty"`
+}
+
+// RunProgressRequest reports one step of a run as it happens: a stage
+// starting, finishing, or failing, or a collector or tool doing the same
+// inside its stage. It is best effort; a remote that cannot take it loses
+// nothing but the live view.
+type RunProgressRequest struct {
+	Type            string        `json:"type"` // "run.progress"
+	ProtocolVersion int           `json:"protocol_version"`
+	RequestID       string        `json:"request_id"`
+	Remote          string        `json:"remote"`
+	Target          TargetConfig  `json:"target"`
+	Run             ProgressRun   `json:"run"`
+	Event           ProgressEvent `json:"event"`
+}
+
+// ProgressRun identifies the run the events belong to.
+type ProgressRun struct {
+	ID        string `json:"id"`
+	StartedAt string `json:"started_at"`
+}
+
+// ProgressEvent is one thing that happened in a run. Stage is one of the
+// run's stages; Step names a collector or tool inside it, with its place
+// in the sequence; State is started, finished, or failed; Note is a short
+// line with no secret in it.
+type ProgressEvent struct {
+	At    string `json:"at"`
+	Stage string `json:"stage"`
+	Step  string `json:"step,omitempty"`
+	Index int    `json:"index,omitempty"`
+	Total int    `json:"total,omitempty"`
+	State string `json:"state"`
+	Note  string `json:"note,omitempty"`
+}
+
+// RunProgressResponse acknowledges a progress event.
+type RunProgressResponse struct {
+	OK        bool   `json:"ok"`
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
 }
 
 // AuthHints contains authentication hints for adapter requests.

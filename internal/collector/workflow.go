@@ -47,6 +47,10 @@ type CollectOpts struct {
 	// Credentials resolves the Locktivity-managed credentials collectors
 	// declare. The zero value resolves with the run's CI identity.
 	Credentials credentials.Resolver
+
+	// Getenv reads the variables collectors list under secrets:; nil means
+	// the process environment.
+	Getenv func(string) string
 }
 
 // CollectWorkflowResult contains the outcomes of evidence collection.
@@ -259,6 +263,7 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 	runner := NewRunner(workDir)
 
 	runOpts := RunOptions{
+		Getenv: opts.Getenv,
 		Secure: SecureRunOptions{
 			Frozen:  opts.Secure.Frozen,
 			Only:    opts.Secure.Only,
@@ -611,6 +616,10 @@ type RunAndBuildOpts struct {
 
 	// OnCollectorEvent receives collector lifecycle events while running.
 	OnCollectorEvent func(CollectorEvent)
+
+	// Getenv reads the variables collectors list under secrets:; nil means
+	// the process environment.
+	Getenv func(string) string
 }
 
 // RunAndBuildResult contains the outcomes of running collectors and building a pack.
@@ -653,6 +662,7 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 	runner := NewRunner(opts.WorkDir)
 
 	runOpts := RunOptions{
+		Getenv: opts.Getenv,
 		Secure: SecureRunOptions{
 			Frozen:  opts.Secure.Frozen,
 			Only:    opts.Secure.Only,

@@ -86,6 +86,10 @@ type CapabilityFeatures struct {
 	// LockReport indicates support for lockfile provenance reports.
 	LockReport bool `json:"lock_report"`
 
+	// RunProgress indicates the adapter takes run.progress events while a
+	// run is going, for a live view of it on the remote.
+	RunProgress bool `json:"run_progress,omitempty"`
+
 	// AuthLogin indicates support for interactive authentication.
 	AuthLogin bool `json:"auth_login"`
 
@@ -147,6 +151,11 @@ func (c *Capabilities) SupportsRunsSync() bool {
 }
 
 // SupportsLockReport returns true if the adapter supports lockfile provenance reports.
+// SupportsRunProgress reports whether the adapter takes run.progress events.
+func (c *Capabilities) SupportsRunProgress() bool {
+	return c.Features.RunProgress
+}
+
 func (c *Capabilities) SupportsLockReport() bool {
 	return c.Features.LockReport
 }

@@ -3,6 +3,7 @@
 package remotecmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/locktivity/epack/internal/remoteconfig"
 	"github.com/locktivity/epack/internal/testutil/testhome"
 	"github.com/locktivity/epack/internal/userconfig"
 )
@@ -266,5 +268,40 @@ echo '{"name":"mock","kind":"remote_adapter","deploy_protocol_version":1,"versio
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "cannot hand over configurations") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunClone_RefreshesInPlaceFromInsideTheFolder(t *testing.T) {
+	isolateHome(t)
+	projectDir := writeMockAdapterProject(t, configPullAdapter)
+	cmd, _, stderr := rootCommand(newCloneCommand(), "northwind-production", "--remote", "mock")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("first clone: %v (stderr: %s)", err, stderr.String())
+	}
+	folder := filepath.Join(projectDir, "northwind-production")
+	if err := os.Chdir(folder); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(projectDir) })
+	// The fetched configuration names its remote, as a real one does.
+	remoteBlock := fmt.Sprintf("remotes:\n  mock:\n    binary: %s\n    adapter: mock\n", filepath.Join(projectDir, "mock-adapter"))
+	if err := os.WriteFile(filepath.Join(folder, "epack.yaml"), []byte("stream: northwind/production\ncollectors:\n  tls:\n    source: locktivity/epack-collector-tls@^0.1.0\n"+remoteBlock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	clone, err := CloneConfig(context.Background(), ConfigTarget{Remote: "mock", Name: "northwind-production"}, CloneOptions{Force: true, AllowUnpinned: true})
+	if err != nil {
+		t.Fatalf("second clone: %v", err)
+	}
+	want, _ := filepath.EvalSymlinks(folder)
+	if got, _ := filepath.EvalSymlinks(clone.Dir); got != want {
+		t.Errorf("Dir = %q, want the folder itself %q", clone.Dir, folder)
+	}
+	if _, err := os.Stat(filepath.Join(folder, "northwind-production")); !os.IsNotExist(err) {
+		t.Error("a nested copy was created")
+	}
+	state, err := remoteconfig.LoadState(folder)
+	if err != nil || state == nil || state.Revision != 3 {
+		t.Errorf("pull record after the refresh = %+v, %v", state, err)
 	}
 }

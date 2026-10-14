@@ -10,6 +10,7 @@ import (
 	"github.com/locktivity/epack/cmd/epack/remotecmd"
 	"github.com/locktivity/epack/cmd/epack/runcmd"
 	"github.com/locktivity/epack/cmd/epack/sdkcmd"
+	"github.com/locktivity/epack/cmd/epack/secretcmd"
 	"github.com/spf13/cobra"
 )
 
@@ -55,6 +56,9 @@ func registerCollectorCommands(root *cobra.Command) {
 
 	// Add 'epack run' for the whole workflow: fetch, install, collect, tools, sign, push
 	root.AddCommand(runcmd.NewCommand())
+
+	// Add 'epack secret' for the values a configuration lists under secrets:
+	root.AddCommand(secretcmd.NewCommand())
 
 	// Add 'epack hooks run <hook>' for portable runner hooks.
 	root.AddCommand(hookscmd.NewCommand())

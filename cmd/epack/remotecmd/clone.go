@@ -18,6 +18,7 @@ import (
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/remoteconfig"
+	"github.com/locktivity/epack/internal/secrets"
 	"github.com/locktivity/epack/internal/userconfig"
 	"github.com/spf13/cobra"
 )
@@ -193,6 +194,9 @@ func CloneConfig(ctx context.Context, target ConfigTarget, opts CloneOptions) (*
 
 	dir := opts.Dir
 	if dir == "" {
+		dir = sameConfigurationFolder(target)
+	}
+	if dir == "" {
 		dir = target.Name
 	}
 	var before *remoteconfig.Summary
@@ -211,7 +215,7 @@ func CloneConfig(ctx context.Context, target ConfigTarget, opts CloneOptions) (*
 		}
 		return nil, exitError("clone failed: %v", err)
 	}
-	summary, err := remoteconfig.Summarize(result.Dir, nil)
+	summary, err := remoteconfig.Summarize(result.Dir, fetchedGetenv(result.Dir, target.Remote))
 	if err != nil {
 		return nil, exitError("the fetched configuration does not load: %v", err)
 	}
@@ -220,6 +224,47 @@ func CloneConfig(ctx context.Context, target ConfigTarget, opts CloneOptions) (*
 		clone.Changes = remoteconfig.Diff(before, summary)
 	}
 	return clone, nil
+}
+
+// sameConfigurationFolder is the working directory when its pull record
+// names the configuration being fetched, so a clone or a run by name from
+// inside the folder refreshes it rather than nesting a second copy.
+func sameConfigurationFolder(target ConfigTarget) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	state, err := remoteconfig.LoadState(cwd)
+	if err != nil || state == nil || state.Name != target.Name || state.Remote != target.Remote {
+		return ""
+	}
+	return cwd
+}
+
+// fetchedStore is the store a fetch summary reads; tests replace it.
+var fetchedStore = func() secrets.Store { return secrets.NewKeychain() }
+
+// fetchedGetenv counts a variable as set when the environment or the
+// keychain holds it for the fetched configuration, read without any
+// interaction. Anything that cannot be read leaves the environment alone.
+func fetchedGetenv(dir, remoteName string) func(string) string {
+	scope, err := secrets.ScopeFor(dir, remoteName, os.Getenv)
+	if err != nil || scope.Zero() || secrets.InCI(os.Getenv) {
+		return nil
+	}
+	conf, err := secrets.LoadConfiguration(dir)
+	if err != nil {
+		return nil
+	}
+	paths, err := secrets.DefaultPaths()
+	if err != nil {
+		return nil
+	}
+	resolution, err := (secrets.Resolver{Paths: paths, Store: fetchedStore(), Env: os.Getenv}).Resolve(conf.Config, scope, nil)
+	if err != nil {
+		return nil
+	}
+	return resolution.Getenv
 }
 
 // PrintFetched shows what a freshly written or updated configuration will

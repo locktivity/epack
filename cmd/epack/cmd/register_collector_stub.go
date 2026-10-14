@@ -48,6 +48,16 @@ See: https://github.com/locktivity/epack#installation`,
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:   "secret",
+		Short: "Keep a configuration's secrets in your keychain (not available in this build)",
+		Long: `Secret commands are not available in epack-core.
+
+For collectors, tools, remotes, and stored secrets, install 'epack' (full version).
+See: https://github.com/locktivity/epack#installation`,
+		RunE: stubRunE,
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:   "lock",
 		Short: "Lock collector and tool dependencies (not available in this build)",
 		Long: `Lock command is not available in epack-core.

@@ -21,6 +21,7 @@ import (
 	"github.com/locktivity/epack/internal/redact"
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/remoteconfig"
+	"github.com/locktivity/epack/internal/secrets"
 	"github.com/locktivity/epack/internal/trustedpublishers"
 )
 
@@ -50,6 +51,12 @@ type CheckResult struct {
 	// EnvOptional are variables the configuration may read, passed through
 	// when set and left out of the count. Listed so a reviewer sees them.
 	EnvOptional []remoteconfig.EnvVar
+	// Variables is one row per variable the run needs: whether it is ready,
+	// where it comes from, and what resolves it. Nothing in a row is derived
+	// from a value.
+	Variables []secrets.Row
+	// SecretStore is the store the check consulted and its state.
+	SecretStore secrets.StoreStatus
 	// Signing says how the run would sign: in the browser, or with which key.
 	Signing           string
 	Credentials       []CredentialCheck
@@ -108,7 +115,14 @@ func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 			defer session.exec.Close()
 		}
 	}
-	checkEnv(cfg, opts.WorkDir, result)
+	if !result.PublishersTrusted {
+		opts.SkipSecretStore = true
+	}
+	resolution, err := resolveSecrets(cfg, opts, result.Remote, coveredNames(cfg, result.SignedInAs))
+	if err != nil {
+		result.Findings = append(result.Findings, fmt.Sprintf("reading stored secrets: %v", err))
+	}
+	checkEnv(cfg, opts.WorkDir, result, resolution)
 	checkCredentials(ctx, cfg, session, result)
 	checkSigning(ctx, session, opts, result)
 	if session != nil {
@@ -278,8 +292,19 @@ func checkLock(cfg *config.JobConfig, workDir string, fetched bool, result *Chec
 	}
 }
 
-func checkEnv(cfg *config.JobConfig, workDir string, result *CheckResult) {
-	summary, err := remoteconfig.Summarize(workDir, os.Getenv)
+// checkEnv counts the variables the run needs. A variable is ready when a
+// value will reach its readers: from the environment, or from the store
+// once approved for them.
+func checkEnv(cfg *config.JobConfig, workDir string, result *CheckResult, resolution *secrets.Resolution) {
+	rows := map[string]secrets.Row{}
+	if resolution != nil {
+		result.Variables = resolution.Rows
+		result.SecretStore = resolution.Store
+		for _, row := range resolution.Rows {
+			rows[row.Name] = row
+		}
+	}
+	summary, err := remoteconfig.Summarize(workDir, resolution.Getenv)
 	if err != nil {
 		result.Findings = append(result.Findings, fmt.Sprintf("reading the configuration: %v", err))
 		return
@@ -302,8 +327,21 @@ func checkEnv(cfg *config.JobConfig, workDir string, result *CheckResult) {
 	}
 	sort.Strings(result.EnvCovered)
 	sort.Strings(result.EnvMissing)
-	if len(result.EnvMissing) > 0 {
-		result.Findings = append(result.Findings, "not set: "+strings.Join(result.EnvMissing, ", "))
+	var unset []string
+	for _, name := range result.EnvMissing {
+		row, ok := rows[name]
+		if ok && row.Status != secrets.StatusMissing {
+			result.Findings = append(result.Findings, row.Finding())
+			continue
+		}
+		if ok && row.Fix != "" {
+			result.Findings = append(result.Findings, row.Finding())
+			continue
+		}
+		unset = append(unset, name)
+	}
+	if len(unset) > 0 {
+		result.Findings = append(result.Findings, "not set: "+strings.Join(unset, ", "))
 	}
 }
 
@@ -438,6 +476,8 @@ func checkProvenanceOptions(workDir string, result *CheckResult) lockprovenance.
 		"env_missing":        result.EnvMissing,
 		"env_covered":        result.EnvCovered,
 		"env_optional":       result.EnvOptional,
+		"variables":          result.Variables,
+		"secret_store":       result.SecretStore,
 		"signing":            result.Signing,
 		"credentials":        credentials,
 		"publishers_trusted": result.PublishersTrusted,

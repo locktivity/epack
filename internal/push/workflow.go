@@ -93,6 +93,14 @@ type Options struct {
 	// If it returns true, the adapter will be installed automatically.
 	// If nil, no prompt is shown and an error is returned instead.
 	PromptInstallAdapter func(remoteName, adapterName string) bool
+
+	// Getenv reads the variables the adapter lists under secrets:; nil means
+	// the process environment.
+	Getenv func(string) string
+
+	// RunID names the epack run that built the pack, so the release joins
+	// the progress events that run sent.
+	RunID string
 }
 
 // Result contains the result of a push operation.
@@ -338,6 +346,7 @@ func preparePushAdapter(ctx context.Context, opts Options, step StepCallback, st
 			PromptInstall: opts.PromptInstallAdapter,
 			Step:          remote.StepCallback(step),
 			Stderr:        stderr,
+			Getenv:        opts.Getenv,
 			Verification: remote.VerificationOptions{
 				Secure: remote.VerificationSecureOptions{
 					Frozen: opts.Secure.Frozen,
@@ -368,6 +377,7 @@ func buildReleaseInfo(projectRoot string, remoteCfg *config.RemoteConfig, opts O
 	releaseInfo := remote.ReleaseInfo{
 		Labels: labels,
 		Notes:  opts.Notes,
+		RunID:  opts.RunID,
 	}
 	if releaseInfo.Notes == "" {
 		releaseInfo.Notes = remoteCfg.Release.Notes

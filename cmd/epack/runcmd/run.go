@@ -25,6 +25,7 @@ import (
 	"github.com/locktivity/epack/internal/redact"
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/runflow"
+	"github.com/locktivity/epack/internal/secrets"
 	"github.com/locktivity/epack/internal/trustedpublishers"
 	"github.com/locktivity/epack/sign"
 	"github.com/spf13/cobra"
@@ -134,6 +135,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		PackPath:        packPath(workDir),
 		AllowUnpinned:   runInsecureAllowUnpinned,
 		NonInteractive:  runYes,
+		SkipSecretStore: out.IsCI(),
 		TrustPublishers: runTrustPublishers,
 		PromptTrustPublisher: func(req trustedpublishers.Requirement) bool {
 			return ui.promptTrustPublisher(req, !runYes)
@@ -177,6 +179,7 @@ func runCheckOnly(ctx context.Context, out *output.Writer, ui *stageUI, workDir,
 		Remote:          pushRemote,
 		AllowUnpinned:   runInsecureAllowUnpinned,
 		NonInteractive:  runYes,
+		SkipSecretStore: out.IsCI(),
 		TrustPublishers: runTrustPublishers,
 		Sign:            signOptions(keyPath),
 		Stdout:          os.Stdout,
@@ -215,6 +218,38 @@ func runCheckOnly(ctx context.Context, out *output.Writer, ui *stageUI, workDir,
 	return nil
 }
 
+// describeVariable says where a variable comes from, or what stands in the
+// way, without a value or anything derived from one.
+func describeVariable(row secrets.Row) string {
+	switch row.Status {
+	case secrets.StatusPresent:
+		switch row.Source {
+		case secrets.SourceEnv:
+			return "the environment"
+		case secrets.SourceKeychain:
+			if row.StoredAt != "" {
+				if since, err := time.Parse(time.RFC3339, row.StoredAt); err == nil {
+					return "your keychain, since " + since.Format("Jan 2")
+				}
+			}
+			return "your keychain"
+		default:
+			return string(row.Source)
+		}
+	case secrets.StatusApprovalNeeded:
+		return "stored in your keychain; approval required"
+	case secrets.StatusLocked:
+		return "the keychain is locked"
+	case secrets.StatusUnavailable:
+		return "no keychain available"
+	default:
+		if row.Optional {
+			return "not set (optional)"
+		}
+		return "not set"
+	}
+}
+
 func printCheckResult(out *output.Writer, result *runflow.CheckResult) {
 	if out.IsJSON() {
 		payload := map[string]interface{}{
@@ -227,6 +262,8 @@ func printCheckResult(out *output.Writer, result *runflow.CheckResult) {
 			"env_total":          result.EnvTotal,
 			"env_missing":        result.EnvMissing,
 			"env_covered":        result.EnvCovered,
+			"variables":          result.Variables,
+			"secret_store":       result.SecretStore,
 			"signing":            result.Signing,
 			"publishers_trusted": result.PublishersTrusted,
 			"findings":           result.Findings,
@@ -261,11 +298,14 @@ func printCheckResult(out *output.Writer, result *runflow.CheckResult) {
 	}
 	switch {
 	case result.EnvTotal > 0 && len(result.EnvCovered) > 0:
-		out.Print("  Variables:   %d of %d set; your sign-in covers %s\n", result.EnvPresent, result.EnvTotal, strings.Join(result.EnvCovered, ", "))
+		out.Print("  Variables:   %d of %d ready; your sign-in covers %s\n", result.EnvPresent, result.EnvTotal, strings.Join(result.EnvCovered, ", "))
 	case result.EnvTotal > 0:
-		out.Print("  Variables:   %d of %d set\n", result.EnvPresent, result.EnvTotal)
+		out.Print("  Variables:   %d of %d ready\n", result.EnvPresent, result.EnvTotal)
 	case len(result.EnvCovered) > 0:
 		out.Print("  Variables:   none needed; your sign-in covers %s\n", strings.Join(result.EnvCovered, ", "))
+	}
+	for _, row := range result.Variables {
+		out.Print("    %-22s %s\n", row.Name, describeVariable(row))
 	}
 	if result.Signing != "" {
 		out.Print("  Signing:     %s\n", output.Printable(result.Signing))

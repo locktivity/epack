@@ -241,6 +241,16 @@ type RunOptions struct {
 	// Credentials resolves the Locktivity-managed credentials collectors
 	// declare. The zero value resolves with the run's CI identity.
 	Credentials credentials.Resolver
+	// Getenv reads the variables a collector lists under secrets:; nil
+	// means the process environment.
+	Getenv func(string) string
+}
+
+func (o RunOptions) getenv() func(string) string {
+	if o.Getenv != nil {
+		return o.Getenv
+	}
+	return os.Getenv
 }
 
 // CollectorEventType identifies collector lifecycle events.
@@ -811,7 +821,7 @@ func (r *Runner) executeCollector(ctx context.Context, req ExecutionRequest, opt
 		OutputDir:           req.OutputDir,
 		Secrets:             req.Secrets,
 		ManagedEnv:          req.ManagedEnv,
-		Getenv:              os.Getenv,
+		Getenv:              opts.getenv(),
 		InsecureInheritPath: opts.Unsafe.InheritPath,
 	}
 

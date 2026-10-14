@@ -16,6 +16,16 @@ type WrapperFlags struct {
 	QuietMode             bool   // --quiet
 	HasSeparator          bool   // true if "--" was used to separate wrapper args from tool args
 	InsecureAllowUnpinned bool   // --insecure-allow-unpinned: allow unverified PATH execution
+	// Getenv reads the variables a tool lists under secrets:; nil means the
+	// process environment. Set by a run, never from the command line.
+	Getenv func(string) string
+}
+
+func (f WrapperFlags) getenv() func(string) string {
+	if f.Getenv != nil {
+		return f.Getenv
+	}
+	return os.Getenv
 }
 
 // ParseWrapperArgs separates wrapper flags from tool args.
