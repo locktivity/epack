@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -45,8 +46,11 @@ func TestService_SetApprovesOnlyThatSecret(t *testing.T) {
 		t.Errorf("snapshots = %d, want only the one still referenced", len(snapshots))
 	}
 	info, err := os.Stat(service.Paths.metadataFile())
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("metadata mode = %v, %v", info.Mode(), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("metadata mode = %v", info.Mode())
 	}
 }
 
