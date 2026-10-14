@@ -305,3 +305,66 @@ func TestRunClone_RefreshesInPlaceFromInsideTheFolder(t *testing.T) {
 		t.Errorf("pull record after the refresh = %+v, %v", state, err)
 	}
 }
+
+func TestRunClone_BareRefreshesTheFolderItIsRunIn(t *testing.T) {
+	isolateHome(t)
+	projectDir := writeMockAdapterProject(t, configPullAdapter)
+	cmd, _, stderr := rootCommand(newCloneCommand(), "northwind-production", "--remote", "mock")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("first clone: %v (stderr: %s)", err, stderr.String())
+	}
+	folder := filepath.Join(projectDir, "northwind-production")
+	if err := os.Chdir(folder); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(projectDir) })
+	remoteBlock := fmt.Sprintf("remotes:\n  mock:\n    binary: %s\n    adapter: mock\n", filepath.Join(projectDir, "mock-adapter"))
+	if err := os.WriteFile(filepath.Join(folder, "epack.yaml"), []byte("stream: northwind/production\ncollectors:\n  tls:\n    source: locktivity/epack-collector-tls@^0.1.0\n"+remoteBlock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, stdout, stderr := rootCommand(newCloneCommand(), "--force", "--insecure-allow-unpinned")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("bare clone: %v (stderr: %s)", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Northwind production (revision 3)") {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(folder, "northwind-production")); !os.IsNotExist(err) {
+		t.Error("a nested copy was created")
+	}
+}
+
+func TestRunClone_BareOutsideAClonedFolderAsksForTheName(t *testing.T) {
+	isolateHome(t)
+	writeMockAdapterProject(t, configPullAdapter)
+	cmd, _, _ := rootCommand(newCloneCommand())
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "epack remote clone northwind-production") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunClone_BareRefusesAnotherRemote(t *testing.T) {
+	isolateHome(t)
+	dir := t.TempDir()
+	state := remoteconfig.State{Remote: "mock", Name: "northwind-production", Revision: 1, Files: map[string]string{}}
+	data, _ := json.Marshal(state)
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, remoteconfig.StateFile)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, remoteconfig.StateFile), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	cmd, _, _ := rootCommand(newCloneCommand(), "--remote", "locktivity")
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "cloned from mock, not locktivity") {
+		t.Fatalf("err = %v", err)
+	}
+}

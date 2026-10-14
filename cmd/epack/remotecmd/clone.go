@@ -31,7 +31,7 @@ var (
 
 func newCloneCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "clone <name> [dir]",
+		Use:   "clone [name] [dir]",
 		Short: "Fetch a configuration from a remote into a folder",
 		Long: `Fetch a named configuration from a remote and write it into a folder.
 
@@ -39,15 +39,18 @@ The remote is the one you last signed in to, or --remote. It hands over the
 files a project is made of: epack.yaml, the hooks, any profile files, and the
 lock when the remote has one. The folder defaults to the configuration's name.
 
-Run it again to pick up a newer revision. Files you have edited are left
-alone unless you pass --force, and hook scripts are never overwritten.
+Run it again to pick up a newer revision. Inside a folder a clone created,
+the name can be left out: the folder is refreshed from the remote it came
+from. Files you have edited are left alone unless you pass --force, and hook
+scripts are never overwritten.
 
 Examples:
   epack remote clone northwind-production
   epack remote clone northwind-production ./compliance
   epack remote clone northwind-production --remote locktivity
-  epack remote clone northwind-production --force`,
-		Args: cobra.RangeArgs(1, 2),
+  epack remote clone northwind-production --force
+  epack remote clone`,
+		Args: cobra.MaximumNArgs(2),
 		RunE: runClone,
 	}
 
@@ -61,7 +64,13 @@ Examples:
 }
 
 func runClone(cmd *cobra.Command, args []string) error {
-	target, err := ResolveConfigTarget(args[0], cloneRemote)
+	var target ConfigTarget
+	var err error
+	if len(args) == 0 {
+		target, err = currentFolderTarget(cloneRemote)
+	} else {
+		target, err = ResolveConfigTarget(args[0], cloneRemote)
+	}
 	if err != nil {
 		return err
 	}
@@ -123,6 +132,29 @@ func ResolveConfigTarget(name, remoteName string) (ConfigTarget, error) {
 		return ConfigTarget{}, exitError("%v", err)
 	}
 	return ConfigTarget{Remote: remoteName, Name: name}, nil
+}
+
+// currentFolderTarget names the configuration the working directory was
+// cloned from, read from its pull record, so a bare clone inside the folder
+// refreshes it. A --remote that names a different remote is refused rather
+// than fetching a same-named configuration from somewhere else into the
+// folder.
+func currentFolderTarget(remoteName string) (ConfigTarget, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ConfigTarget{}, exitError("reading the working directory: %v", err)
+	}
+	state, err := remoteconfig.LoadState(cwd)
+	if err != nil {
+		return ConfigTarget{}, exitError("%v", err)
+	}
+	if state == nil || state.Name == "" || state.Remote == "" {
+		return ConfigTarget{}, exitError("a configuration name is needed, as in epack remote clone northwind-production. Inside a folder a clone created, the name can be left out")
+	}
+	if remoteName != "" && remoteName != state.Remote {
+		return ConfigTarget{}, exitError("this folder was cloned from %s, not %s. Pass the configuration name to clone from %s into a new folder", state.Remote, remoteName, remoteName)
+	}
+	return ResolveConfigTarget(state.Name, state.Remote)
 }
 
 func defaultRemote() (string, error) {
