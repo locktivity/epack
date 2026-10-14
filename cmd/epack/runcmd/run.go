@@ -35,6 +35,7 @@ var (
 	runOutput                string
 	runKey                   string
 	runBrowser               bool
+	runUnsigned              bool
 	runOIDCToken             string
 	runYes                   bool
 	runForce                 bool
@@ -61,11 +62,15 @@ The stages, in order:
   3. Collect evidence into a pack; nothing unpinned runs
   4. Run the post-collect hook
   5. Run each configured tool on the pack
-  6. Sign the pack; keyless by default, which opens your browser outside CI
+  6. Sign the pack, unless --unsigned explicitly skips signing
   7. Push the pack to the remote
 
 When a stage fails, the failure is reported to the remote with a stable code
 so the run shows up there as well.
+
+A machine key created with 'epack key create' must be approved before a run
+can collect. Otherwise signing uses your browser or the CI job's OIDC identity.
+--unsigned sends without a signature, subject to the remote's policy.
 
 Examples:
   epack run northwind-production
@@ -81,7 +86,11 @@ Examples:
 	cmd.Flags().StringVarP(&runOutput, "output", "o", "", "pack file to build (default: evidence.epack in the project)")
 	cmd.Flags().StringVar(&runKey, "key", "", "sign with a private key (PEM) instead of keyless signing")
 	cmd.Flags().BoolVar(&runBrowser, "browser", false, "sign in your browser even when this machine has a key from 'epack key create'")
+	cmd.Flags().BoolVar(&runUnsigned, "unsigned", false, "send the pack without a signature; the remote's unsigned-pack policy still applies")
 	cmd.Flags().StringVar(&runOIDCToken, "oidc-token", "", "OIDC token for keyless signing (or EPACK_OIDC_TOKEN env)")
+	cmd.MarkFlagsMutuallyExclusive("unsigned", "key")
+	cmd.MarkFlagsMutuallyExclusive("unsigned", "browser")
+	cmd.MarkFlagsMutuallyExclusive("unsigned", "oidc-token")
 	cmd.Flags().BoolVarP(&runYes, "yes", "y", false, "skip prompts")
 	cmd.Flags().BoolVar(&runForce, "force", false, "when fetching, replace files you have edited")
 	cmd.Flags().BoolVar(&runCheck, "check", false,
@@ -179,6 +188,7 @@ func runCheckOnly(ctx context.Context, out *output.Writer, ui *stageUI, workDir,
 		NonInteractive:  runYes,
 		TrustPublishers: runTrustPublishers,
 		Sign:            signOptions(keyPath),
+		Unsigned:        runUnsigned,
 		Stdout:          os.Stdout,
 		Stderr:          os.Stderr,
 		OnStep:          ui.onStep,
@@ -240,7 +250,8 @@ func printCheckResult(out *output.Writer, result *runflow.CheckResult) {
 	}
 	p := out.Palette()
 	if result.OK() {
-		out.Print("\n%s The run has everything it needs.\n", p.Green("✓"))
+		out.Print("\n%s Setup checks passed.\n", p.Green("✓"))
+		out.Print("Collection, signing, and upload have not run.\n")
 	} else {
 		out.Print("\n%s The run would be missing %d %s.\n", p.Red("✗"), len(result.Findings), plural(len(result.Findings), "thing", "things"))
 	}
@@ -405,9 +416,7 @@ func printRunResult(out *output.Writer, result *runflow.Result, duration time.Du
 	switch {
 	case result.Push != nil:
 		out.Print("  Release: %s\n", output.Printable(result.Push.Release.ReleaseID))
-		if view, ok := result.Push.Links["view"]; ok {
-			out.Print("\nView: %s\n", output.Printable(view))
-		}
+		remotecmd.PrintPushPage(out, result.Push.Links)
 	case result.Remote == "":
 		out.Print("\nNo remote is configured, so the pack stayed local.\n")
 	}

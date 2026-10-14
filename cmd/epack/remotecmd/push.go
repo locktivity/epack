@@ -220,9 +220,7 @@ func outputPushResult(out *output.Writer, remoteName, packPath string, result *p
 			out.Verbose("      %s: %s\n", fo.Path, fo.Reason)
 		}
 	}
-	if viewURL, ok := result.Links["view"]; ok {
-		out.Print("\nView:  %s\n", output.Printable(viewURL))
-	}
+	PrintPushPage(out, result.Links)
 	if shareURL, ok := result.Links["share"]; ok {
 		out.Print("Share: %s\n", output.Printable(shareURL))
 	}

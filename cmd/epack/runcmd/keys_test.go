@@ -54,6 +54,10 @@ func writeKeyProject(t *testing.T, status string) (dir, keyPath string) {
 	if status != "" {
 		keys = fmt.Sprintf(`{"id":"key_123","name":"laptop","fingerprint":"%s","status":"%s"}`, fingerprint, status)
 	}
+	response := `{"ok":true,"type":"key.list.result","keys":[` + keys + `]}`
+	if code, ok := strings.CutPrefix(status, "error:"); ok {
+		response = fmt.Sprintf(`{"ok":false,"error":{"code":"%s","message":"key status unavailable"}}`, code)
+	}
 	script := `#!/bin/sh
 case "$1" in
   --capabilities)
@@ -61,7 +65,7 @@ case "$1" in
     ;;
   key.list)
     cat > /dev/null
-    echo '{"ok":true,"type":"key.list.result","keys":[` + keys + `]}'
+    echo '` + response + `'
     ;;
   *)
     echo '{"ok":false,"error":{"code":"unknown_command","message":"unknown command"}}'
@@ -95,16 +99,8 @@ func TestResolveRunKey_SignsOnlyWithAUsableKey(t *testing.T) {
 		errorHas string
 	}{
 		{status: remote.KeyStatusUsable, want: func(keyPath string) runSigning { return runSigning{keyPath: keyPath} }},
-		{
-			status:  remote.KeyStatusPending,
-			want:    func(string) runSigning { return runSigning{unsigned: true} },
-			warning: "is waiting for approval on mock, so this run sends its pack unsigned. To approve it, run 'epack key create mock'.",
-		},
-		{
-			status:  remote.KeyStatusLapsed,
-			want:    func(string) runSigning { return runSigning{unsigned: true} },
-			warning: "is waiting for approval on mock",
-		},
+		{status: remote.KeyStatusPending, errorHas: "is waiting for approval"},
+		{status: remote.KeyStatusLapsed, errorHas: "approval window has closed"},
 		{status: remote.KeyStatusDenied, errorHas: "as denied for this configuration; replace it with 'epack key rotate mock', or pass --browser"},
 		{status: remote.KeyStatusRetired, errorHas: "as retired for this configuration; replace it with 'epack key rotate mock'"},
 		{status: remote.KeyStatusRevoked, errorHas: "as revoked for this configuration"},
@@ -153,6 +149,63 @@ func TestMachineKeyRegister_AsksOnlyInATerminal(t *testing.T) {
 	_, registered, err := newMachineKey("mock.pem", "", "mock", "").register(context.Background(), out, nil, signer, "")
 	if err != nil || registered || stdout.Len() != 0 {
 		t.Fatalf("registered %v, err %v, stdout %q; want no question and no registration without a terminal", registered, err, stdout.String())
+	}
+}
+
+func TestRun_PendingKeyStopsBeforeCollectionEvenWithYes(t *testing.T) {
+	dir, _ := writeKeyProject(t, remote.KeyStatusPending)
+	t.Chdir(dir)
+	defer NewCommand()
+	cmd := NewCommand()
+	cmd.SetArgs([]string{"--yes"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "is waiting for approval") {
+		t.Fatalf("err = %v, want pending-key recovery", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "evidence.epack")); !os.IsNotExist(err) {
+		t.Fatalf("run created a pack before approval: %v", err)
+	}
+}
+
+func TestResolveRunKey_UnsignedMustBeExplicit(t *testing.T) {
+	dir, _ := writeKeyProject(t, remote.KeyStatusPending)
+	defer NewCommand()
+	cmd := NewCommand()
+	if err := cmd.ParseFlags([]string{"--unsigned"}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	out := output.New(&stdout, &stderr, output.Options{})
+	signing, err := resolveRunKey(context.Background(), out, newStageUI(out), dir, "")
+	if err != nil || signing != (runSigning{unsigned: true}) {
+		t.Fatalf("signing = %+v, err = %v", signing, err)
+	}
+	if key, _ := localRunKey(dir, ""); key != "" {
+		t.Fatalf("unsigned check selected key %q", key)
+	}
+}
+
+func TestRun_StopsWhenAutomaticKeyApprovalCannotBeChecked(t *testing.T) {
+	for _, status := range []string{"missing lock", "error:auth_required", "error:server_error"} {
+		t.Run(status, func(t *testing.T) {
+			dir, _ := writeKeyProject(t, status)
+			t.Chdir(dir)
+			if status == "missing lock" {
+				if err := os.Remove(filepath.Join(dir, "epack.lock.yaml")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			defer NewCommand()
+			cmd := NewCommand()
+			cmd.SetArgs([]string{"--yes"})
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), "checking this machine's signing key") {
+				t.Fatalf("err = %v, want key-status failure before collection", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "evidence.epack")); !os.IsNotExist(err) {
+				t.Fatalf("run created a pack without verifying approval: %v", err)
+			}
+		})
 	}
 }
 

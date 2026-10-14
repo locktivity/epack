@@ -844,6 +844,17 @@ configuration's name or the remote's identifier for it; left out, the
 adapter may recognise the folder itself, as the Locktivity adapter does for
 a bundle laid out by hand from its own manifest.
 
+When a run automatically selects a machine key, it requires a usable key
+status before collection. Pending or lapsed approval, adapter preparation
+failure, or a failed key-status lookup stops the run, including with
+`--yes`. Use `epack key create` to complete or renew approval, or `--browser`
+to select browser signing. Intentional unsigned delivery uses
+`epack run --unsigned`; it cannot be combined with `--key`, `--browser`, or
+`--oidc-token`, and the remote's unsigned-pack policy still applies.
+
+`epack run --check` reports setup checks and the selected signing mode.
+It does not collect evidence, create a signature, or upload a pack.
+
 ### key.register Request
 
 ```json
@@ -1179,6 +1190,9 @@ epack run northwind-production
 
 # The same inside an existing project, for a CI job
 epack run --yes
+
+# Explicitly send without a signature, if the remote permits it
+epack run --unsigned
 ```
 
 ## Example Adapter Implementation

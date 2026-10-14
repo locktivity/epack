@@ -215,7 +215,7 @@ func TestCheck_SaysHowItWouldSign(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	dir := writeCheckProject(t, "stream: northwind/production\ncollectors:\n  tls:\n    source: locktivity/epack-collector-tls@^0.1\n")
 
-	browser, err := Check(context.Background(), Options{WorkDir: dir, NonInteractive: true})
+	browser, err := Check(context.Background(), Options{WorkDir: dir, NonInteractive: true, Sign: sign.SignPackOptions{Interactive: true}})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -266,8 +266,8 @@ func TestCheckSigning_SaysWhenTheKeyWaitsForApproval(t *testing.T) {
 
 	for status, want := range map[string]struct{ signing, finding string }{
 		remote.KeyStatusUsable:  {signing: "with the key laptop"},
-		remote.KeyStatusPending: {signing: "unsigned; the key laptop is waiting for approval", finding: "the signing key " + fingerprint[:8] + " is waiting for approval; run epack key create and approve it in the browser"},
-		remote.KeyStatusLapsed:  {signing: "unsigned; the key laptop is waiting for approval", finding: "is waiting for approval"},
+		remote.KeyStatusPending: {signing: "blocked; the key laptop is waiting for approval", finding: "the signing key " + fingerprint[:8] + " is waiting for approval; run epack key create and approve it in the browser"},
+		remote.KeyStatusLapsed:  {signing: "blocked; approval for the key laptop has lapsed", finding: "approval window has closed"},
 		remote.KeyStatusDenied:  {signing: "with the key signing-key.pem", finding: "is no longer accepted for this configuration; replace it with epack key rotate"},
 	} {
 		adapter := filepath.Join(t.TempDir(), "adapter")
@@ -290,6 +290,55 @@ func TestCheckSigning_SaysWhenTheKeyWaitsForApproval(t *testing.T) {
 		if result.Signing != want.signing || (want.finding == "") != (findings == "") || !strings.Contains(findings, want.finding) {
 			t.Errorf("%s: signing %q, findings %q; want %q and %q", status, result.Signing, findings, want.signing, want.finding)
 		}
+	}
+}
+
+func TestCheckSigning_DescribesExplicitUnsignedAndOIDC(t *testing.T) {
+	for _, tc := range []struct {
+		opts Options
+		want string
+	}{
+		{opts: Options{Unsigned: true, Sign: sign.SignPackOptions{KeyPath: "unused.pem"}}, want: "unsigned, explicitly requested"},
+		{opts: Options{Sign: sign.SignPackOptions{OIDCToken: "job-token"}}, want: "with an OIDC identity token at run time"},
+		{opts: Options{Sign: sign.SignPackOptions{}}, want: "with an OIDC identity token at run time"},
+	} {
+		result := &CheckResult{}
+		checkSigning(context.Background(), nil, tc.opts, result)
+		if result.Signing != tc.want || len(result.Findings) != 0 {
+			t.Fatalf("signing = %q, findings = %v", result.Signing, result.Findings)
+		}
+	}
+}
+
+func TestCheckSigning_FailsWhenApprovalLookupFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script adapters are not available on Windows")
+	}
+	key, err := sign.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemBytes, _ := sign.MarshalPrivateKeyPEM(key)
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key.pem")
+	if err := sign.SavePrivateKey(keyPath, pemBytes); err != nil {
+		t.Fatal(err)
+	}
+	adapter := filepath.Join(dir, "adapter")
+	if err := os.WriteFile(adapter, []byte("#!/bin/sh\ncat > /dev/null\necho '{\"ok\":false,\"error\":{\"code\":\"server_error\",\"message\":\"unavailable\"}}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	session := &remoteSession{exec: remote.NewExecutor(adapter, "mock"), caps: &remote.Capabilities{Features: remote.CapabilityFeatures{Keys: true}}}
+	result := &CheckResult{}
+	opts := Options{Sign: sign.SignPackOptions{KeyPath: keyPath},
+		RegisterKey: func(context.Context, *remote.Executor, crypto.Signer, string) (remote.SigningKey, bool, error) {
+			t.Fatal("a failed lookup must not offer registration")
+			return remote.SigningKey{}, false, nil
+		},
+	}
+	checkSigning(context.Background(), session, opts, result)
+	if result.OK() || result.Signing != "blocked; key approval could not be checked" || !strings.Contains(strings.Join(result.Findings, " "), "checking signing key approval") {
+		t.Fatalf("check = %+v, want blocked approval lookup", result)
 	}
 }
 
@@ -333,7 +382,7 @@ func TestCheckSigning_OffersToRegisterAKeyTheRemoteDoesNotHold(t *testing.T) {
 			register: func() (remote.SigningKey, bool, error) {
 				return remote.SigningKey{Name: "laptop", Status: remote.KeyStatusPending}, true, nil
 			},
-			signing: "unsigned; the key laptop is waiting for approval", finding: "is waiting for approval",
+			signing: "blocked; the key laptop is waiting for approval", finding: "is waiting for approval",
 		},
 		"failed": {
 			register: func() (remote.SigningKey, bool, error) {

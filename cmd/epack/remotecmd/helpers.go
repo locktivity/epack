@@ -72,3 +72,12 @@ func PrintPipelinePage(out *output.Writer, link string) {
 		out.Print("See it on the pipeline page: %s\n", output.Printable(page))
 	}
 }
+
+func PrintPushPage(out *output.Writer, links map[string]string) {
+	for _, name := range []string{"pack", "view", "release"} {
+		if link := links[name]; link != "" && browser.Validate(link) == nil {
+			out.Print("\nView: %s\n", output.Printable(strings.TrimSpace(link)))
+			return
+		}
+	}
+}

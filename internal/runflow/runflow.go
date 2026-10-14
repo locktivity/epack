@@ -84,8 +84,7 @@ type Options struct {
 	PromptTrustPublisher func(trustedpublishers.Requirement) bool
 	// Sign configures how the pack is signed.
 	Sign sign.SignPackOptions
-	// Unsigned skips the sign stage, for a run whose key the remote does not
-	// accept yet; the pack is pushed without a signature.
+	// Unsigned skips the sign stage when the caller explicitly requests it.
 	Unsigned bool
 	// RegisterKey offers to register the Sign key for the configuration when
 	// the remote does not hold it, and returns the key as the remote then

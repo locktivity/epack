@@ -27,7 +27,7 @@ func localRunKey(workDir, remoteFlag string) (keyPath, remoteName string) {
 	if runKey != "" {
 		return runKey, ""
 	}
-	if runBrowser {
+	if runBrowser || runUnsigned {
 		return "", ""
 	}
 	cfg, err := config.Load(filepath.Join(workDir, project.ConfigFileName))
@@ -57,10 +57,13 @@ type runSigning struct {
 
 // resolveRunKey picks the key and asks the remote how it holds the key for
 // this configuration. The run signs with the machine key only once the
-// remote says it is usable, and goes unsigned while it waits for approval.
+// remote says it is usable, and stops while it waits for approval.
 // An unregistered machine key is offered for registration in a terminal and
 // stops the run otherwise, since the pack would land as unsigned.
 func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir, remoteFlag string) (runSigning, error) {
+	if runUnsigned {
+		return runSigning{unsigned: true}, nil
+	}
 	keyPath, remoteName := localRunKey(workDir, remoteFlag)
 	withKey := runSigning{keyPath: keyPath}
 	if keyPath == "" || remoteName == "" {
@@ -68,7 +71,7 @@ func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir
 	}
 	configRef, configName, err := runflow.ConfigReference(workDir)
 	if err != nil {
-		return withKey, nil
+		return runSigning{}, err
 	}
 	key, err := sign.LoadPrivateKey(keyPath)
 	if err != nil {
@@ -81,11 +84,11 @@ func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir
 
 	cfg, err := config.Load(filepath.Join(workDir, project.ConfigFileName))
 	if err != nil {
-		return withKey, nil
+		return runSigning{}, err
 	}
 	remoteCfg, err := remote.ResolveRemoteConfig(cfg, remoteName, "")
 	if err != nil {
-		return withKey, nil
+		return runSigning{}, err
 	}
 	exec, caps, err := remote.PrepareAdapterExecutor(ctx, workDir, remoteName, cfg, remoteCfg, remote.AdapterExecutorOptions{
 		PromptInstall: func(remoteName, adapterName string) bool {
@@ -98,7 +101,7 @@ func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir
 		},
 	})
 	if err != nil {
-		return withKey, nil
+		return runSigning{}, fmt.Errorf("checking this machine's signing key on %s: %w", remoteName, err)
 	}
 	defer exec.Close()
 	if !caps.SupportsKeys() {
@@ -108,15 +111,15 @@ func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir
 	if err != nil {
 		var adapterErr *remote.AdapterError
 		if errors.As(err, &adapterErr) && adapterErr.IsAuthRequired() {
-			return withKey, nil
+			return runSigning{}, fmt.Errorf("checking this machine's signing key on %s: %w; run 'epack remote login %s', then try again", remoteName, err, remoteName)
 		}
-		return withKey, nil
+		return runSigning{}, fmt.Errorf("checking this machine's signing key on %s: %w", remoteName, err)
 	}
 	machine := newMachineKey(keyPath, fingerprint, remoteName, configName)
 	registered, found := runflow.FindKey(list.Keys, fingerprint)
 	ui.stopSpinner()
 	if found {
-		return machine.signing(out, registered.Status)
+		return machine.signing(registered.Status)
 	}
 	registered, found, err = machine.register(ctx, out, exec, key, configRef)
 	if err != nil {
@@ -126,7 +129,7 @@ func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir
 		return runSigning{}, fmt.Errorf("this machine's signing key %s is not registered for %s; run '%s', or pass --browser to sign in the browser",
 			fingerprint[:8], machine.label, machine.command("create"))
 	}
-	return machine.signing(out, registered.Status)
+	return machine.signing(registered.Status)
 }
 
 // machineKey is this machine's key for the remote a run pushes to. config
@@ -188,16 +191,17 @@ func (k machineKey) command(verb string) string {
 }
 
 // signing decides how the run signs from the key's status on the remote:
-// with the key once it is usable, unsigned while it waits for approval, and
-// not at all once the remote has turned it down.
-func (k machineKey) signing(out *output.Writer, status string) (runSigning, error) {
+// with the key once it is usable, and not at all until the remote accepts it.
+func (k machineKey) signing(status string) (runSigning, error) {
 	switch status {
 	case remote.KeyStatusUsable:
 		return runSigning{keyPath: k.path}, nil
-	case remote.KeyStatusPending, remote.KeyStatusLapsed:
-		out.Warning("this machine's signing key %s is waiting for approval on %s, so this run sends its pack unsigned. To approve it, run '%s'.",
+	case remote.KeyStatusPending:
+		return runSigning{}, fmt.Errorf("this machine's signing key %s is waiting for approval on %s; run '%s' to approve it, pass --browser to sign in the browser, or explicitly send without a signature with --unsigned",
 			k.fingerprint[:8], k.remoteName, k.command("create"))
-		return runSigning{unsigned: true}, nil
+	case remote.KeyStatusLapsed:
+		return runSigning{}, fmt.Errorf("this machine's signing key %s approval window has closed on %s; run '%s' for a new approval code, pass --browser to sign in the browser, or explicitly send without a signature with --unsigned",
+			k.fingerprint[:8], k.remoteName, k.command("create"))
 	}
 	return runSigning{}, fmt.Errorf("%s holds this machine's signing key %s as %s for %s; replace it with '%s', or pass --browser to sign in the browser",
 		k.remoteName, k.fingerprint[:8], output.Printable(status), k.label, k.command("rotate"))

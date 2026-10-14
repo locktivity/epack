@@ -12,6 +12,8 @@ import (
 
 	"github.com/locktivity/epack/internal/broker"
 	"github.com/locktivity/epack/internal/cli/output"
+	"github.com/locktivity/epack/internal/push"
+	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/runflow"
 	"github.com/locktivity/epack/internal/testutil/testhome"
 )
@@ -135,5 +137,47 @@ func TestFormatDuration(t *testing.T) {
 		if got := formatDuration(d); got != want {
 			t.Errorf("formatDuration(%s) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestRun_UnsignedConflictsWithSigningFlags(t *testing.T) {
+	defer NewCommand()
+	for _, flags := range [][]string{{"--key", "key.pem"}, {"--browser"}, {"--oidc-token", "token"}} {
+		cmd := NewCommand()
+		cmd.SetArgs(append([]string{"--unsigned"}, flags...))
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), "none of the others can be") {
+			t.Errorf("flags %v: err = %v, want signing conflict", flags, err)
+		}
+	}
+}
+
+func TestPrintCheckResult_DescribesCheckScope(t *testing.T) {
+	var stdout bytes.Buffer
+	printCheckResult(output.New(&stdout, &stdout, output.Options{}), &runflow.CheckResult{})
+	if got := stdout.String(); !strings.Contains(got, "Setup checks passed.") || !strings.Contains(got, "Collection, signing, and upload have not run.") {
+		t.Fatalf("check output overstates readiness: %s", got)
+	}
+}
+
+func TestPrintRunResult_ShowsUploadedPackPage(t *testing.T) {
+	page := "https://app.locktivity.com/evidence_packs/packs/pack_123"
+	result := &runflow.Result{Push: &push.Result{Release: &remote.ReleaseResult{ReleaseID: "rel_123"}, Links: map[string]string{"pack": page}}}
+	var stdout bytes.Buffer
+	if err := printRunResult(output.New(&stdout, &stdout, output.Options{}), result, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "View: "+page) {
+		t.Fatalf("missing result link: %s", stdout.String())
+	}
+	stdout.Reset()
+	if err := printRunResult(output.New(&stdout, &stdout, output.Options{JSON: true}), result, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Links map[string]string `json:"links"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil || payload.Links["pack"] != page {
+		t.Fatalf("JSON result = %s, err = %v", stdout.String(), err)
 	}
 }

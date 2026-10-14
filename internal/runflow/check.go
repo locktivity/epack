@@ -118,12 +118,20 @@ func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 }
 
 // checkSigning says how the pack would be signed. A key the remote does not
-// accept for this configuration is a finding, since the pack would land as
-// unsigned; that includes a key still waiting for approval.
+// accept for this configuration is a finding; that includes a key still
+// waiting for approval.
 func checkSigning(ctx context.Context, session *remoteSession, opts Options, result *CheckResult) {
+	if opts.Unsigned {
+		result.Signing = "unsigned, explicitly requested"
+		return
+	}
 	path := strings.TrimSpace(opts.Sign.KeyPath)
 	if path == "" {
-		result.Signing = "in your browser, as you"
+		if opts.Sign.Interactive {
+			result.Signing = "in your browser, as you"
+		} else {
+			result.Signing = "with an OIDC identity token at run time"
+		}
 		return
 	}
 	signer, err := sign.LoadPrivateKey(path)
@@ -137,12 +145,16 @@ func checkSigning(ctx context.Context, session *remoteSession, opts Options, res
 		return
 	}
 	result.Signing = "with the key " + filepath.Base(path)
-	if session == nil || !session.caps.SupportsKeys() || result.SignedInAs == "" {
+	if session == nil || !session.caps.SupportsKeys() || (result.SignedInAs == "" && opts.RegisterKey == nil) {
 		return
 	}
 	config := strings.TrimSpace(os.Getenv(PipelineIDEnvVar))
 	list, err := session.exec.KeyList(ctx, config)
 	if err != nil {
+		if opts.RegisterKey != nil {
+			result.Signing = "blocked; key approval could not be checked"
+			result.Findings = append(result.Findings, fmt.Sprintf("checking signing key approval: %v", err))
+		}
 		return
 	}
 	key, found := FindKey(list.Keys, fingerprint)
@@ -159,9 +171,12 @@ func checkSigning(ctx context.Context, session *remoteSession, opts Options, res
 		result.Findings = append(result.Findings, fmt.Sprintf("the signing key %s is not registered for this configuration; run epack key create, or pass --browser to sign in the browser", fingerprint[:8]))
 	case key.Status == remote.KeyStatusUsable:
 		result.Signing = "with the key " + DescribeKey(key)
-	case key.Status == remote.KeyStatusPending || key.Status == remote.KeyStatusLapsed:
-		result.Signing = "unsigned; the key " + keyName(key) + " is waiting for approval"
+	case key.Status == remote.KeyStatusPending:
+		result.Signing = "blocked; the key " + keyName(key) + " is waiting for approval"
 		result.Findings = append(result.Findings, fmt.Sprintf("the signing key %s is waiting for approval; run epack key create and approve it in the browser", fingerprint[:8]))
+	case key.Status == remote.KeyStatusLapsed:
+		result.Signing = "blocked; approval for the key " + keyName(key) + " has lapsed"
+		result.Findings = append(result.Findings, fmt.Sprintf("the signing key %s approval window has closed; run epack key create for a new approval code", fingerprint[:8]))
 	default:
 		result.Findings = append(result.Findings, fmt.Sprintf("the signing key %s is no longer accepted for this configuration; replace it with epack key rotate", fingerprint[:8]))
 	}
