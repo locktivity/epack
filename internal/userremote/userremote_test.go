@@ -116,6 +116,9 @@ func TestPrepare_UsesInstalledAdapterWithoutLookup(t *testing.T) {
 }
 
 func TestPrepare_NamesTheLockedSourceAndHandsTheAdapterItsEndpoints(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script adapters are not available on Windows")
+	}
 	dir := tempDir(t)
 	installFakeAdapter(t, dir)
 	resolver := newTestResolver(dir, nil)
