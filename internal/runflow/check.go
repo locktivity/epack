@@ -2,7 +2,6 @@ package runflow
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/locktivity/epack/sign"
 	"os"
@@ -99,7 +98,7 @@ func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 		return nil, err
 	}
 
-	checkTrust(cfg, state, opts, result)
+	opts = checkTrust(cfg, state, opts, result)
 	fetched := state != nil
 	if fetched && result.PublishersTrusted {
 		lockFetched(ctx, cfg, opts, result)
@@ -115,10 +114,7 @@ func Check(ctx context.Context, opts Options) (*CheckResult, error) {
 			defer session.exec.Close()
 		}
 	}
-	if !result.PublishersTrusted {
-		opts.SkipSecretStore = true
-	}
-	resolution, err := resolveSecrets(cfg, opts, result.Remote, coveredNames(cfg, result.SignedInAs))
+	_, resolution, err := lacksVariables(cfg, opts, result.Remote, result.SignedInAs != "")
 	if err != nil {
 		result.Findings = append(result.Findings, fmt.Sprintf("reading stored secrets: %v", err))
 	}
@@ -230,22 +226,30 @@ func DescribeKey(key remote.SigningKey) string {
 	}
 }
 
-func checkTrust(cfg *config.JobConfig, state *remoteconfig.State, opts Options, result *CheckResult) {
-	err := checkPublishers(cfg, state, opts)
-	if err == nil {
-		return
+// checkTrust finds what a run would lack before anything installs, decided
+// as the run decides it: the epack release the revision needs and trust in
+// its publishers. With a publisher untrusted, the secret store stays closed.
+func checkTrust(cfg *config.JobConfig, state *remoteconfig.State, opts Options, result *CheckResult) Options {
+	missing, opts, err := lacksTrust(cfg, state, opts)
+	if err != nil {
+		result.PublishersTrusted = false
+		opts.SkipSecretStore = true
+		result.Findings = append(result.Findings, err.Error())
+		return opts
 	}
-	result.PublishersTrusted = false
-	var trustErr *trustedpublishers.Error
-	if errors.As(err, &trustErr) {
-		names := make([]string, 0, len(trustErr.Missing))
-		for _, req := range trustErr.Missing {
-			names = append(names, "github.com/"+req.Publisher)
+	var publishers []string
+	for _, m := range missing {
+		if m.Kind == remote.RequirementPublisher {
+			publishers = append(publishers, "github.com/"+m.Name)
+			continue
 		}
-		result.Findings = append(result.Findings, fmt.Sprintf("publishers not trusted: %s (set %s)", strings.Join(names, ", "), trustedpublishers.EnvVar))
-		return
+		result.Findings = append(result.Findings, m.Problem()+"; "+m.Fix)
 	}
-	result.Findings = append(result.Findings, err.Error())
+	if len(publishers) > 0 {
+		result.PublishersTrusted = false
+		result.Findings = append(result.Findings, fmt.Sprintf("publishers not trusted: %s (set %s)", strings.Join(publishers, ", "), trustedpublishers.EnvVar))
+	}
+	return opts
 }
 
 // lockFetched locks a fetched configuration the way its first run would.
@@ -309,8 +313,9 @@ func checkEnv(cfg *config.JobConfig, workDir string, result *CheckResult, resolu
 		result.Findings = append(result.Findings, fmt.Sprintf("reading the configuration: %v", err))
 		return
 	}
+	covered := coveredNames(cfg, result.SignedInAs != "")
 	for _, env := range summary.Env {
-		if coveredBySignIn(cfg, result.SignedInAs, env) {
+		if covered[env.Name] {
 			result.EnvCovered = append(result.EnvCovered, env.Name)
 			continue
 		}
@@ -343,22 +348,6 @@ func checkEnv(cfg *config.JobConfig, workDir string, result *CheckResult, resolu
 	if len(unset) > 0 {
 		result.Findings = append(result.Findings, "not set: "+strings.Join(unset, ", "))
 	}
-}
-
-// coveredBySignIn reports whether a variable is read only by remotes and the
-// run is signed in. Such a variable is the remote's fallback credential; a
-// signed-in session is the credential, so the run will not read the
-// variable, and the page agrees that there is nothing to add.
-func coveredBySignIn(cfg *config.JobConfig, signedInAs string, env remoteconfig.EnvVar) bool {
-	if signedInAs == "" || len(env.UsedBy) == 0 {
-		return false
-	}
-	for _, user := range env.UsedBy {
-		if _, isRemote := cfg.Remotes[user]; !isRemote {
-			return false
-		}
-	}
-	return true
 }
 
 // checkCredentials resolves what the run would, through the remote's sign-in

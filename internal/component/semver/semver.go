@@ -2,6 +2,7 @@
 package semver
 
 import (
+	"cmp"
 	"fmt"
 	"strconv"
 	"strings"
@@ -282,7 +283,7 @@ func SelectVersion(tags []string, constraint *Constraint) (string, error) {
 			continue
 		}
 
-		if best == nil || isNewer(v, best) {
+		if best == nil || Compare(v, best) > 0 {
 			best = v
 			bestTag = tag
 		}
@@ -295,15 +296,72 @@ func SelectVersion(tags []string, constraint *Constraint) (string, error) {
 	return bestTag, nil
 }
 
-// isNewer returns true if a is newer than b.
-func isNewer(a, b *Version) bool {
-	if a.Major != b.Major {
-		return a.Major > b.Major
+// Compare orders two versions by semver precedence: negative when a is
+// older than b, positive when newer, zero when they are the same release.
+// A prerelease comes before its release, and numeric prerelease
+// identifiers compare as numbers, so rc.10 follows rc.9.
+func Compare(a, b *Version) int {
+	if c := cmp.Compare(a.Major, b.Major); c != 0 {
+		return c
 	}
-	if a.Minor != b.Minor {
-		return a.Minor > b.Minor
+	if c := cmp.Compare(a.Minor, b.Minor); c != 0 {
+		return c
 	}
-	return a.Patch > b.Patch
+	if c := cmp.Compare(a.Patch, b.Patch); c != 0 {
+		return c
+	}
+	return comparePrerelease(a.Prerelease, b.Prerelease)
+}
+
+func comparePrerelease(a, b string) int {
+	switch {
+	case a == b:
+		return 0
+	case a == "":
+		return 1
+	case b == "":
+		return -1
+	}
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		if c := compareIdentifier(as[i], bs[i]); c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(len(as), len(bs))
+}
+
+// compareIdentifier compares one dot-separated prerelease identifier. A
+// numeric one sorts before an alphanumeric one, and two numeric ones
+// compare by value, whatever their length.
+func compareIdentifier(a, b string) int {
+	aNumeric, bNumeric := numeric(a), numeric(b)
+	switch {
+	case aNumeric && bNumeric:
+		a, b = strings.TrimLeft(a, "0"), strings.TrimLeft(b, "0")
+		if c := cmp.Compare(len(a), len(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	case aNumeric:
+		return -1
+	case bNumeric:
+		return 1
+	default:
+		return strings.Compare(a, b)
+	}
+}
+
+func numeric(identifier string) bool {
+	if identifier == "" {
+		return false
+	}
+	for _, r := range identifier {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // NormalizeTag ensures a tag has the "v" prefix.

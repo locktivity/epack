@@ -1,0 +1,18 @@
+{
+  "type": "config.pull",
+  "protocol_version": 1,
+  "request_id": "req_1",
+  "remote": "locktivity",
+  "target": {},
+  "config": {
+    "name": "northwind-production",
+    "purpose": "run",
+    "fallback": {
+      "revision": 3,
+      "missing": [
+        {"kind": "variable", "name": "SENTRY_AUTH_TOKEN"},
+        {"kind": "publisher", "name": "acme"}
+      ]
+    }
+  }
+}

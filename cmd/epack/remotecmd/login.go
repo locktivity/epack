@@ -93,9 +93,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	prepared, err := PrepareRemote(ctx, remoteName, PrepareOptions{
 		AllowUnpinned: loginInsecureAllowUnpinned,
 		Step:          ui.onStep,
-		PromptInstall: func(remoteName, adapterName string) bool {
+		Install: AskToInstall(func(remoteName, adapterName string) bool {
 			return ui.promptInstallAdapter(remoteName, adapterName, true)
-		},
+		}),
 		Stderr: os.Stderr,
 	})
 	if err != nil {

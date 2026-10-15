@@ -12,13 +12,16 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/locktivity/epack/internal/broker"
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/lockprovenance"
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/remoteconfig"
+	"github.com/locktivity/epack/internal/runflow"
 	"github.com/locktivity/epack/internal/secrets"
 	"github.com/locktivity/epack/internal/userconfig"
 	"github.com/spf13/cobra"
@@ -179,13 +182,25 @@ func defaultRemote() (string, error) {
 	return "", exitError("no remote chosen. Run 'epack remote login <remote>' once, or pass --remote")
 }
 
-// CloneOptions controls a clone.
+// CloneOptions controls a setup clone.
 type CloneOptions struct {
 	Dir           string
 	Force         bool
 	AllowUnpinned bool
 	Step          remote.StepCallback
 	PromptInstall remote.PromptInstallFunc
+}
+
+// FetchOptions controls a fetch for a run or a check, into the folder named
+// after the configuration. Install and TrustPublishers are as for
+// PrepareRemote.
+type FetchOptions struct {
+	Purpose         remote.ConfigPurpose
+	Force           bool
+	AllowUnpinned   bool
+	Step            remote.StepCallback
+	Install         InstallPolicy
+	TrustPublishers []string
 }
 
 // CloneResult is what a clone fetched and wrote, with what the written
@@ -198,22 +213,85 @@ type CloneResult struct {
 	Changes *remoteconfig.Changes
 }
 
+// Fetch is a configuration fetched for a run or a check. It keeps the
+// adapter open, so the run can ask for an earlier revision and report
+// through the same sign-in. Close it when the run no longer needs the
+// remote.
+type Fetch struct {
+	*CloneResult
+	target   ConfigTarget
+	purpose  remote.ConfigPurpose
+	pipeline *broker.PipelineIdentity
+	prepared *PreparedRemote
+}
+
+// Close releases the adapter.
+func (f *Fetch) Close() {
+	f.prepared.Close()
+}
+
+// PipelineID names the pipeline the run belongs to: the one it signed in
+// for, or else the fetched configuration's.
+func (f *Fetch) PipelineID() string {
+	if f.pipeline != nil {
+		return f.pipeline.ID
+	}
+	return f.Config.ID
+}
+
 // CloneConfig fetches the configuration from the remote and writes it into
 // the folder, creating or refreshing it.
 func CloneConfig(ctx context.Context, target ConfigTarget, opts CloneOptions) (*CloneResult, error) {
-	prepared, err := PrepareRemote(ctx, target.Remote, PrepareOptions{
+	fetch, err := fetchConfig(ctx, target, opts.Dir, FetchOptions{
+		Purpose:       remote.ConfigPurposeClone,
+		Force:         opts.Force,
 		AllowUnpinned: opts.AllowUnpinned,
 		Step:          opts.Step,
-		PromptInstall: opts.PromptInstall,
-		Stderr:        os.Stderr,
+		Install:       AskToInstall(opts.PromptInstall),
+	})
+	if err != nil {
+		return nil, err
+	}
+	fetch.Close()
+	return fetch.CloneResult, nil
+}
+
+// FetchConfig fetches the current revision and writes it into the folder,
+// creating or refreshing it, and keeps the adapter open.
+func FetchConfig(ctx context.Context, target ConfigTarget, opts FetchOptions) (*Fetch, error) {
+	return fetchConfig(ctx, target, "", opts)
+}
+
+func fetchConfig(ctx context.Context, target ConfigTarget, dir string, opts FetchOptions) (*Fetch, error) {
+	pipeline := pipelineIdentity(opts.Purpose)
+	prepared, err := PrepareRemote(ctx, target.Remote, PrepareOptions{
+		AllowUnpinned:   opts.AllowUnpinned,
+		Step:            opts.Step,
+		Install:         opts.Install,
+		Stderr:          os.Stderr,
+		Pipeline:        pipeline,
+		TrustPublishers: opts.TrustPublishers,
 	})
 	if err != nil {
 		return nil, exitError("clone failed: %v", err)
 	}
-	defer prepared.Close()
+	clone, err := fetchCurrent(ctx, target, dir, opts, prepared)
+	if err != nil {
+		prepared.Close()
+		return nil, err
+	}
+	return &Fetch{CloneResult: clone, target: target, purpose: opts.Purpose, pipeline: pipeline, prepared: prepared}, nil
+}
 
+// fetchCurrent asks the adapter for the current revision and writes it into
+// dir, or the folder a clone of it already lives in.
+func fetchCurrent(ctx context.Context, target ConfigTarget, dir string, opts FetchOptions, prepared *PreparedRemote) (*CloneResult, error) {
 	if !prepared.Caps.SupportsConfigPull() {
 		return nil, exitError("clone failed: the %s adapter cannot hand over configurations", target.Remote)
+	}
+	if err := remote.ValidateFilesDir(prepared.Caps.FilesDir); err != nil {
+		err = fmt.Errorf("the %s adapter declared a files folder epack cannot accept: %w", target.Remote, err)
+		return nil, exitError("clone failed: %v", err)
 	}
 
 	step := opts.Step
@@ -221,28 +299,161 @@ func CloneConfig(ctx context.Context, target ConfigTarget, opts CloneOptions) (*
 		step = func(string, bool) {}
 	}
 	step(fmt.Sprintf("Fetching %s from %s", target.Name, target.Remote), true)
-	resp, err := prepared.Exec.ConfigPull(ctx, target.Remote, prepared.Target, target.Name)
+	resp, err := prepared.Exec.ConfigPull(ctx, target.Remote, prepared.Target, remote.ConfigPullTarget{Name: target.Name, Purpose: opts.Purpose})
 	if err != nil {
 		return nil, exitError("clone failed: %v", adapterMessage(err))
 	}
 	step("Fetched "+describeConfig(resp.Config), false)
 
-	dir := opts.Dir
 	if dir == "" {
 		dir = sameConfigurationFolder(target, resp.Config)
 	}
 	if dir == "" {
 		dir = target.Name
 	}
+	return writeFetched(resp.Config, target, prepared, remoteconfig.Options{Dir: dir, Force: opts.Force, FilesDir: prepared.Caps.FilesDir})
+}
+
+// FallbackFolder is where a run keeps the revision it falls back to, inside
+// the fetched folder's own state. The fetched revision stays where the person
+// adds what it needs, and what the fallback installs is kept for next time.
+const FallbackFolder = ".epack/fallback"
+
+// Fallback asks the remote for the newest earlier revision that needs none
+// of what the runner lacks, named by kind and name, and writes it into
+// FallbackFolder. When none runs here, the remote says why instead.
+func (f *Fetch) Fallback(ctx context.Context, missing []remote.Requirement) (*CloneResult, *remote.NoFallback, error) {
+	resp, err := f.prepared.Exec.ConfigPull(ctx, f.target.Remote, f.prepared.Target, remote.ConfigPullTarget{
+		Name:     f.target.Name,
+		Purpose:  f.purpose,
+		Fallback: &remote.ConfigFallback{Revision: f.Config.Revision, Missing: missing},
+	})
+	if err != nil {
+		return nil, nil, exitError("fetching an earlier revision: %v", adapterMessage(err))
+	}
+	if resp.NoFallback != nil {
+		return nil, resp.NoFallback, nil
+	}
+	if resp.Config.ID != f.Config.ID || resp.Config.Revision <= 0 || resp.Config.Revision >= f.Config.Revision {
+		return nil, nil, exitError("fetching an earlier revision: %s answered with %s, not a revision before %d", f.target.Remote, describeConfig(resp.Config), f.Config.Revision)
+	}
+	dir := filepath.Join(f.Dir, filepath.FromSlash(FallbackFolder))
+	clone, err := writeFetched(resp.Config, f.target, f.prepared, remoteconfig.Options{Dir: dir, Force: true, FilesDir: f.prepared.Caps.FilesDir})
+	return clone, nil, err
+}
+
+// Lacks says what the revision in dir needs that this runner lacks.
+type Lacks func(dir string, requirements *remote.ConfigRequirements) ([]runflow.MissingRequirement, error)
+
+// Runnable is the revision a run uses. Missing is what the fetched revision
+// needs that this runner lacks. Without anything missing, Dir and Config
+// are the fetched revision's. Otherwise they are the newest earlier
+// revision the remote finds that runs here, in FallbackFolder, or Dir is
+// empty when none does. Lacking is everything the walk back found missing,
+// and NoFallback says why none runs when the remote said.
+type Runnable struct {
+	Dir        string
+	Config     remote.ConfigPullResult
+	Missing    []runflow.MissingRequirement
+	Lacking    []runflow.MissingRequirement
+	NoFallback *remote.NoFallback
+}
+
+// maxFallbacks bounds the walk back through earlier revisions. An answer
+// that is not older than the one before ends the walk, since asking again
+// could only bring it back.
+const maxFallbacks = 10
+
+// Runnable finds the revision a run uses without printing anything. The
+// fetched revision is checked with lacks, which may ask the person at the
+// terminal; each earlier one with lacksQuietly, which never asks, so trust
+// is offered only for the revision the person fetched. Each earlier
+// revision is asked for again with everything found missing so far.
+func (f *Fetch) Runnable(ctx context.Context, lacks, lacksQuietly Lacks) (*Runnable, error) {
+	missing, err := lacks(f.Dir, f.Config.Requirements)
+	if err != nil {
+		return nil, err
+	}
+	runnable := &Runnable{Config: f.Config, Missing: missing, Lacking: missing}
+	if len(missing) == 0 {
+		runnable.Dir = f.Dir
+		return runnable, nil
+	}
+	asked := newRequirementSet(missing)
+	before := f.Config.Revision
+	for range maxFallbacks {
+		fallback, none, err := f.Fallback(ctx, asked.requirements())
+		if err != nil {
+			return nil, err
+		}
+		if none != nil {
+			runnable.NoFallback = none
+			break
+		}
+		if fallback.Config.Revision >= before {
+			break
+		}
+		before = fallback.Config.Revision
+		lacking, err := lacksQuietly(fallback.Dir, fallback.Config.Requirements)
+		if err != nil {
+			return nil, err
+		}
+		if len(lacking) == 0 {
+			runnable.Dir, runnable.Config = fallback.Dir, fallback.Config
+			break
+		}
+		asked.add(lacking)
+	}
+	runnable.Lacking = asked.items
+	return runnable, nil
+}
+
+// requirementSet is what a run lacks, in the order it was found, once per
+// kind and name.
+type requirementSet struct {
+	seen  map[remote.Requirement]bool
+	items []runflow.MissingRequirement
+}
+
+func newRequirementSet(missing []runflow.MissingRequirement) *requirementSet {
+	set := &requirementSet{seen: map[remote.Requirement]bool{}}
+	set.add(missing)
+	return set
+}
+
+func (s *requirementSet) add(missing []runflow.MissingRequirement) {
+	for _, m := range missing {
+		if !s.seen[m.Requirement] {
+			s.seen[m.Requirement] = true
+			s.items = append(s.items, m)
+		}
+	}
+}
+
+func (s *requirementSet) requirements() []remote.Requirement {
+	return runflow.Requirements(s.items)
+}
+
+// Report sends a run's report through the adapter the fetch signed in with,
+// so a run that stops before installing anything is still reported.
+func (f *Fetch) Report(ctx context.Context, provenance *lockprovenance.Provenance) error {
+	if !f.prepared.Caps.SupportsLockReport() {
+		return fmt.Errorf("the %s adapter does not take reports", f.target.Remote)
+	}
+	_, err := f.prepared.Exec.ReportLock(ctx, &remote.LockReportRequest{
+		Remote:         f.target.Remote,
+		Target:         f.prepared.Target,
+		LockProvenance: *provenance,
+	})
+	return err
+}
+
+func writeFetched(cfg remote.ConfigPullResult, target ConfigTarget, prepared *PreparedRemote, writeOpts remoteconfig.Options) (*CloneResult, error) {
 	var before *remoteconfig.Summary
-	if state, _ := remoteconfig.LoadState(dir); state != nil {
-		before, _ = remoteconfig.Summarize(dir, nil)
+	if state, _ := remoteconfig.LoadState(writeOpts.Dir); state != nil {
+		before, _ = remoteconfig.Summarize(writeOpts.Dir, nil)
 	}
-	if err := remote.ValidateFilesDir(prepared.Caps.FilesDir); err != nil {
-		err = fmt.Errorf("the %s adapter declared a files folder epack cannot accept: %w", target.Remote, err)
-		return nil, exitError("clone failed: %v", err)
-	}
-	result, err := remoteconfig.Write(resp.Config, target.Remote, remoteconfig.Options{Dir: dir, Force: opts.Force, FilesDir: prepared.Caps.FilesDir})
+	result, err := remoteconfig.Write(cfg, target.Remote, writeOpts)
 	if err != nil {
 		var hidden *remoteconfig.HiddenPathError
 		if errors.As(err, &hidden) && hidden.FilesDir == "" {
@@ -254,7 +465,7 @@ func CloneConfig(ctx context.Context, target ConfigTarget, opts CloneOptions) (*
 	if err != nil {
 		return nil, exitError("the fetched configuration does not load: %v", err)
 	}
-	clone := &CloneResult{Result: result, Config: resp.Config, Summary: summary}
+	clone := &CloneResult{Result: result, Config: cfg, Summary: summary}
 	if before != nil && !result.Current() {
 		clone.Changes = remoteconfig.Diff(before, summary)
 	}
@@ -311,7 +522,11 @@ func fetchedGetenv(dir, remoteName string) func(string) string {
 // PrintFetched shows what a freshly written or updated configuration will
 // run: everything on the first fetch, only the differences on a later one.
 func PrintFetched(out *output.Writer, clone *CloneResult) {
-	if out.IsQuiet() || out.IsJSON() || clone.Current() && !clone.Created {
+	if out.IsQuiet() || out.IsJSON() {
+		return
+	}
+	printRemoteChanges(out, clone.Config)
+	if clone.Current() && !clone.Created {
 		return
 	}
 	for _, path := range clone.Replaced {
@@ -322,6 +537,21 @@ func PrintFetched(out *output.Writer, clone *CloneResult) {
 		return
 	}
 	printSummary(out, clone.Summary)
+}
+
+// printRemoteChanges shows what the remote says changed since the revision
+// this runner last ran, which a folder fetched fresh cannot tell on its own.
+func printRemoteChanges(out *output.Writer, cfg remote.ConfigPullResult) {
+	label := "Changes"
+	if cfg.ChangesSince > 0 {
+		label = "Since rev " + itoa(cfg.ChangesSince)
+	}
+	for _, line := range cfg.Changes {
+		if text := output.Printable(line); text != "" {
+			out.Print("  %-14s %s\n", label, text)
+			label = ""
+		}
+	}
 }
 
 func printSummary(out *output.Writer, s *remoteconfig.Summary) {

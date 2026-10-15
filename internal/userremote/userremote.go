@@ -47,6 +47,19 @@ type Resolver struct {
 	// Step receives progress events while locking and installing.
 	Step         remote.StepCallback
 	Verification remote.VerificationOptions
+	// Admit, when set, is asked about the source an adapter comes from
+	// before it is locked, installed, or run, and refuses it with an error.
+	Admit func(source string) error
+	// ExplicitEnv is handed to each adapter the resolver starts: the
+	// endpoints an operator pointed it at.
+	ExplicitEnv map[string]string
+}
+
+// Prepared is an adapter ready to run and the source it was locked from.
+type Prepared struct {
+	Exec   *remote.Executor
+	Caps   *remote.Capabilities
+	Source string
 }
 
 // New returns a resolver over the user's epack directory, the GitHub
@@ -71,24 +84,47 @@ func New() (*Resolver, error) {
 
 // Prepare returns a verified executor for the named adapter, locking and
 // installing it first when needed. Callers must Close the executor.
-func (r *Resolver) Prepare(ctx context.Context, name string) (*remote.Executor, *remote.Capabilities, error) {
+func (r *Resolver) Prepare(ctx context.Context, name string) (*Prepared, error) {
 	if err := config.ValidateRemoteName(name); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	lf, err := userconfig.LoadRemotesLockFromPath(r.LockPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	source, err := r.sourceOf(ctx, name, lf)
+	if err != nil {
+		return nil, err
+	}
+	if r.Admit != nil {
+		if err := r.Admit(source); err != nil {
+			return nil, err
+		}
 	}
 	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
-	if err := r.ensureLocked(ctx, name, lf, platformKey); err != nil {
-		return nil, nil, err
+	if err := r.ensureLocked(ctx, name, lf, platformKey, source); err != nil {
+		return nil, err
 	}
 	locked, _ := lf.GetRemote(name)
 	remoteCfg := config.RemoteConfig{Source: sourceDescriptor(locked)}
 	if err := r.ensureInstalled(ctx, name, remoteCfg, lf, platformKey); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return r.start(ctx, name, remoteCfg, lf, platformKey)
+	exec, caps, err := r.start(ctx, name, remoteCfg, lf, platformKey)
+	if err != nil {
+		return nil, err
+	}
+	return &Prepared{Exec: exec, Caps: caps, Source: remoteCfg.Source}, nil
+}
+
+// sourceOf names the source the adapter is locked from, or the one the
+// catalog lists before it is locked. Admit and the lock both use it, so the
+// catalog can't change between them.
+func (r *Resolver) sourceOf(ctx context.Context, name string, lf *lockfile.LockFile) (string, error) {
+	if locked, ok := lf.GetRemote(name); ok {
+		return sourceDescriptor(locked), nil
+	}
+	return r.Lookup(ctx, name)
 }
 
 // start verifies an installed adapter against its lock, runs it, and checks
@@ -107,6 +143,7 @@ func (r *Resolver) start(ctx context.Context, name string, remoteCfg config.Remo
 		return nil, nil, err
 	}
 	exec.Stderr = r.Stderr
+	exec.ExplicitEnv = r.ExplicitEnv
 	caps, err := remote.QueryCapabilities(ctx, exec.BinaryPath)
 	if err != nil {
 		exec.Close()
@@ -211,16 +248,7 @@ func newerRelease(next, current string) bool {
 	if err != nil {
 		return false
 	}
-	switch {
-	case n.Major != c.Major:
-		return n.Major > c.Major
-	case n.Minor != c.Minor:
-		return n.Minor > c.Minor
-	case n.Patch != c.Patch:
-		return n.Patch > c.Patch
-	default:
-		return c.Prerelease != "" && (n.Prerelease == "" || n.Prerelease > c.Prerelease)
-	}
+	return semver.Compare(n, c) > 0
 }
 
 func newExecutor(binaryPath string, digestInfo remote.AdapterDigestInfo, adapterName string) (*remote.Executor, error) {
@@ -234,21 +262,11 @@ func newExecutor(binaryPath string, digestInfo remote.AdapterDigestInfo, adapter
 	return exec, nil
 }
 
-func (r *Resolver) ensureLocked(ctx context.Context, name string, lf *lockfile.LockFile, platformKey string) error {
+func (r *Resolver) ensureLocked(ctx context.Context, name string, lf *lockfile.LockFile, platformKey, source string) error {
 	locked, exists := lf.GetRemote(name)
 	if exists {
 		if entry, ok := locked.Platforms[platformKey]; ok && entry.Digest != "" {
 			return nil
-		}
-	}
-	source := ""
-	if exists {
-		source = sourceDescriptor(locked)
-	} else {
-		var err error
-		source, err = r.Lookup(ctx, name)
-		if err != nil {
-			return err
 		}
 	}
 	repo := strings.SplitN(source, "@", 2)[0]
@@ -297,20 +315,6 @@ func (r *Resolver) step(message string, started bool) {
 	if r.Step != nil {
 		r.Step(message, started)
 	}
-}
-
-// Source returns the locked source of an adapter installed for the user,
-// as owner/repo@version, or an empty string when it is not locked.
-func (r *Resolver) Source(name string) (string, error) {
-	lf, err := userconfig.LoadRemotesLockFromPath(r.LockPath)
-	if err != nil {
-		return "", err
-	}
-	locked, ok := lf.GetRemote(name)
-	if !ok {
-		return "", nil
-	}
-	return sourceDescriptor(locked), nil
 }
 
 // sourceDescriptor rebuilds the config source for a locked remote, pinned to

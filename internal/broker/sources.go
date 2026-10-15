@@ -43,7 +43,7 @@ func TokenSourceFor(rt RuntimeContext, httpClient *http.Client, getenv func(stri
 	case rt.GitLabIDToken:
 		return GitLabCITokenSource{Getenv: getenv}
 	case rt.SigningKey:
-		return SigningKeyTokenSource{Getenv: getenv}
+		return SigningKeyTokenSource{Getenv: getenv, PipelineID: getenvOr(getenv)(PipelineIDEnvVar)}
 	default:
 		return GitHubActionsTokenSource{HTTPClient: httpClient, Getenv: getenv}
 	}
@@ -54,6 +54,50 @@ func TokenSourceFor(rt RuntimeContext, httpClient *http.Client, getenv func(stri
 func NewClientForRuntime(apiBase string, rt RuntimeContext, getenv func(string) string) *Client {
 	client := NewClient(apiBase)
 	client.TokenSource = TokenSourceFor(rt, client.HTTPClient, getenvOr(getenv))
+	return client
+}
+
+// PipelineIdentity is the pipeline a job signs in for and what it presents
+// there: a GitLab job's ID token, or an assertion signed with the runner's
+// key, and no other identity.
+type PipelineIdentity struct {
+	ID     string
+	Source OIDCTokenSource
+}
+
+// PipelineIdentityFor reads once what a job signs in for its pipeline with.
+// A job that declared an ID token for Locktivity signs in with it, since its
+// pipeline may keep keys only to sign packs. Without either, or without a
+// pipeline named, there is none, and the adapter signs in on its own, as on
+// a laptop.
+func PipelineIdentityFor(rt RuntimeContext, getenv func(string) string) (PipelineIdentity, bool) {
+	getenv = getenvOr(getenv)
+	id := strings.TrimSpace(getenv(PipelineIDEnvVar))
+	switch {
+	case id == "":
+		return PipelineIdentity{}, false
+	case rt.GitLabIDToken:
+		return PipelineIdentity{ID: id, Source: GitLabCITokenSource{Getenv: getenv}}, true
+	case rt.SigningKey:
+		return PipelineIdentity{ID: id, Source: SigningKeyTokenSource{Getenv: getenv, PipelineID: id}}, true
+	default:
+		return PipelineIdentity{}, false
+	}
+}
+
+// Presents names what the job sends the broker, for a warning about where
+// it goes.
+func (p PipelineIdentity) Presents() string {
+	if _, ok := p.Source.(GitLabCITokenSource); ok {
+		return "The job's GitLab ID token"
+	}
+	return "Assertions signed with the runner's key"
+}
+
+// NewSessionClient returns a broker client that signs in as identity.
+func NewSessionClient(apiBase string, identity PipelineIdentity) *Client {
+	client := NewClient(apiBase)
+	client.TokenSource = identity.Source
 	return client
 }
 
@@ -74,24 +118,23 @@ func (s GitLabCITokenSource) Token(context.Context, string) (string, error) {
 }
 
 // SigningKeyTokenSource signs in with a runner's signing key: it presents a
-// short-lived JWS that names the pipeline and is signed by a key the pipeline
+// short-lived JWS that names PipelineID and is signed by a key the pipeline
 // approved.
 type SigningKeyTokenSource struct {
-	Getenv func(string) string
+	Getenv     func(string) string
+	PipelineID string
 	// Now and Rand replace the clock and crypto/rand when set.
 	Now  func() time.Time
 	Rand io.Reader
 }
 
-// Token signs an assertion for audience with the key in EPACK_SIGNING_KEY,
-// naming the pipeline in EPACK_PIPELINE_ID.
+// Token signs an assertion for audience with the key in EPACK_SIGNING_KEY.
 func (s SigningKeyTokenSource) Token(_ context.Context, audience string) (string, error) {
-	getenv := getenvOr(s.Getenv)
-	keyPath := strings.TrimSpace(getenv(SigningKeyEnvVar))
+	keyPath := strings.TrimSpace(getenvOr(s.Getenv)(SigningKeyEnvVar))
 	if keyPath == "" {
 		return "", ErrOIDCUnavailable
 	}
-	pipelineID := strings.TrimSpace(getenv(PipelineIDEnvVar))
+	pipelineID := strings.TrimSpace(s.PipelineID)
 	if pipelineID == "" {
 		return "", fmt.Errorf("signing in with the key in %s needs %s set to the pipeline's ID", SigningKeyEnvVar, PipelineIDEnvVar)
 	}

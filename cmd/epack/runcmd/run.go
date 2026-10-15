@@ -26,7 +26,7 @@ import (
 	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/runflow"
 	"github.com/locktivity/epack/internal/secrets"
-	"github.com/locktivity/epack/internal/trustedpublishers"
+	"github.com/locktivity/epack/internal/version"
 	"github.com/locktivity/epack/sign"
 	"github.com/spf13/cobra"
 )
@@ -43,6 +43,9 @@ var (
 	runCheck                 bool
 	runInsecureAllowUnpinned bool
 )
+
+// runWorkflow runs the stages; tests stand in for what reaches the network.
+var runWorkflow = runflow.Run
 
 // NewCommand returns the run command (epack run).
 func NewCommand() *cobra.Command {
@@ -108,18 +111,23 @@ func runRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	workDir, err := locateProject(ctx, out, ui, args)
+	purpose := remote.ConfigPurposeRun
+	if runCheck || checkRequestedByEnv() {
+		purpose = remote.ConfigPurposeCheck
+	}
+	located, err := locateProject(ctx, out, ui, args, purpose)
 	if err != nil {
 		return err
 	}
+	workDir := located.dir
 
 	pushRemote := runRemote
 	if len(args) > 0 {
 		pushRemote = ""
 	}
 
-	if runCheck || checkRequestedByEnv() {
-		return runCheckOnly(ctx, out, ui, workDir, pushRemote)
+	if purpose == remote.ConfigPurposeCheck {
+		return runCheckOnly(ctx, out, ui, workDir, pushRemote, located.requirements)
 	}
 
 	signing, err := resolveRunKey(ctx, out, ui, workDir, pushRemote)
@@ -128,31 +136,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return cmdutil.HandleError(err)
 	}
 
+	opts := runnerOptions(out, ui, workDir)
+	opts.Remote = pushRemote
+	opts.PackPath = packPath(located.home)
+	opts.Sign = signOptions(signing.keyPath)
+	opts.Unsigned = signing.unsigned
+	opts.OnStage = ui.onStage
+	opts.OnNote = ui.onNote
+	opts.OnCollectorEvent = ui.onCollectorEvent
+	opts.OnUploadProgress = ui.onProgress
 	startedAt := time.Now()
-	result, err := runflow.Run(ctx, runflow.Options{
-		WorkDir:         workDir,
-		Remote:          pushRemote,
-		PackPath:        packPath(workDir),
-		AllowUnpinned:   runInsecureAllowUnpinned,
-		NonInteractive:  runYes,
-		SkipSecretStore: out.IsCI(),
-		TrustPublishers: runTrustPublishers,
-		PromptTrustPublisher: func(req trustedpublishers.Requirement) bool {
-			return ui.promptTrustPublisher(req, !runYes)
-		},
-		Sign:             signOptions(signing.keyPath),
-		Unsigned:         signing.unsigned,
-		Stdout:           os.Stdout,
-		Stderr:           os.Stderr,
-		OnStage:          ui.onStage,
-		OnStep:           ui.onStep,
-		OnNote:           ui.onNote,
-		OnCollectorEvent: ui.onCollectorEvent,
-		OnUploadProgress: ui.onProgress,
-		PromptInstallAdapter: func(remoteName, adapterName string) bool {
-			return ui.promptInstallAdapter(remoteName, adapterName, !runYes)
-		},
-	})
+	result, err := runWorkflow(ctx, opts)
 	if err != nil {
 		ui.fail()
 		printCollectors(out, result)
@@ -165,6 +159,24 @@ func runRun(cmd *cobra.Command, args []string) error {
 	return printRunResult(out, result, time.Since(startedAt))
 }
 
+// runnerOptions is what a run, a check, and a look at what a revision
+// lacks share: where it runs, what it trusts, and who answers its prompts.
+func runnerOptions(out *output.Writer, ui *stageUI, dir string) runflow.Options {
+	return runflow.Options{
+		WorkDir:              dir,
+		AllowUnpinned:        runInsecureAllowUnpinned,
+		NonInteractive:       runYes,
+		Version:              version.Version,
+		SkipSecretStore:      out.IsCI(),
+		TrustPublishers:      runTrustPublishers,
+		PromptTrustPublisher: ui.promptTrustPublisher,
+		PromptInstallAdapter: ui.promptInstallAdapter,
+		Stdout:               os.Stdout,
+		Stderr:               os.Stderr,
+		OnStep:               ui.onStep,
+	}
+}
+
 // A GitLab pipeline run by hand can set EPACK_CHECK=1 in the run form, so
 // the committed job checks itself without a script change.
 func checkRequestedByEnv() bool {
@@ -172,26 +184,12 @@ func checkRequestedByEnv() bool {
 	return value == "1" || strings.EqualFold(value, "true")
 }
 
-func runCheckOnly(ctx context.Context, out *output.Writer, ui *stageUI, workDir, pushRemote string) error {
+func runCheckOnly(ctx context.Context, out *output.Writer, ui *stageUI, workDir, pushRemote string, requirements *remote.ConfigRequirements) error {
 	keyPath, remoteName := localRunKey(workDir, pushRemote)
-	opts := runflow.Options{
-		WorkDir:         workDir,
-		Remote:          pushRemote,
-		AllowUnpinned:   runInsecureAllowUnpinned,
-		NonInteractive:  runYes,
-		SkipSecretStore: out.IsCI(),
-		TrustPublishers: runTrustPublishers,
-		Sign:            signOptions(keyPath),
-		Stdout:          os.Stdout,
-		Stderr:          os.Stderr,
-		OnStep:          ui.onStep,
-		PromptInstallAdapter: func(remoteName, adapterName string) bool {
-			return ui.promptInstallAdapter(remoteName, adapterName, !runYes)
-		},
-		PromptTrustPublisher: func(req trustedpublishers.Requirement) bool {
-			return ui.promptTrustPublisher(req, !runYes)
-		},
-	}
+	opts := runnerOptions(out, ui, workDir)
+	opts.Remote = pushRemote
+	opts.Requirements = requirements
+	opts.Sign = signOptions(keyPath)
 	if remoteName != "" {
 		opts.RegisterKey = func(ctx context.Context, exec *remote.Executor, signer crypto.Signer, configRef string) (remote.SigningKey, bool, error) {
 			ui.stopSpinner()
@@ -336,38 +334,132 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-func locateProject(ctx context.Context, out *output.Writer, ui *stageUI, args []string) (string, error) {
+// located is where a run happens. A run that falls back to an earlier
+// revision happens in a folder of its own; home is still the folder the
+// person sees, where the pack lands when asked for by path.
+type located struct {
+	dir          string
+	home         string
+	requirements *remote.ConfigRequirements
+}
+
+func locateProject(ctx context.Context, out *output.Writer, ui *stageUI, args []string, purpose remote.ConfigPurpose) (located, error) {
 	if len(args) == 0 {
 		root, err := project.FindRoot("")
 		if err != nil {
-			return "", &epackerrors.Error{
+			return located{}, &epackerrors.Error{
 				Code:    epackerrors.InvalidInput,
 				Exit:    exitcode.General,
 				Message: "not in an epack project",
 				Hint:    "Run 'epack run <name>' to fetch a configuration, or cd into a project",
 			}
 		}
-		return root, nil
+		return located{dir: root, home: root}, nil
 	}
 
 	target, err := remotecmd.ResolveConfigTarget(args[0], runRemote)
 	if err != nil {
-		return "", err
+		return located{}, err
 	}
-	clone, err := remotecmd.CloneConfig(ctx, target, remotecmd.CloneOptions{
-		Force:         runForce,
-		AllowUnpinned: runInsecureAllowUnpinned,
-		Step:          ui.onStep,
-		PromptInstall: func(remoteName, adapterName string) bool {
-			return ui.promptInstallAdapter(remoteName, adapterName, !runYes)
-		},
+	fetch, err := remotecmd.FetchConfig(ctx, target, remotecmd.FetchOptions{
+		Purpose:         purpose,
+		Force:           runForce,
+		AllowUnpinned:   runInsecureAllowUnpinned,
+		Step:            ui.onStep,
+		Install:         installPolicy(ui),
+		TrustPublishers: runTrustPublishers,
 	})
 	if err != nil {
 		ui.fail()
-		return "", err
+		return located{}, err
 	}
-	ui.fetched(clone)
-	return clone.Dir, nil
+	defer fetch.Close()
+	ui.fetched(fetch.CloneResult)
+	if purpose == remote.ConfigPurposeCheck {
+		return located{dir: fetch.Dir, home: fetch.Dir, requirements: fetch.Config.Requirements}, nil
+	}
+	return runnableRevision(ctx, out, ui, fetch)
+}
+
+// installPolicy asks a person at the terminal before the pinned adapter
+// installs. With nobody there, it installs when its publisher is trusted.
+func installPolicy(ui *stageUI) remotecmd.InstallPolicy {
+	if ui.attended() {
+		return remotecmd.AskToInstall(ui.promptInstallAdapter)
+	}
+	return remotecmd.InstallTrustedPin
+}
+
+// runnableRevision is the folder a run uses: the fetched revision when this
+// runner has everything it needs, else the newest earlier revision the
+// remote finds that runs here, fetched into a folder of its own. With no
+// earlier revision that runs here, the run stops and reports what is
+// missing.
+func runnableRevision(ctx context.Context, out *output.Writer, ui *stageUI, fetch *remotecmd.Fetch) (located, error) {
+	runnable, err := fetch.Runnable(ctx, lacks(out, ui), lacksQuietly(out, ui))
+	if err != nil {
+		return located{}, cmdutil.HandleError(err)
+	}
+	if len(runnable.Missing) == 0 {
+		return located{dir: runnable.Dir, home: fetch.Dir}, nil
+	}
+	ui.missing(fetch.Config, runnable.Missing)
+	if runnable.Dir != "" {
+		ui.fallingBack(fetch.Config, runnable.Config)
+		return located{dir: runnable.Dir, home: fetch.Dir}, nil
+	}
+	ui.noFallback(runnable.NoFallback)
+	reported := reportMissing(ctx, out, fetch, runnable.Missing, runnable.Lacking)
+	return located{}, missingError(fetch.Config, runnable.Missing, reported)
+}
+
+// lacks checks a revision the way the run would, offering a new publisher
+// to a person at the terminal.
+func lacks(out *output.Writer, ui *stageUI) remotecmd.Lacks {
+	return func(dir string, requirements *remote.ConfigRequirements) ([]runflow.MissingRequirement, error) {
+		opts := runnerOptions(out, ui, dir)
+		opts.Requirements = requirements
+		return runflow.MissingRequirements(opts)
+	}
+}
+
+// lacksQuietly checks a revision without offering anything, so nothing is
+// trusted on behalf of a revision the person did not fetch.
+func lacksQuietly(out *output.Writer, ui *stageUI) remotecmd.Lacks {
+	return func(dir string, requirements *remote.ConfigRequirements) ([]runflow.MissingRequirement, error) {
+		opts := runnerOptions(out, ui, dir)
+		opts.Requirements = requirements
+		opts.NonInteractive = true
+		return runflow.MissingRequirements(opts)
+	}
+}
+
+// reportMissing tells the remote, through the sign-in the fetch used, that
+// the run stopped before installing anything, with everything it lacked on
+// the way back. It is best effort.
+func reportMissing(ctx context.Context, out *output.Writer, fetch *remotecmd.Fetch, missing, lacking []runflow.MissingRequirement) bool {
+	provenance, err := runflow.RequirementsReport(fetch.Dir, fetch.PipelineID(), fetch.Config.Revision, missing, lacking)
+	if err == nil {
+		err = fetch.Report(ctx, provenance)
+	}
+	if err != nil {
+		out.Error("Warning: could not report what is missing: %v\n", err)
+		return false
+	}
+	return true
+}
+
+func missingError(cfg remote.ConfigPullResult, missing []runflow.MissingRequirement, reported bool) error {
+	names := make([]string, 0, len(missing))
+	for _, m := range missing {
+		names = append(names, m.Name)
+	}
+	message := fmt.Sprintf("revision %d needs %s, and no earlier revision runs here without it", cfg.Revision, strings.Join(names, ", "))
+	hint := "Add what is listed above, then run again"
+	if reported {
+		hint += "; the pipeline page shows the same list"
+	}
+	return &epackerrors.Error{Code: epackerrors.InvalidInput, Exit: exitcode.General, Message: message, Hint: hint}
 }
 
 func packPath(workDir string) string {

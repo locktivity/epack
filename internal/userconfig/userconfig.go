@@ -35,6 +35,7 @@ import (
 	"github.com/locktivity/epack/internal/safefile/tx"
 	"github.com/locktivity/epack/internal/safeyaml"
 	"github.com/locktivity/epack/internal/timestamp"
+	"github.com/locktivity/epack/internal/trustedpublishers"
 	"github.com/locktivity/epack/internal/yamlutil"
 )
 
@@ -475,6 +476,19 @@ func normalizePublisher(name string) (string, error) {
 		return "", fmt.Errorf("invalid publisher name %q: expected a GitHub owner such as locktivity", name)
 	}
 	return normalized, nil
+}
+
+// TrustedPublisherSet is every publisher a run trusts: the ones recorded
+// for this machine, extra, and the ones EPACK_TRUSTED_PUBLISHERS names.
+func TrustedPublisherSet(extra ...string) (trustedpublishers.Set, error) {
+	recorded, err := TrustedPublishers()
+	if err != nil {
+		return nil, fmt.Errorf("reading trusted publishers: %w", err)
+	}
+	trusted := trustedpublishers.NewSet(recorded...)
+	trusted.Add(extra...)
+	trusted.AddFromEnv(os.Getenv)
+	return trusted, nil
 }
 
 // TrustedPublishers returns the publishers recorded for fetched configurations.

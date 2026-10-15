@@ -69,9 +69,10 @@ func TestSigningKeyTokenSource(t *testing.T) {
 			}
 			issuedAt := time.Unix(1_791_000_000, 0)
 			source := SigningKeyTokenSource{
-				Getenv: envOf(map[string]string{SigningKeyEnvVar: writeSigningKey(t, key), PipelineIDEnvVar: " pipe_1 "}),
-				Now:    func() time.Time { return issuedAt },
-				Rand:   bytes.NewReader(bytes.Repeat([]byte{0xab}, 16)),
+				Getenv:     envOf(map[string]string{SigningKeyEnvVar: writeSigningKey(t, key)}),
+				PipelineID: " pipe_1 ",
+				Now:        func() time.Time { return issuedAt },
+				Rand:       bytes.NewReader(bytes.Repeat([]byte{0xab}, 16)),
 			}
 
 			token, err := source.Token(context.Background(), "https://api.locktivity.com")
@@ -115,7 +116,7 @@ func TestSigningKeyTokenSource(t *testing.T) {
 func TestSigningKeyTokenSourceWithoutAKeyIsUnavailable(t *testing.T) {
 	t.Parallel()
 
-	source := SigningKeyTokenSource{Getenv: envOf(map[string]string{PipelineIDEnvVar: "pipe_1"})}
+	source := SigningKeyTokenSource{Getenv: envOf(nil), PipelineID: "pipe_1"}
 	if _, err := source.Token(context.Background(), "aud"); !errors.Is(err, ErrOIDCUnavailable) {
 		t.Fatalf("Token() = %v, want ErrOIDCUnavailable", err)
 	}
@@ -157,7 +158,7 @@ func TestSigningKeyTokenSourceRefusesKeysItCannotSignInWith(t *testing.T) {
 		"missing file": filepath.Join(t.TempDir(), "missing.pem"),
 	}
 	for name, path := range cases {
-		source := SigningKeyTokenSource{Getenv: envOf(map[string]string{SigningKeyEnvVar: path, PipelineIDEnvVar: "pipe_1"})}
+		source := SigningKeyTokenSource{Getenv: envOf(map[string]string{SigningKeyEnvVar: path}), PipelineID: "pipe_1"}
 		_, err := source.Token(context.Background(), "aud")
 		if err == nil || !strings.Contains(err.Error(), SigningKeyEnvVar) || errors.Is(err, ErrOIDCUnavailable) {
 			t.Errorf("%s: Token() = %v, want an error naming %s", name, err, SigningKeyEnvVar)

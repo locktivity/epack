@@ -9,6 +9,7 @@ import (
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/runflow"
+	"github.com/locktivity/epack/internal/trustedpublishers"
 )
 
 func TestStageUI_ClosesAFailedStageBeforeTheNextOnePrints(t *testing.T) {
@@ -28,5 +29,20 @@ func TestStageUI_ClosesAFailedStageBeforeTheNextOnePrints(t *testing.T) {
 	}
 	if strings.Contains(got, "post-collect hook failed") {
 		t.Errorf("the hook did not fail:\n%s", got)
+	}
+}
+
+func TestStageUI_NobodyAnswersPromptsWithJSONOutput(t *testing.T) {
+	out := output.New(&bytes.Buffer{}, &bytes.Buffer{}, output.Options{JSON: true})
+	ui := newStageUI(out)
+
+	if ui.attended() {
+		t.Fatal("JSON output has nobody to answer a prompt")
+	}
+	if !installPolicy(ui)("locktivity", "locktivity", "locktivity", trustedpublishers.NewSet("locktivity")) {
+		t.Error("with nobody to ask, the pinned adapter from a trusted publisher installs")
+	}
+	if installPolicy(ui)("locktivity", "locktivity", "someone", trustedpublishers.NewSet("locktivity")) {
+		t.Error("an adapter from an untrusted publisher never installs unasked")
 	}
 }

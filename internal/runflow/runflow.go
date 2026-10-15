@@ -78,6 +78,12 @@ type Options struct {
 	AllowUnpinned bool
 	// NonInteractive disables prompts.
 	NonInteractive bool
+	// Version is the running epack release, which a fetched revision may
+	// need to be at least. Empty, as in a local build, is never too old.
+	Version string
+	// Requirements is what the remote said the fetched revision needs, when
+	// it said.
+	Requirements *remote.ConfigRequirements
 	// TrustPublishers are publishers trusted for this run only, from
 	// --trust-publisher; EPACK_TRUSTED_PUBLISHERS adds more.
 	TrustPublishers []string
@@ -251,13 +257,10 @@ func checkPublishers(cfg *config.JobConfig, state *remoteconfig.State, opts Opti
 	if err != nil {
 		return fmt.Errorf("checking publishers: %w", err)
 	}
-	recorded, err := userconfig.TrustedPublishers()
+	trusted, err := userconfig.TrustedPublisherSet(opts.TrustPublishers...)
 	if err != nil {
-		return fmt.Errorf("reading trusted publishers: %w", err)
+		return err
 	}
-	trusted := trustedpublishers.NewSet(recorded...)
-	trusted.Add(opts.TrustPublishers...)
-	trusted.AddFromEnv(os.Getenv)
 	missing := trustedpublishers.Missing(required, trusted)
 	if len(missing) == 0 {
 		return nil
@@ -614,7 +617,8 @@ func reportFailure(ctx context.Context, cfg *config.JobConfig, opts Options, rem
 		return false
 	}
 	exec, caps, err := remote.PrepareAdapterExecutor(ctx, opts.WorkDir, remoteName, cfg, remoteCfg, remote.AdapterExecutorOptions{
-		Stderr: opts.Stderr,
+		PromptInstall: opts.PromptInstallAdapter,
+		Stderr:        opts.Stderr,
 		Verification: remote.VerificationOptions{
 			Unsafe: remote.VerificationUnsafeOverrides{AllowUnverifiedSource: opts.AllowUnpinned},
 		},

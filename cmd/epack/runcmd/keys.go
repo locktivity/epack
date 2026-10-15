@@ -88,11 +88,9 @@ func resolveRunKey(ctx context.Context, out *output.Writer, ui *stageUI, workDir
 		return withKey, nil
 	}
 	exec, caps, err := remote.PrepareAdapterExecutor(ctx, workDir, remoteName, cfg, remoteCfg, remote.AdapterExecutorOptions{
-		PromptInstall: func(remoteName, adapterName string) bool {
-			return ui.promptInstallAdapter(remoteName, adapterName, !runYes)
-		},
-		Step:   ui.onStep,
-		Stderr: os.Stderr,
+		PromptInstall: ui.promptInstallAdapter,
+		Step:          ui.onStep,
+		Stderr:        os.Stderr,
 		Verification: remote.VerificationOptions{
 			Unsafe: remote.VerificationUnsafeOverrides{AllowUnverifiedSource: runInsecureAllowUnpinned},
 		},

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,7 +22,11 @@ const (
 	// DefaultAPIBase is the fixed Locktivity broker base for managed credential resolution.
 	DefaultAPIBase = "https://api.locktivity.com"
 	resolvePath    = "/oidc/v1/credential_sets/resolve"
+	sessionPath    = "/oidc/v1/pipelines/%s/session"
 )
+
+// pipelineIDPattern keeps a pipeline ID to one path segment.
+var pipelineIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 var (
 	// ErrOIDCUnavailable indicates the runtime cannot present an identity to the broker.
@@ -119,6 +124,36 @@ func (c *Client) Resolve(ctx context.Context, req ResolveRequest, rt RuntimeCont
 	return client.doResolve(httpReq)
 }
 
+// Session exchanges the client's identity for the session of one pipeline:
+// the env a remote adapter signs in with when no folder names the credential
+// set that carries it. The broker takes a GitLab job's ID token only from
+// the project the pipeline binds, and a key assertion only for the pipeline
+// it names.
+func (c *Client) Session(ctx context.Context, pipelineID string) (ResolvedEnv, error) {
+	pipelineID = strings.TrimSpace(pipelineID)
+	if !pipelineIDPattern.MatchString(pipelineID) {
+		return ResolvedEnv{}, fmt.Errorf("%s must be the pipeline's ID, as shown on its page", PipelineIDEnvVar)
+	}
+	client, err := c.withDefaults()
+	if err != nil {
+		return ResolvedEnv{}, err
+	}
+	token, err := client.resolveToken(ctx)
+	if err != nil {
+		return ResolvedEnv{}, err
+	}
+	sessionURL, err := client.endpoint(fmt.Sprintf(sessionPath, pipelineID))
+	if err != nil {
+		return ResolvedEnv{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sessionURL, nil)
+	if err != nil {
+		return ResolvedEnv{}, fmt.Errorf("creating broker request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	return client.doResolve(httpReq)
+}
+
 func (c *Client) withDefaults() (*Client, error) {
 	if c == nil {
 		return nil, fmt.Errorf("credential broker client is nil")
@@ -199,11 +234,15 @@ func (c *Client) audience() string {
 }
 
 func (c *Client) resolveURL() (string, error) {
+	return c.endpoint(resolvePath)
+}
+
+func (c *Client) endpoint(route string) (string, error) {
 	u, err := url.Parse(c.audience())
 	if err != nil {
-		return DefaultAPIBase + resolvePath, nil
+		return DefaultAPIBase + route, nil
 	}
-	u.Path = path.Join(u.Path, strings.TrimPrefix(resolvePath, "/"))
+	u.Path = path.Join(u.Path, strings.TrimPrefix(route, "/"))
 	return u.String(), nil
 }
 

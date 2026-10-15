@@ -17,6 +17,7 @@ import (
 	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/redact"
 	"github.com/locktivity/epack/internal/safejson"
+	"github.com/locktivity/epack/internal/version"
 	"golang.org/x/time/rate"
 )
 
@@ -383,14 +384,14 @@ func (e *Executor) AuthComplete(ctx context.Context, session, code, state string
 }
 
 // ConfigPull fetches a named configuration from the remote.
-func (e *Executor) ConfigPull(ctx context.Context, remoteName string, target TargetConfig, name string) (*ConfigPullResponse, error) {
+func (e *Executor) ConfigPull(ctx context.Context, remoteName string, target TargetConfig, config ConfigPullTarget) (*ConfigPullResponse, error) {
 	req := &ConfigPullRequest{
 		Type:            TypeConfigPull,
 		ProtocolVersion: ProtocolVersion,
 		RequestID:       uuid.New().String(),
 		Remote:          remoteName,
 		Target:          target,
-		Config:          ConfigPullTarget{Name: name},
+		Config:          config,
 	}
 
 	var resp ConfigPullResponse
@@ -561,7 +562,7 @@ func prepareExecuteRequest(ctx context.Context, e *Executor, req any) (context.C
 func runAdapterCommand(ctx context.Context, e *Executor, command string, reqJSON []byte) (*bytes.Buffer, *bytes.Buffer, error) {
 	var stdout, stderr bytes.Buffer
 	env := execsafe.BuildRestrictedEnvSafe(os.Environ(), true)
-	env = append(env, "EPACK_REMOTE_PROTOCOL_VERSION=1")
+	env = append(env, "EPACK_REMOTE_PROTOCOL_VERSION=1", "EPACK_WRAPPER_VERSION="+version.Version)
 	if e.ProjectRoot != "" {
 		env = append(env, ProjectRootEnvVar+"="+e.ProjectRoot)
 	}

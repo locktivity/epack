@@ -230,7 +230,10 @@ func TestRemoteOnlyNames(t *testing.T) {
 	if !covered["LOCKTIVITY_TOKEN"] || covered["SHARED"] || covered["OKTA_PRIVATE_KEY"] {
 		t.Errorf("remote-only = %v", covered)
 	}
-	if coveredNames(cfg, "") != nil {
+	if !coveredNames(cfg, true)["LOCKTIVITY_TOKEN"] || coveredNames(cfg, true)["SHARED"] {
+		t.Error("a signed-in session should cover only the remote's own variables")
+	}
+	if coveredNames(cfg, false) != nil {
 		t.Error("nothing is covered without a sign-in")
 	}
 }

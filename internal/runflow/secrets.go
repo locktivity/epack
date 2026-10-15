@@ -31,8 +31,8 @@ func resolveSecrets(cfg *config.JobConfig, opts Options, remoteName string, cove
 // coveredNames are the variables only remotes read. With a signed-in
 // session they are the remote's fallback credential, which the run will not
 // need.
-func coveredNames(cfg *config.JobConfig, signedInAs string) map[string]bool {
-	if signedInAs == "" {
+func coveredNames(cfg *config.JobConfig, signedIn bool) map[string]bool {
+	if !signedIn {
 		return nil
 	}
 	return remoteOnlyNames(cfg)

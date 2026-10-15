@@ -31,7 +31,13 @@ func ValidateManagedCredentialBrokerOverride(stderr io.Writer, refs []string, po
 	if !UsesManagedCredentials(refs) {
 		return nil
 	}
+	return EnforceCustomCredentialBroker(stderr, "GitHub Actions OIDC tokens", policy)
+}
 
+// EnforceCustomCredentialBroker warns that what sent names goes to a custom
+// credential broker, refuses that in strict production builds, and records
+// it. Without an override it does nothing.
+func EnforceCustomCredentialBroker(stderr io.Writer, sent string, policy BrokerOverridePolicy) error {
 	customBrokerURL, customBrokerActive, err := broker.ResolveCustomCredentialBrokerURL(os.Getenv)
 	if err != nil {
 		return err
@@ -41,7 +47,7 @@ func ValidateManagedCredentialBrokerOverride(stderr io.Writer, refs []string, po
 	}
 
 	if stderr != nil {
-		_, _ = fmt.Fprintf(stderr, "WARNING: Running with custom credential broker %s. GitHub Actions OIDC tokens will be sent to this endpoint.\n", customBrokerURL)
+		_, _ = fmt.Fprintf(stderr, "WARNING: Running with custom credential broker %s. %s will be sent to this endpoint.\n", customBrokerURL, sent)
 	}
 
 	if err := securitypolicy.EnforceStrictProduction(policy.StrictProductionComponent, true); err != nil {

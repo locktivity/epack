@@ -9,6 +9,7 @@ import (
 	"github.com/locktivity/epack/cmd/epack/remotecmd"
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/collector"
+	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/runflow"
 	"github.com/locktivity/epack/internal/trustedpublishers"
 )
@@ -115,8 +116,14 @@ func (u *stageUI) onProgress(written, total int64) {
 	}
 }
 
-func (u *stageUI) promptInstallAdapter(remoteName, adapterName string, allowPrompt bool) bool {
-	if !allowPrompt || u.quiet() || !u.out.IsTTY() {
+// attended reports whether someone at the terminal can answer a prompt:
+// never with --yes, with quiet or JSON output, or off a terminal.
+func (u *stageUI) attended() bool {
+	return !runYes && !u.quiet() && u.out.IsTTY()
+}
+
+func (u *stageUI) promptInstallAdapter(remoteName, adapterName string) bool {
+	if !u.attended() {
 		return false
 	}
 	u.stopSpinner()
@@ -125,8 +132,8 @@ func (u *stageUI) promptInstallAdapter(remoteName, adapterName string, allowProm
 
 // promptTrustPublisher offers a publisher the fetched configuration needs.
 // Only a person at a terminal can say yes; a job gets the variable instead.
-func (u *stageUI) promptTrustPublisher(req trustedpublishers.Requirement, allowPrompt bool) bool {
-	if !allowPrompt || u.quiet() || !u.out.IsTTY() {
+func (u *stageUI) promptTrustPublisher(req trustedpublishers.Requirement) bool {
+	if !u.attended() {
 		return false
 	}
 	u.stopSpinner()
@@ -153,6 +160,66 @@ func (u *stageUI) fetched(clone *remotecmd.CloneResult) {
 		u.out.Print("%s\n", p.Success(fmt.Sprintf("Updated %s to revision %d in %s", title, clone.Config.Revision, clone.Dir)))
 	}
 	remotecmd.PrintFetched(u.out, clone)
+}
+
+// missing names what the fetched revision needs that this runner lacks,
+// with where the remote says each one is added, or the step epack knows.
+// It prints in CI as well, since the job log is where a CI owner looks.
+func (u *stageUI) missing(cfg remote.ConfigPullResult, missing []runflow.MissingRequirement) {
+	if u.quiet() {
+		return
+	}
+	u.stopSpinner()
+	u.out.Print("%s\n", u.out.Palette().Yellow(fmt.Sprintf("Revision %d needs what this runner does not have:", cfg.Revision)))
+	for _, m := range missing {
+		u.out.Print("  %s\n", describeMissing(cfg.Requirements, m))
+	}
+}
+
+func (u *stageUI) fallingBack(current, fallback remote.ConfigPullResult) {
+	if u.quiet() {
+		return
+	}
+	u.out.Print("Running revision %d, the newest earlier revision that runs here. The first run with everything above runs revision %d.\n", fallback.Revision, current.Revision)
+}
+
+// noFallback says why the remote found no earlier revision that runs here.
+func (u *stageUI) noFallback(none *remote.NoFallback) {
+	if u.quiet() || none == nil {
+		return
+	}
+	if reason := output.Printable(none.Reason); reason != "" {
+		u.out.Print("%s\n", reason)
+	}
+}
+
+func describeMissing(needs *remote.ConfigRequirements, m runflow.MissingRequirement) string {
+	line := m.Problem()
+	if hint := hintFor(needs, m); hint != nil {
+		line += ". " + output.Printable(hint.Text)
+		if url := output.Printable(hint.URL); url != "" {
+			line += ": " + url
+		}
+		return line
+	}
+	if m.Fix != "" {
+		return line + "; " + m.Fix
+	}
+	return line
+}
+
+// hintFor is where the remote says a variable is set. Its hints name
+// variables only.
+func hintFor(needs *remote.ConfigRequirements, m runflow.MissingRequirement) *remote.RequirementHint {
+	if needs == nil || m.Kind != remote.RequirementVariable {
+		return nil
+	}
+	for i := range needs.Hints {
+		if needs.Hints[i].Name == m.Name {
+			return &needs.Hints[i]
+		}
+	}
+	return nil
 }
 
 func (u *stageUI) onNote(note string) {

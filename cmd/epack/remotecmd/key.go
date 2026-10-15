@@ -253,9 +253,9 @@ func registerKey(ctx context.Context, ui *commandUI, target keyTarget, publicPEM
 	prepared, err := PrepareRemote(ctx, target.remoteName, PrepareOptions{
 		AllowUnpinned: keyInsecureAllowUnpinned,
 		Step:          ui.onStep,
-		PromptInstall: func(remoteName, adapterName string) bool {
+		Install: AskToInstall(func(remoteName, adapterName string) bool {
 			return ui.promptInstallAdapter(remoteName, adapterName, true)
-		},
+		}),
 		Stderr: os.Stderr,
 	})
 	if err != nil {
@@ -474,9 +474,9 @@ func listKeys(ctx context.Context, ui *commandUI, target keyTarget) ([]remote.Si
 	prepared, err := PrepareRemote(ctx, target.remoteName, PrepareOptions{
 		AllowUnpinned: keyInsecureAllowUnpinned,
 		Step:          ui.onStep,
-		PromptInstall: func(remoteName, adapterName string) bool {
+		Install: AskToInstall(func(remoteName, adapterName string) bool {
 			return ui.promptInstallAdapter(remoteName, adapterName, true)
-		},
+		}),
 		Stderr: os.Stderr,
 	})
 	if err != nil {

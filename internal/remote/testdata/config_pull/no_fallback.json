@@ -1,0 +1,6 @@
+{
+  "ok": true,
+  "type": "config.pull.result",
+  "request_id": "req_1",
+  "no_fallback": {"reason": "Every revision before 3 needs SENTRY_AUTH_TOKEN, or runs something a later revision removed."}
+}

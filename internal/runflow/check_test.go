@@ -17,7 +17,6 @@ import (
 
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/sync"
-	"github.com/locktivity/epack/internal/remoteconfig"
 	"github.com/locktivity/epack/internal/trustedpublishers"
 )
 
@@ -168,25 +167,28 @@ func TestCheckProvenanceOptions_ReportsTheOutcome(t *testing.T) {
 	}
 }
 
-func TestCoveredBySignIn_OnlyTheRemotesOwnVariablesAndOnlyWhenSignedIn(t *testing.T) {
-	cfg := &config.JobConfig{
-		Remotes:    map[string]config.RemoteConfig{"locktivity": {}},
-		Collectors: map[string]config.CollectorConfig{"okta": {}},
-	}
-	remoteOnly := remoteconfig.EnvVar{Name: "LOCKTIVITY_CLIENT_ID", UsedBy: []string{"locktivity"}}
-	shared := remoteconfig.EnvVar{Name: "SHARED_TOKEN", UsedBy: []string{"locktivity", "okta"}}
-	collectorOnly := remoteconfig.EnvVar{Name: "OKTA_PRIVATE_KEY", UsedBy: []string{"okta"}}
+func TestCheck_NamesTheEpackTheFetchedRevisionNeeds(t *testing.T) {
+	testhome.Isolate(t)
+	t.Setenv(trustedpublishers.EnvVar, "locktivity")
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	dir := writeCheckProject(t, "stream: northwind/production\ncollectors:\n  tls:\n    source: locktivity/epack-collector-tls@^0.1\n")
 
-	if !coveredBySignIn(cfg, "dana@example.com", remoteOnly) {
-		t.Error("a signed-in session should cover the remote's own fallback credential")
+	result, err := Check(context.Background(), Options{WorkDir: dir, NonInteractive: true, Version: "0.4.9", Requirements: &remote.ConfigRequirements{Epack: "v0.5.0"}})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
 	}
-	for name, env := range map[string]remoteconfig.EnvVar{"shared": shared, "collector": collectorOnly} {
-		if coveredBySignIn(cfg, "dana@example.com", env) {
-			t.Errorf("%s variable must still be counted", name)
-		}
+	joined := strings.Join(result.Findings, "\n")
+	if !strings.Contains(joined, "epack 0.5.0 or later is needed; upgrade epack to v0.5.0 or later") {
+		t.Errorf("the check should refuse what the run would:\n%s", joined)
 	}
-	if coveredBySignIn(cfg, "", remoteOnly) {
-		t.Error("nothing is covered without a sign-in")
+
+	current, err := Check(context.Background(), Options{WorkDir: dir, NonInteractive: true, Version: "0.5.0", Requirements: &remote.ConfigRequirements{Epack: "v0.5.0"}})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if strings.Contains(strings.Join(current.Findings, "\n"), "epack 0.5.0") {
+		t.Errorf("no epack finding on the release it needs: %v", current.Findings)
 	}
 }
 

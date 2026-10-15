@@ -331,9 +331,69 @@ type ConfigPullRequest struct {
 	Config          ConfigPullTarget `json:"config"`
 }
 
-// ConfigPullTarget names the configuration to pull.
+// ConfigPurpose says why a configuration is fetched. A remote counts a run
+// or a check as the runner's contact; a clone sets up a folder and is never
+// a run.
+type ConfigPurpose string
+
+const (
+	ConfigPurposeRun   ConfigPurpose = "run"
+	ConfigPurposeCheck ConfigPurpose = "check"
+	ConfigPurposeClone ConfigPurpose = "clone"
+)
+
+// SignsInForPipeline reports whether a fetch for this purpose comes from a
+// runner, which signs in for its pipeline when no folder names the remote.
+// Anything but a run or a check is a setup clone and signs in as a person.
+func (p ConfigPurpose) SignsInForPipeline() bool {
+	return p == ConfigPurposeRun || p == ConfigPurposeCheck
+}
+
+// ConfigPullTarget names the configuration to pull and why. Fallback asks
+// for the newest earlier revision that runs without what the runner lacks.
 type ConfigPullTarget struct {
+	Name     string          `json:"name"`
+	Purpose  ConfigPurpose   `json:"purpose,omitempty"`
+	Fallback *ConfigFallback `json:"fallback,omitempty"`
+}
+
+// ConfigFallback says which revision the runner could not run and what it
+// lacks for it, by name and never by value.
+type ConfigFallback struct {
+	Revision int           `json:"revision"`
+	Missing  []Requirement `json:"missing"`
+}
+
+// What a revision can need that a runner lacks.
+const (
+	RequirementVariable       = "variable"
+	RequirementSecretApproval = "secret_approval"
+	RequirementPublisher      = "publisher"
+	RequirementEpack          = "epack"
+)
+
+// Requirement is one thing a revision needs: a variable or keychain secret
+// by name, an approval for a stored secret, a publisher to trust, or the
+// epack release it needs.
+type Requirement struct {
+	Kind string `json:"kind"`
 	Name string `json:"name"`
+}
+
+// ConfigRequirements is what the remote knows about a revision beyond its
+// files: the oldest epack that runs it, and where this runner adds each
+// thing the revision reads.
+type ConfigRequirements struct {
+	Epack string            `json:"epack,omitempty"`
+	Hints []RequirementHint `json:"hints,omitempty"`
+}
+
+// RequirementHint says where a runner adds a variable, as a sentence and an
+// address when the remote has one.
+type RequirementHint struct {
+	Name string `json:"name"`
+	Text string `json:"text"`
+	URL  string `json:"url,omitempty"`
 }
 
 // PullPrepareRequest is sent to initiate a pull operation.
@@ -458,23 +518,38 @@ type ConfigPullResponse struct {
 	Type      string           `json:"type"` // "config.pull.result"
 	RequestID string           `json:"request_id"`
 	Config    ConfigPullResult `json:"config"`
+	// NoFallback answers a fallback that no earlier revision can satisfy,
+	// in place of Config.
+	NoFallback *NoFallback `json:"no_fallback,omitempty"`
+}
+
+// NoFallback is the remote's answer when no earlier revision runs without
+// what the runner lacks: each one needs some of it, or runs something a
+// later revision removed.
+type NoFallback struct {
+	Reason string `json:"reason"`
 }
 
 // ConfigPullResult is one revision of a named configuration. Files are keyed
 // by path relative to the project folder and shas are SHA-256 hex digests of
 // the managed files. Folder is where the same files live in a repository the
-// remote also generates for, when it does.
+// remote also generates for, when it does. Changes says in words what
+// changed since ChangesSince, the revision this runner last ran, when that
+// one is older.
 type ConfigPullResult struct {
-	ID       string            `json:"id,omitempty"`
-	Name     string            `json:"name"`
-	Title    string            `json:"title,omitempty"`
-	Stream   string            `json:"stream,omitempty"`
-	RunsIn   string            `json:"runs_in,omitempty"`
-	Revision int               `json:"revision"`
-	Folder   string            `json:"folder,omitempty"`
-	Files    map[string]string `json:"files"`
-	Shas     map[string]string `json:"shas,omitempty"`
-	Lockfile string            `json:"lockfile,omitempty"`
+	ID           string              `json:"id,omitempty"`
+	Name         string              `json:"name"`
+	Title        string              `json:"title,omitempty"`
+	Stream       string              `json:"stream,omitempty"`
+	RunsIn       string              `json:"runs_in,omitempty"`
+	Revision     int                 `json:"revision"`
+	Folder       string              `json:"folder,omitempty"`
+	Files        map[string]string   `json:"files"`
+	Shas         map[string]string   `json:"shas,omitempty"`
+	Lockfile     string              `json:"lockfile,omitempty"`
+	Requirements *ConfigRequirements `json:"requirements,omitempty"`
+	Changes      []string            `json:"changes,omitempty"`
+	ChangesSince int                 `json:"changes_since,omitempty"`
 }
 
 // ErrorResponse is returned when an operation fails.

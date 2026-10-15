@@ -15,6 +15,7 @@ import (
 	"github.com/locktivity/epack/internal/component/sync"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/platform"
+	"github.com/locktivity/epack/internal/remote"
 	"github.com/locktivity/epack/internal/userconfig"
 )
 
@@ -32,6 +33,11 @@ esac
 
 func installFakeAdapter(t *testing.T, dir string) {
 	t.Helper()
+	installAdapterScript(t, dir, fakeAdapter)
+}
+
+func installAdapterScript(t *testing.T, dir, script string) {
+	t.Helper()
 	installPath, err := sync.InstallPath(dir, componenttypes.KindRemote, "mock", "v1.0.0", "mock")
 	if err != nil {
 		t.Fatalf("install path: %v", err)
@@ -39,10 +45,10 @@ func installFakeAdapter(t *testing.T, dir string) {
 	if err := os.MkdirAll(filepath.Dir(installPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(installPath, []byte(fakeAdapter), 0o755); err != nil {
+	if err := os.WriteFile(installPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("writing adapter: %v", err)
 	}
-	sum := sha256.Sum256([]byte(fakeAdapter))
+	sum := sha256.Sum256([]byte(script))
 	lf := lockfile.New()
 	lf.Remotes["mock"] = lockfile.LockedRemote{
 		Source:  "github.com/owner/epack-remote-mock",
@@ -88,10 +94,11 @@ func TestPrepare_UsesInstalledAdapterWithoutLookup(t *testing.T) {
 	var steps []string
 	resolver.Step = func(message string, started bool) { steps = append(steps, message) }
 
-	exec, caps, err := resolver.Prepare(context.Background(), "mock")
+	prepared, err := resolver.Prepare(context.Background(), "mock")
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
+	exec, caps := prepared.Exec, prepared.Caps
 	defer exec.Close()
 
 	if lookupCalled {
@@ -108,6 +115,26 @@ func TestPrepare_UsesInstalledAdapterWithoutLookup(t *testing.T) {
 	}
 }
 
+func TestPrepare_NamesTheLockedSourceAndHandsTheAdapterItsEndpoints(t *testing.T) {
+	dir := tempDir(t)
+	installFakeAdapter(t, dir)
+	resolver := newTestResolver(dir, nil)
+	resolver.ExplicitEnv = map[string]string{remote.RemoteEndpointEnvVar: "https://dev.example.test"}
+
+	prepared, err := resolver.Prepare(context.Background(), "mock")
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	defer prepared.Exec.Close()
+
+	if prepared.Source != "owner/epack-remote-mock@v1.0.0" {
+		t.Errorf("Source = %q, want the locked source", prepared.Source)
+	}
+	if prepared.Exec.ExplicitEnv[remote.RemoteEndpointEnvVar] != "https://dev.example.test" {
+		t.Errorf("ExplicitEnv = %v, want the operator's endpoint", prepared.Exec.ExplicitEnv)
+	}
+}
+
 func TestPrepare_LooksUpSourceWhenNotLocked(t *testing.T) {
 	dir := tempDir(t)
 	var asked string
@@ -116,7 +143,7 @@ func TestPrepare_LooksUpSourceWhenNotLocked(t *testing.T) {
 		return "", errors.New("no catalog in this test")
 	})
 
-	_, _, err := resolver.Prepare(context.Background(), "locktivity")
+	_, err := resolver.Prepare(context.Background(), "locktivity")
 	if err == nil {
 		t.Fatal("expected the lookup error")
 	}
@@ -128,9 +155,114 @@ func TestPrepare_LooksUpSourceWhenNotLocked(t *testing.T) {
 	}
 }
 
+func TestPrepare_AdmitRefusesALockedAdapterBeforeItRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script adapters are not available on Windows")
+	}
+	dir := tempDir(t)
+	marker := filepath.Join(dir, "ran")
+	installAdapterScript(t, dir, "#!/bin/sh\ntouch "+marker+"\n"+strings.TrimPrefix(fakeAdapter, "#!/bin/sh\n"))
+	refused := errors.New("not a trusted publisher")
+	var asked string
+	resolver := newTestResolver(dir, nil)
+	resolver.Admit = func(source string) error {
+		asked = source
+		return refused
+	}
+
+	prepared, err := resolver.Prepare(context.Background(), "mock")
+	if !errors.Is(err, refused) || prepared != nil {
+		t.Fatalf("Prepare = %v, %v; want the refusal", prepared, err)
+	}
+	if asked != "owner/epack-remote-mock@v1.0.0" {
+		t.Errorf("Admit was asked about %q, want the locked source", asked)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Error("the adapter ran although Admit refused it")
+	}
+}
+
+func TestPrepare_AdmitRefusesTheCatalogSourceBeforeLocking(t *testing.T) {
+	refused := errors.New("not a trusted publisher")
+	var asked string
+	resolver := newTestResolver(tempDir(t), func(context.Context, string) (string, error) {
+		return "someone/epack-remote-locktivity@v0.3.0", nil
+	})
+	resolver.Admit = func(source string) error {
+		asked = source
+		return refused
+	}
+
+	if _, err := resolver.Prepare(context.Background(), "locktivity"); !errors.Is(err, refused) {
+		t.Fatalf("Prepare error = %v, want the refusal", err)
+	}
+	if asked != "someone/epack-remote-locktivity@v0.3.0" {
+		t.Errorf("Admit was asked about %q, want the catalog's source", asked)
+	}
+}
+
+// refusingRegistry records the source it was asked to lock and refuses it.
+type refusingRegistry struct{ asked []string }
+
+func (r *refusingRegistry) Name() string { return "github" }
+
+func (r *refusingRegistry) ResolveVersion(_ context.Context, source, _ string) (string, error) {
+	r.asked = append(r.asked, source)
+	return "", errors.New("no releases in this test")
+}
+
+func (r *refusingRegistry) FetchRelease(context.Context, string, string) (*sync.ReleaseInfo, error) {
+	return nil, errors.New("no releases in this test")
+}
+
+func (r *refusingRegistry) DownloadAsset(context.Context, string, string) error {
+	return errors.New("no releases in this test")
+}
+
+func (r *refusingRegistry) FindBinaryAsset(*sync.ReleaseInfo, string, string, string) (*sync.AssetInfo, error) {
+	return nil, errors.New("no releases in this test")
+}
+
+func (r *refusingRegistry) FindSigstoreBundle(*sync.ReleaseInfo, string) (*sync.AssetInfo, error) {
+	return nil, errors.New("no releases in this test")
+}
+
+func TestPrepare_LocksTheSourceAdmitApproved(t *testing.T) {
+	lookups := 0
+	resolver := newTestResolver(tempDir(t), func(context.Context, string) (string, error) {
+		lookups++
+		if lookups > 1 {
+			return "someone/epack-remote-locktivity@v9.9.9", nil
+		}
+		return "locktivity/epack-remote-locktivity@v0.3.0", nil
+	})
+	registry := &refusingRegistry{}
+	resolver.Registry = registry
+	var admitted string
+	resolver.Admit = func(source string) error {
+		admitted = source
+		return nil
+	}
+
+	if _, err := resolver.Prepare(context.Background(), "locktivity"); err == nil {
+		t.Fatal("expected the refusing registry to stop the lock")
+	}
+	if lookups != 1 {
+		t.Errorf("the catalog was asked %d times, want once", lookups)
+	}
+	if admitted != "locktivity/epack-remote-locktivity@v0.3.0" {
+		t.Errorf("Admit was asked about %q", admitted)
+	}
+	for _, source := range registry.asked {
+		if strings.Contains(source, "someone") {
+			t.Errorf("the lock asked for %q, a source Admit never saw", source)
+		}
+	}
+}
+
 func TestPrepare_RejectsInvalidName(t *testing.T) {
 	resolver := newTestResolver(tempDir(t), nil)
-	if _, _, err := resolver.Prepare(context.Background(), "../etc"); err == nil {
+	if _, err := resolver.Prepare(context.Background(), "../etc"); err == nil {
 		t.Fatal("expected an error for an invalid name")
 	}
 }
@@ -276,6 +408,7 @@ func TestNewerRelease(t *testing.T) {
 		{"v0.1.4", "v0.1.5", false},
 		{"v0.1.5", "v0.1.5-rc.1", true},
 		{"v0.1.5-rc.2", "v0.1.5-rc.1", true},
+		{"v0.1.5-rc.10", "v0.1.5-rc.9", true},
 		{"v0.1.5-rc.1", "v0.1.5", false},
 		{"not-a-version", "v0.1.5", false},
 	}

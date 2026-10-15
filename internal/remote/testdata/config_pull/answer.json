@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "type": "config.pull.result",
+  "request_id": "req_1",
+  "config": {
+    "id": "0b9c7a52-6f2e-4d1a-9f3b-2c4d5e6f7a8b",
+    "name": "northwind-production",
+    "title": "Northwind production",
+    "stream": "northwind/production",
+    "runs_in": "GitLab CI",
+    "revision": 2,
+    "folder": "northwind/production",
+    "files": {"epack.yaml": "stream: northwind/production\n"},
+    "shas": {"epack.yaml": "3f1c2b0e"},
+    "lockfile": "schema_version: 1\n",
+    "requirements": {
+      "epack": "v0.5.0",
+      "hints": [
+        {"name": "SENTRY_AUTH_TOKEN", "text": "Add it as a masked CI/CD variable in northwind/compliance", "url": "https://gitlab.com/northwind/compliance/-/settings/ci_cd"}
+      ]
+    },
+    "changes": ["Collectors added: Sentry"],
+    "changes_since": 1
+  }
+}
