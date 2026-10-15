@@ -36,8 +36,10 @@ func TestPrepareOptions_AsksOrInstallsFromTheTrustedSetBuiltOnce(t *testing.T) {
 		return trustedpublishers.NewSet("someone"), nil
 	}
 	prompt := PrepareOptions{Install: InstallTrustedPin}.promptInstall("someone", gosync.OnceValues(trusted))
-	if !prompt("locktivity", "locktivity") || !prompt("locktivity", "locktivity") || builds != 1 {
-		t.Errorf("installs = %v, builds = %d, want an install from the one trusted set", prompt("locktivity", "locktivity"), builds)
+	first := prompt("locktivity", "locktivity")
+	second := prompt("locktivity", "locktivity")
+	if !first || !second || builds != 1 {
+		t.Errorf("installs = %v, %v, builds = %d, want both to install from the one trusted set", first, second, builds)
 	}
 	if (PrepareOptions{}).promptInstall("someone", trusted) != nil {
 		t.Error("without a policy nothing installs, as before")
