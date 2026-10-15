@@ -207,7 +207,11 @@ func FilterConfigComponents(cfg *config.JobConfig, names []string) (*config.JobC
 // - Missing lockfile entries (gap check)
 // - Missing platform entries
 // - Profile/overlay content drift (digest mismatch)
+// - Entries for components or files the config no longer lists
 func LockfileNeedsUpdate(cfg *config.JobConfig, lf *lockfile.LockFile, currentPlatform, workDir string) bool {
+	if len(sync.StaleLockEntries(cfg, lf)) > 0 {
+		return true
+	}
 	platforms := requiredPlatforms(cfg.Platforms, currentPlatform)
 	if hasCollectorLockfileGap(cfg, lf, platforms) {
 		return true

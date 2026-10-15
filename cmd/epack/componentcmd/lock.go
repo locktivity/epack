@@ -21,7 +21,8 @@ func newLockCommand() *cobra.Command {
 		Long: `Resolve collector and tool sources, verify signatures, and write lockfile.
 
 This command fetches releases from GitHub, verifies Sigstore signatures,
-and writes version + digest information to epack.lock.yaml.
+and writes version + digest information to epack.lock.yaml. Entries for
+components and files the config no longer lists are removed.
 
 The lockfile captures:
   - Resolved version (e.g., v1.2.3 from ^1.2)
@@ -75,6 +76,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 	opts := sync.LockOpts{
 		AllPlatforms: lockAllPlatforms,
 		Platforms:    platforms,
+		Prune:        true,
 	}
 
 	out.Print("Locking dependencies...\n")
@@ -92,13 +94,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, r := range results {
-		status := "locked"
-		if r.Updated {
-			status = "updated"
-		} else if r.IsNew {
-			status = "added"
-		}
-		out.Print("  %s %s%s\n", status, r.DisplayName(), r.PlatformSuffix())
+		out.Print("  %s\n", r.Summary())
 	}
 
 	out.Print("\nLockfile written to %s\n", lockfile.FileName)

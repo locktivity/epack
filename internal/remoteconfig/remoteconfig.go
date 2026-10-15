@@ -86,6 +86,17 @@ func (e *LocalChangesError) Error() string {
 // ErrNotCloned means the folder has files but no record of a pull.
 var ErrNotCloned = errors.New("folder already has files and no record of a pull (pass --force to write into it anyway)")
 
+// OtherConfigurationError means the folder's pull record is for a different
+// configuration than the one being written: another ID, or another remote.
+type OtherConfigurationError struct {
+	Dir  string
+	Name string
+}
+
+func (e *OtherConfigurationError) Error() string {
+	return fmt.Sprintf("%s was cloned from another configuration than the one %s names now (pass --force to replace it)", e.Dir, e.Name)
+}
+
 type entry struct {
 	path    string
 	data    []byte
@@ -108,6 +119,9 @@ func Write(cfg remote.ConfigPullResult, remoteName string, opts Options) (*Resul
 	prev, err := LoadState(dir)
 	if err != nil {
 		return nil, err
+	}
+	if !opts.Force && pulledElsewhere(prev, cfg, remoteName) {
+		return nil, &OtherConfigurationError{Dir: dir, Name: cfg.Name}
 	}
 	if prev == nil && !opts.Force {
 		occupied, err := hasFiles(dir)
@@ -312,6 +326,16 @@ func decide(dir string, entries []entry, prev *State, force bool) (toWrite []ent
 		return nil, nil, &LocalChangesError{Paths: changed}
 	}
 	return toWrite, kept, nil
+}
+
+// pulledElsewhere reports whether a folder's last pull came from another
+// configuration than cfg. Pulls compare by ID only when both carry one, so a
+// remote that sends no ID keeps refreshing the folder by name.
+func pulledElsewhere(prev *State, cfg remote.ConfigPullResult, remoteName string) bool {
+	if prev == nil || prev.ID == "" || cfg.ID == "" {
+		return false
+	}
+	return prev.ID != cfg.ID || prev.Remote != remoteName
 }
 
 func readLocal(path string) ([]byte, bool, error) {

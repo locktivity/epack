@@ -48,16 +48,21 @@ func NewLockerWithRegistry(registry RegistryClient, workDir string) *Locker {
 type LockOpts struct {
 	Platforms    []string // Platforms to lock (e.g., "linux/amd64"). Empty = current platform only.
 	AllPlatforms bool     // Lock all available platforms from release.
+	// Prune drops entries for components and files the config no longer
+	// lists. Only a caller passing the whole config may set it: a config
+	// filtered to a few components would drop every other entry.
+	Prune bool
 }
 
 // LockResult contains the result of a lock operation.
 type LockResult struct {
 	Name      string // Component name (collector, tool, or remote)
-	Kind      string // "collector", "tool", "remote", "profile", or "overlay"
+	Kind      string // "collector", "tool", "remote", "profile", "overlay", or "mapping"
 	Version   string
 	Platforms []string
 	IsNew     bool
 	Updated   bool
+	Removed   bool // Dropped because the config no longer lists it
 }
 
 // DisplayName returns the formatted component name for output.
@@ -75,6 +80,21 @@ func (r LockResult) PlatformSuffix() string {
 		return ""
 	}
 	return " (" + strings.Join(r.Platforms, ", ") + ")"
+}
+
+// Summary is the line lock output prints for the entry, such as
+// "updated github@v0.2.1 (linux/amd64)" or "removed okta@v0.2.0 (not in config)".
+func (r LockResult) Summary() string {
+	switch {
+	case r.Removed:
+		return "removed " + r.DisplayName() + " (not in config)"
+	case r.Updated:
+		return "updated " + r.DisplayName() + r.PlatformSuffix()
+	case r.IsNew:
+		return "added " + r.DisplayName() + r.PlatformSuffix()
+	default:
+		return "locked " + r.DisplayName() + r.PlatformSuffix()
+	}
 }
 
 // Lock resolves all source-based collectors and tools in config and updates lockfile.
@@ -106,6 +126,11 @@ func (l *Locker) Lock(ctx context.Context, cfg *config.JobConfig, opts LockOpts)
 		return nil, fmt.Errorf("locking profiles: %w", err)
 	}
 
+	var removed []LockResult
+	if opts.Prune {
+		removed = pruneStaleEntries(cfg, lf)
+	}
+
 	// Save lockfile
 	if err := lf.Save(l.LockfilePath); err != nil {
 		return nil, fmt.Errorf("saving lockfile: %w", err)
@@ -126,7 +151,64 @@ func (l *Locker) Lock(ctx context.Context, cfg *config.JobConfig, opts LockOpts)
 		})
 	}
 
-	return results, nil
+	return append(results, removed...), nil
+}
+
+// StaleLockEntries lists the lockfile entries for components and local files
+// the config no longer lists, in kind and then name order. A locked sync
+// refuses a lockfile that has any.
+func StaleLockEntries(cfg *config.JobConfig, lf *lockfile.LockFile) []LockResult {
+	var stale []LockResult
+	stale = appendStale(stale, "collector", lf.Collectors, keySet(mapKeys(cfg.Collectors)), func(e lockfile.LockedCollector) string { return e.Version })
+	stale = appendStale(stale, "tool", lf.Tools, keySet(mapKeys(cfg.Tools)), func(e lockfile.LockedTool) string { return e.Version })
+	stale = appendStale(stale, "remote", lf.Remotes, keySet(mapKeys(cfg.Remotes)), func(e lockfile.LockedRemote) string { return e.Version })
+	stale = appendStale(stale, profileKind.name, lf.Profiles, keySet(profileKind.configKeys(cfg)), func(e lockfile.LockedProfile) string { return e.Version })
+	stale = appendStale(stale, overlayKind.name, lf.Overlays, keySet(overlayKind.configKeys(cfg)), func(e lockfile.LockedOverlay) string { return e.Version })
+	stale = appendStale(stale, mappingKind.name, lf.Mappings, keySet(mappingKind.configKeys(cfg)), func(lockfile.LockedMapping) string { return "" })
+	return stale
+}
+
+func pruneStaleEntries(cfg *config.JobConfig, lf *lockfile.LockFile) []LockResult {
+	stale := StaleLockEntries(cfg, lf)
+	for _, entry := range stale {
+		switch entry.Kind {
+		case "collector":
+			delete(lf.Collectors, entry.Name)
+		case "tool":
+			delete(lf.Tools, entry.Name)
+		case "remote":
+			delete(lf.Remotes, entry.Name)
+		case profileKind.name:
+			delete(lf.Profiles, entry.Name)
+		case overlayKind.name:
+			delete(lf.Overlays, entry.Name)
+		case mappingKind.name:
+			delete(lf.Mappings, entry.Name)
+		}
+	}
+	return stale
+}
+
+func appendStale[V any](stale []LockResult, kind string, locked map[string]V, listed map[string]bool, version func(V) string) []LockResult {
+	names := make([]string, 0, len(locked))
+	for name := range locked {
+		if !listed[name] {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		stale = append(stale, LockResult{Name: name, Kind: kind, Version: version(locked[name]), Removed: true})
+	}
+	return stale
+}
+
+func keySet(keys []string) map[string]bool {
+	set := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		set[key] = true
+	}
+	return set
 }
 
 func (l *Locker) lockCollectors(ctx context.Context, collectors map[string]config.CollectorConfig, lf *lockfile.LockFile, opts LockOpts) ([]LockResult, error) {

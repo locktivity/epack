@@ -201,6 +201,67 @@ func TestWrite_RefusesLocalChangesUnlessForced(t *testing.T) {
 	}
 }
 
+func TestWrite_RefusesAFolderPulledFromAnotherConfiguration(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "northwind-production")
+	if _, err := Write(sampleConfig(1, "a\n"), "locktivity", Options{Dir: dir, FilesDir: ".locktivity"}); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+	other := sampleConfig(2, "b\n")
+	other.ID = "pipe_2"
+
+	_, err := Write(other, "locktivity", Options{Dir: dir, FilesDir: ".locktivity"})
+	var refused *OtherConfigurationError
+	if !errors.As(err, &refused) {
+		t.Fatalf("err = %v, want OtherConfigurationError", err)
+	}
+	if want := dir + " was cloned from another configuration than the one northwind-production names now (pass --force to replace it)"; err.Error() != want {
+		t.Errorf("message = %q, want %q", err, want)
+	}
+	if state, _ := LoadState(dir); state == nil || state.ID != "pipe_1" {
+		t.Errorf("refused write changed the pull record: %+v", state)
+	}
+	if got := readFile(t, filepath.Join(dir, "epack.yaml")); got != "a\n" {
+		t.Errorf("refused write changed the file: %q", got)
+	}
+
+	if _, err := Write(other, "locktivity", Options{Dir: dir, FilesDir: ".locktivity", Force: true}); err != nil {
+		t.Fatalf("forced Write: %v", err)
+	}
+	if state, _ := LoadState(dir); state == nil || state.ID != "pipe_2" {
+		t.Errorf("pull record after the forced write = %+v", state)
+	}
+}
+
+func TestWrite_RefusesAPullFromAnotherRemoteIntoAFolder(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "northwind-production")
+	if _, err := Write(sampleConfig(1, "a\n"), "locktivity", Options{Dir: dir, FilesDir: ".locktivity"}); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+
+	_, err := Write(sampleConfig(2, "b\n"), "staging", Options{Dir: dir, FilesDir: ".locktivity"})
+	var refused *OtherConfigurationError
+	if !errors.As(err, &refused) {
+		t.Fatalf("err = %v, want OtherConfigurationError", err)
+	}
+}
+
+func TestWrite_RefreshesByNameWhenEitherPullHasNoID(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "northwind-production")
+	first := sampleConfig(1, "a\n")
+	first.ID = ""
+	if _, err := Write(first, "locktivity", Options{Dir: dir, FilesDir: ".locktivity"}); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+	if _, err := Write(sampleConfig(2, "b\n"), "locktivity", Options{Dir: dir, FilesDir: ".locktivity"}); err != nil {
+		t.Fatalf("Write over a record without an ID: %v", err)
+	}
+	third := sampleConfig(3, "c\n")
+	third.ID = ""
+	if _, err := Write(third, "locktivity", Options{Dir: dir, FilesDir: ".locktivity"}); err != nil {
+		t.Fatalf("Write without an ID over a record with one: %v", err)
+	}
+}
+
 func TestWrite_RefusesOccupiedFolderWithoutState(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hi"), 0o644); err != nil {

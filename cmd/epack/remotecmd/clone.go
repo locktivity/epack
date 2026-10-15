@@ -41,8 +41,10 @@ lock when the remote has one. The folder defaults to the configuration's name.
 
 Run it again to pick up a newer revision. Inside a folder a clone created,
 the name can be left out: the folder is refreshed from the remote it came
-from. Files you have edited are left alone unless you pass --force, and hook
-scripts are never overwritten.
+from, and a configuration that was renamed since refreshes in place under its
+new name. Files you have edited are left alone unless you pass --force, and
+hook scripts are never overwritten. A folder cloned from another
+configuration is refused unless you pass --force.
 
 Examples:
   epack remote clone northwind-production
@@ -55,7 +57,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&cloneRemote, "remote", "", "remote to fetch from (default: the last one you signed in to)")
-	cmd.Flags().BoolVar(&cloneForce, "force", false, "replace files you have edited and write into folders no clone created")
+	cmd.Flags().BoolVar(&cloneForce, "force", false, "replace files you have edited, and write into folders no clone created or another configuration was cloned into")
 	cloneInsecureAllowUnpinned = componenttypes.InsecureAllowUnpinnedFromEnv()
 	cmd.Flags().BoolVar(&cloneInsecureAllowUnpinned, "insecure-allow-unpinned", cloneInsecureAllowUnpinned,
 		"allow using adapters not pinned in lockfile (NOT RECOMMENDED)")
@@ -226,7 +228,7 @@ func CloneConfig(ctx context.Context, target ConfigTarget, opts CloneOptions) (*
 
 	dir := opts.Dir
 	if dir == "" {
-		dir = sameConfigurationFolder(target)
+		dir = sameConfigurationFolder(target, resp.Config)
 	}
 	if dir == "" {
 		dir = target.Name
@@ -258,19 +260,25 @@ func CloneConfig(ctx context.Context, target ConfigTarget, opts CloneOptions) (*
 	return clone, nil
 }
 
-// sameConfigurationFolder is the working directory when its pull record
-// names the configuration being fetched, so a clone or a run by name from
-// inside the folder refreshes it rather than nesting a second copy.
-func sameConfigurationFolder(target ConfigTarget) string {
+// sameConfigurationFolder is the working directory when its pull record is
+// for the configuration being fetched, so a clone or a run by name from
+// inside the folder refreshes it rather than nesting a second copy. The
+// record matches by name, or by ID when the configuration was renamed since.
+// A same-named record for another configuration is the working directory
+// too, so the write refuses it instead of nesting a copy beside it.
+func sameConfigurationFolder(target ConfigTarget, fetched remote.ConfigPullResult) string {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
 	state, err := remoteconfig.LoadState(cwd)
-	if err != nil || state == nil || state.Name != target.Name || state.Remote != target.Remote {
+	if err != nil || state == nil || state.Remote != target.Remote {
 		return ""
 	}
-	return cwd
+	if state.Name == target.Name || state.ID != "" && state.ID == fetched.ID {
+		return cwd
+	}
+	return ""
 }
 
 // fetchedStore is the store a fetch summary reads; tests replace it.

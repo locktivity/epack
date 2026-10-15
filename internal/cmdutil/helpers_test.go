@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/locktivity/epack/internal/component/config"
+	"github.com/locktivity/epack/internal/component/lockfile"
+	"github.com/locktivity/epack/internal/componenttypes"
 )
 
 func TestFilterConfigComponents(t *testing.T) {
@@ -126,4 +128,28 @@ func TestFilterConfigComponents(t *testing.T) {
 			t.Errorf("expected 1 remote, got %d", len(result.Remotes))
 		}
 	})
+}
+
+func TestLockfileNeedsUpdate_EntriesTheConfigNoLongerLists(t *testing.T) {
+	cfg := &config.JobConfig{
+		Collectors: map[string]config.CollectorConfig{"okta": {Source: "locktivity/epack-collector-okta@^0.2.0"}},
+	}
+	pinned := map[string]componenttypes.LockedPlatform{"linux/amd64": {Digest: "sha256:aaaa"}}
+	lf := lockfile.New()
+	lf.Collectors["okta"] = lockfile.LockedCollector{Source: "github.com/locktivity/epack-collector-okta", Version: "v0.2.1", Platforms: pinned}
+
+	if LockfileNeedsUpdate(cfg, lf, "linux/amd64", t.TempDir()) {
+		t.Fatal("a lockfile that matches its config needs no update")
+	}
+
+	lf.Collectors["github"] = lockfile.LockedCollector{Source: "github.com/locktivity/epack-collector-github", Version: "v0.2.0", Platforms: pinned}
+	if !LockfileNeedsUpdate(cfg, lf, "linux/amd64", t.TempDir()) {
+		t.Error("a lockfile with a collector the config no longer lists needs an update")
+	}
+
+	delete(lf.Collectors, "github")
+	lf.Tools["validate"] = lockfile.LockedTool{Source: "github.com/locktivity/epack-tool-validate", Version: "v0.1.0", Platforms: pinned}
+	if !LockfileNeedsUpdate(cfg, lf, "linux/amd64", t.TempDir()) {
+		t.Error("a lockfile with a tool the config no longer lists needs an update")
+	}
 }

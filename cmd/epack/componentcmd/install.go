@@ -180,6 +180,7 @@ func runInstallAuto(ctx context.Context, cfg *config.JobConfig, workDir string, 
 		lockOpts := sync.LockOpts{
 			AllPlatforms: installAllPlatforms,
 			Platforms:    platforms,
+			Prune:        true,
 		}
 
 		results, err := locker.Lock(ctx, cfg, lockOpts)
@@ -188,13 +189,7 @@ func runInstallAuto(ctx context.Context, cfg *config.JobConfig, workDir string, 
 		}
 
 		for _, r := range results {
-			status := "locked"
-			if r.Updated {
-				status = "updated"
-			} else if r.IsNew {
-				status = "added"
-			}
-			out.Print("  %s %s%s\n", status, r.DisplayName(), r.PlatformSuffix())
+			out.Print("  %s\n", r.Summary())
 		}
 		lockfileUpdated = true
 	}

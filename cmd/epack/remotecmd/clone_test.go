@@ -306,6 +306,131 @@ func TestRunClone_RefreshesInPlaceFromInsideTheFolder(t *testing.T) {
 	}
 }
 
+// fileConfigPullAdapter answers config.pull with config-pull.json from the
+// isolated home folder, so a test can change what the remote hands over
+// between pulls while the pinned adapter stays the same. epack runs adapters
+// from a private copy, so the file cannot sit beside the script.
+const fileConfigPullAdapter = `#!/bin/sh
+case "$1" in
+  --capabilities)
+    echo '{"name":"mock","kind":"remote_adapter","deploy_protocol_version":1,"version":"1.0.0","features":{"prepare_finalize":true,"config_pull":true}}'
+    ;;
+  config.pull)
+    cat "$HOME/config-pull.json"
+    ;;
+  *)
+    echo '{"ok":false,"error":{"code":"unknown_command","message":"unknown command"}}'
+    exit 1
+    ;;
+esac
+`
+
+// writeConfigPull sets the configuration the file-backed mock remote hands
+// over next. Its epack.yaml names the mock remote, as a real one does, so a
+// clone from inside the fetched folder reaches the same adapter.
+func writeConfigPull(t *testing.T, home, projectDir, id, name string) {
+	t.Helper()
+	epackYAML := fmt.Sprintf("stream: northwind/production\ncollectors:\n  tls:\n    source: locktivity/epack-collector-tls@^0.1.0\nremotes:\n  mock:\n    binary: %s\n    adapter: mock\n",
+		filepath.Join(projectDir, "mock-adapter"))
+	data, err := json.Marshal(map[string]any{
+		"ok":   true,
+		"type": "config.pull.result",
+		"config": map[string]any{
+			"id": id, "name": name, "title": "Northwind production", "stream": "northwind/production", "revision": 3,
+			"files": map[string]string{"epack.yaml": epackYAML},
+			"shas":  map[string]string{"epack.yaml": "abc"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config-pull.json"), append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCloneConfig_RefreshesTheFolderInPlaceUnderANewName(t *testing.T) {
+	home := isolateHome(t)
+	projectDir := writeMockAdapterProject(t, fileConfigPullAdapter)
+	writeConfigPull(t, home, projectDir, "pipe_1", "northwind-production")
+	if _, err := CloneConfig(context.Background(), ConfigTarget{Remote: "mock", Name: "northwind-production"}, CloneOptions{}); err != nil {
+		t.Fatalf("first clone: %v", err)
+	}
+	folder := filepath.Join(projectDir, "northwind-production")
+	if err := os.Chdir(folder); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(projectDir) })
+
+	writeConfigPull(t, home, projectDir, "pipe_1", "northwind-compliance")
+	clone, err := CloneConfig(context.Background(), ConfigTarget{Remote: "mock", Name: "northwind-compliance"}, CloneOptions{AllowUnpinned: true})
+	if err != nil {
+		t.Fatalf("clone by the new name: %v", err)
+	}
+
+	want, _ := filepath.EvalSymlinks(folder)
+	if got, _ := filepath.EvalSymlinks(clone.Dir); got != want {
+		t.Errorf("Dir = %q, want the folder itself %q", clone.Dir, folder)
+	}
+	if _, err := os.Stat(filepath.Join(folder, "northwind-compliance")); !os.IsNotExist(err) {
+		t.Error("a nested copy was created under the new name")
+	}
+	if state, _ := remoteconfig.LoadState(folder); state == nil || state.Name != "northwind-compliance" || state.ID != "pipe_1" {
+		t.Errorf("pull record after the refresh = %+v", state)
+	}
+}
+
+func TestCloneConfig_RefusesAFolderClonedFromAnotherConfiguration(t *testing.T) {
+	home := isolateHome(t)
+	projectDir := writeMockAdapterProject(t, fileConfigPullAdapter)
+	writeConfigPull(t, home, projectDir, "pipe_1", "northwind-production")
+	target := ConfigTarget{Remote: "mock", Name: "northwind-production"}
+	if _, err := CloneConfig(context.Background(), target, CloneOptions{}); err != nil {
+		t.Fatalf("first clone: %v", err)
+	}
+	folder := filepath.Join(projectDir, "northwind-production")
+	writeConfigPull(t, home, projectDir, "pipe_2", "northwind-production")
+
+	_, err := CloneConfig(context.Background(), target, CloneOptions{})
+	if err == nil || !strings.Contains(err.Error(), "was cloned from another configuration than the one northwind-production names now (pass --force to replace it)") {
+		t.Fatalf("clone from the parent folder: err = %v", err)
+	}
+
+	if err := os.Chdir(folder); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(projectDir) })
+	_, err = CloneConfig(context.Background(), target, CloneOptions{AllowUnpinned: true})
+	if err == nil || !strings.Contains(err.Error(), "was cloned from another configuration") {
+		t.Fatalf("clone from inside the folder: err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(folder, "northwind-production")); !os.IsNotExist(err) {
+		t.Error("a nested copy was created")
+	}
+	if state, _ := remoteconfig.LoadState(folder); state == nil || state.ID != "pipe_1" {
+		t.Errorf("refused clone changed the pull record: %+v", state)
+	}
+}
+
+func TestCloneConfig_ForceReplacesAFolderClonedFromAnotherConfiguration(t *testing.T) {
+	home := isolateHome(t)
+	projectDir := writeMockAdapterProject(t, fileConfigPullAdapter)
+	writeConfigPull(t, home, projectDir, "pipe_1", "northwind-production")
+	target := ConfigTarget{Remote: "mock", Name: "northwind-production"}
+	if _, err := CloneConfig(context.Background(), target, CloneOptions{}); err != nil {
+		t.Fatalf("first clone: %v", err)
+	}
+	writeConfigPull(t, home, projectDir, "pipe_2", "northwind-production")
+
+	clone, err := CloneConfig(context.Background(), target, CloneOptions{Force: true})
+	if err != nil {
+		t.Fatalf("forced clone: %v", err)
+	}
+	if state, _ := remoteconfig.LoadState(clone.Dir); state == nil || state.ID != "pipe_2" {
+		t.Errorf("pull record after the forced clone = %+v", state)
+	}
+}
+
 func TestRunClone_BareRefreshesTheFolderItIsRunIn(t *testing.T) {
 	isolateHome(t)
 	projectDir := writeMockAdapterProject(t, configPullAdapter)

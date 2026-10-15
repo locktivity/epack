@@ -84,7 +84,7 @@ Examples:
 	cmd.Flags().BoolVar(&runBrowser, "browser", false, "sign in your browser even when this machine has a key from 'epack key create'")
 	cmd.Flags().StringVar(&runOIDCToken, "oidc-token", "", "OIDC token for keyless signing (or EPACK_OIDC_TOKEN env)")
 	cmd.Flags().BoolVarP(&runYes, "yes", "y", false, "skip prompts")
-	cmd.Flags().BoolVar(&runForce, "force", false, "when fetching, replace files you have edited")
+	cmd.Flags().BoolVar(&runForce, "force", false, "when fetching, replace files you have edited, or a folder cloned from another configuration")
 	cmd.Flags().BoolVar(&runCheck, "check", false,
 		"sign in, verify the lock, secrets, credentials, and publishers, report the result, and collect nothing (or set EPACK_CHECK=1)")
 	cmd.Flags().StringArrayVar(&runTrustPublishers, "trust-publisher", nil,

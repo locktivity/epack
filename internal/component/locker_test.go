@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/component/github"
 	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/component/sync"
+	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/platform"
 )
 
@@ -144,6 +146,103 @@ func TestLockerLockExternal(t *testing.T) {
 	}
 	if len(locked.Platforms) == 0 {
 		t.Error("expected at least one platform entry")
+	}
+}
+
+// writeLockfileWithDroppedEntries saves a lockfile that still pins a
+// collector, a tool, a remote, and a mapping the config no longer lists.
+func writeLockfileWithDroppedEntries(t *testing.T, path string) {
+	t.Helper()
+	lf := lockfile.New()
+	pinned := map[string]componenttypes.LockedPlatform{"linux/amd64": {Digest: "sha256:aaaa"}}
+	lf.Collectors["github"] = lockfile.LockedCollector{Source: "github.com/locktivity/epack-collector-github", Version: "v0.2.0", Platforms: pinned}
+	lf.Tools["validate"] = lockfile.LockedTool{Source: "github.com/locktivity/epack-tool-validate", Version: "v0.1.0", Platforms: pinned}
+	lf.Remotes["old-remote"] = lockfile.LockedRemote{Source: "github.com/locktivity/epack-remote-old", Version: "v0.1.0", Platforms: pinned}
+	lf.Mappings[".epack/mappings/old.yaml"] = lockfile.LockedMapping{Source: ".epack/mappings/old.yaml", Digest: "sha256:bbbb"}
+	if err := lf.Save(path); err != nil {
+		t.Fatalf("saving lockfile: %v", err)
+	}
+}
+
+func TestLockerPrunesEntriesTheConfigNoLongerLists(t *testing.T) {
+	tmpDir := lockerTestDirInCwd(t)
+	binaryPath := filepath.Join(tmpDir, "kept")
+	if err := os.WriteFile(binaryPath, []byte("fake binary"), 0o755); err != nil {
+		t.Fatalf("creating binary: %v", err)
+	}
+	locker := sync.NewLocker(tmpDir)
+	writeLockfileWithDroppedEntries(t, locker.LockfilePath)
+	cfg := &config.JobConfig{
+		Collectors: map[string]config.CollectorConfig{"kept": {Binary: binaryPath}},
+	}
+
+	results, err := locker.Lock(context.Background(), cfg, sync.LockOpts{Prune: true})
+	if err != nil {
+		t.Fatalf("Lock() error: %v", err)
+	}
+
+	var removed []string
+	for _, r := range results {
+		if r.Removed {
+			removed = append(removed, r.Summary())
+		}
+	}
+	want := []string{
+		"removed github@v0.2.0 (not in config)",
+		"removed validate@v0.1.0 (not in config)",
+		"removed old-remote@v0.1.0 (not in config)",
+		"removed .epack/mappings/old.yaml (not in config)",
+	}
+	if strings.Join(removed, "\n") != strings.Join(want, "\n") {
+		t.Errorf("removed entries = %q, want %q", removed, want)
+	}
+
+	lf, err := lockfile.Load(locker.LockfilePath)
+	if err != nil {
+		t.Fatalf("loading lockfile: %v", err)
+	}
+	if _, ok := lf.GetCollector("kept"); !ok || len(lf.Collectors) != 1 {
+		t.Errorf("collectors = %v, want only kept", lf.Collectors)
+	}
+	if len(lf.Tools) != 0 || len(lf.Remotes) != 0 || len(lf.Mappings) != 0 {
+		t.Errorf("dropped entries survived: tools %v, remotes %v, mappings %v", lf.Tools, lf.Remotes, lf.Mappings)
+	}
+	if stale := sync.StaleLockEntries(cfg, lf); len(stale) != 0 {
+		t.Errorf("StaleLockEntries() after pruning = %v, want none", stale)
+	}
+}
+
+func TestLockerKeepsEntriesOutsideAPartialConfig(t *testing.T) {
+	tmpDir := lockerTestDirInCwd(t)
+	binaryPath := filepath.Join(tmpDir, "kept")
+	if err := os.WriteFile(binaryPath, []byte("fake binary"), 0o755); err != nil {
+		t.Fatalf("creating binary: %v", err)
+	}
+	locker := sync.NewLocker(tmpDir)
+	writeLockfileWithDroppedEntries(t, locker.LockfilePath)
+	cfg := &config.JobConfig{
+		Collectors: map[string]config.CollectorConfig{"kept": {Binary: binaryPath}},
+	}
+
+	results, err := locker.Lock(context.Background(), cfg, sync.LockOpts{})
+	if err != nil {
+		t.Fatalf("Lock() error: %v", err)
+	}
+	for _, r := range results {
+		if r.Removed {
+			t.Errorf("removed %s without being asked to prune", r.Name)
+		}
+	}
+
+	lf, err := lockfile.Load(locker.LockfilePath)
+	if err != nil {
+		t.Fatalf("loading lockfile: %v", err)
+	}
+	if _, ok := lf.GetCollector("github"); !ok {
+		t.Error("github entry was dropped by a lock that was not asked to prune")
+	}
+	if got := len(sync.StaleLockEntries(cfg, lf)); got != 4 {
+		t.Errorf("StaleLockEntries() = %d entries, want 4", got)
 	}
 }
 

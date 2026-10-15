@@ -430,7 +430,7 @@ func lockIfNeeded(ctx context.Context, cfg *config.JobConfig, opts Options) (boo
 	if len(platforms) == 0 {
 		platforms = []string{platformKey}
 	}
-	results, err := sync.NewLocker(opts.WorkDir).Lock(ctx, cfg, sync.LockOpts{Platforms: platforms})
+	results, err := sync.NewLocker(opts.WorkDir).Lock(ctx, cfg, sync.LockOpts{Platforms: platforms, Prune: true})
 	if err != nil {
 		return false, nil, fmt.Errorf("locking dependencies: %w", err)
 	}
