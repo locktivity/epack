@@ -22,7 +22,8 @@ import (
 type Locker struct {
 	Registry     RegistryClient
 	LockfilePath string
-	BaseDir      string // .epack directory
+	BaseDir      string           // .epack directory
+	Verifier     SigstoreVerifier // nil verifies with Sigstore
 }
 
 // NewLocker creates a locker with default paths using the default GitHub registry.
@@ -52,6 +53,11 @@ type LockOpts struct {
 	// lists. Only a caller passing the whole config may set it: a config
 	// filtered to a few components would drop every other entry.
 	Prune bool
+	// KeepPins keeps each pinned version its range still admits from the
+	// same source, and resolves only components that are new, out of range,
+	// or from another source. Without it every range resolves to its newest
+	// release.
+	KeepPins bool
 }
 
 // LockResult contains the result of a lock operation.
@@ -63,6 +69,7 @@ type LockResult struct {
 	IsNew     bool
 	Updated   bool
 	Removed   bool // Dropped because the config no longer lists it
+	Kept      bool // Pin carried over because its range still admits it
 }
 
 // DisplayName returns the formatted component name for output.
@@ -88,6 +95,8 @@ func (r LockResult) Summary() string {
 	switch {
 	case r.Removed:
 		return "removed " + r.DisplayName() + " (not in config)"
+	case r.Kept:
+		return "kept " + r.DisplayName() + r.PlatformSuffix()
 	case r.Updated:
 		return "updated " + r.DisplayName() + r.PlatformSuffix()
 	case r.IsNew:
@@ -301,9 +310,9 @@ func lockByKind[T any](
 // lockSourceCollector locks a source-based collector.
 func (l *Locker) lockSourceCollector(ctx context.Context, name string, cfg config.CollectorConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
 	return l.lockSourceComponent(ctx, name, cfg.Source, name, "collector", opts,
-		func() (string, map[string]componenttypes.LockedPlatform, bool) {
+		func() (lockedPin, bool) {
 			existing, exists := lf.GetCollector(name)
-			return existing.Version, existing.Platforms, exists
+			return lockedPin{Kind: existing.Kind, Source: existing.Source, Version: existing.Version, Signer: existing.Signer, Platforms: existing.Platforms}, exists
 		},
 		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Collectors[name] = lockfile.LockedCollector{
@@ -409,9 +418,9 @@ func (l *Locker) DetectAvailablePlatforms(release *ReleaseInfo, componentName st
 // Tools use the same locking mechanism as collectors.
 func (l *Locker) lockSourceTool(ctx context.Context, name string, cfg config.ToolConfig, lf *lockfile.LockFile, opts LockOpts) (*LockResult, error) {
 	return l.lockSourceComponent(ctx, name, cfg.Source, name, "tool", opts,
-		func() (string, map[string]componenttypes.LockedPlatform, bool) {
+		func() (lockedPin, bool) {
 			existing, exists := lf.GetTool(name)
-			return existing.Version, existing.Platforms, exists
+			return lockedPin{Kind: existing.Kind, Source: existing.Source, Version: existing.Version, Signer: existing.Signer, Platforms: existing.Platforms}, exists
 		},
 		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Tools[name] = lockfile.LockedTool{
@@ -490,9 +499,9 @@ func (l *Locker) lockSourceRemote(ctx context.Context, name string, cfg config.R
 	}
 	binaryName := "epack-remote-" + adapterName
 	return l.lockSourceComponent(ctx, name, cfg.Source, binaryName, "remote", opts,
-		func() (string, map[string]componenttypes.LockedPlatform, bool) {
+		func() (lockedPin, bool) {
 			existing, exists := lf.GetRemote(name)
-			return existing.Version, existing.Platforms, exists
+			return lockedPin{Kind: existing.Kind, Source: existing.Source, Version: existing.Version, Signer: existing.Signer, Platforms: existing.Platforms}, exists
 		},
 		func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform) {
 			lf.Remotes[name] = lockfile.LockedRemote{
@@ -514,15 +523,24 @@ func (l *Locker) lockSourceComponent(
 	ctx context.Context,
 	name, sourceRef, binaryLookupName, kind string,
 	opts LockOpts,
-	getExisting func() (version string, platforms map[string]componenttypes.LockedPlatform, exists bool),
+	getExisting func() (lockedPin, bool),
 	updateEntry func(sourceURI, selectedTag, commit string, signer *componenttypes.LockedSigner, platforms map[string]componenttypes.LockedPlatform),
 ) (*LockResult, error) {
-	resolved, err := l.resolveSourceComponentVersion(ctx, sourceRef, binaryLookupName, opts)
+	existing, exists := getExisting()
+	pinnedTag := ""
+	if opts.KeepPins && exists && pinAdmitted(kind, name, sourceRef, existing) {
+		if !missingRequestedPlatform(opts, existing.Platforms) {
+			result := buildSourceLockResult(name, kind, existing.Version, existing.Platforms, true, existing.Version)
+			result.Kept = true
+			return result, nil
+		}
+		pinnedTag = existing.Version
+	}
+	resolved, err := l.resolveSourceComponentVersion(ctx, sourceRef, binaryLookupName, opts, pinnedTag)
 	if err != nil {
 		return nil, err
 	}
-	existingVersion, existingPlatforms, exists := getExisting()
-	platforms := platformsToLock(resolved.platforms, existingPlatforms, exists && existingVersion != resolved.selectedTag, opts.AllPlatforms)
+	platforms := platformsToLock(resolved.platforms, existing.Platforms, exists && existing.Version != resolved.selectedTag, opts.AllPlatforms)
 	lockedPlatforms, signer, err := l.lockSourcePlatforms(
 		ctx, name, binaryLookupName, resolved.owner, resolved.repo, resolved.selectedTag, resolved.release, platforms, opts,
 	)
@@ -533,9 +551,49 @@ func (l *Locker) lockSourceComponent(
 		return nil, fmt.Errorf("no platforms could be locked")
 	}
 
-	mergeExistingPlatforms(lockedPlatforms, existingPlatforms, exists, opts.AllPlatforms)
+	mergeExistingPlatforms(lockedPlatforms, existing.Platforms, exists, opts.AllPlatforms)
 	updateEntry(BuildSourceURI(resolved.owner, resolved.repo), resolved.selectedTag, resolved.commit, signer, lockedPlatforms)
-	return buildSourceLockResult(name, kind, resolved.selectedTag, lockedPlatforms, exists, existingVersion), nil
+	return buildSourceLockResult(name, kind, resolved.selectedTag, lockedPlatforms, exists, existing.Version), nil
+}
+
+// lockedPin is what an existing entry for a source component records.
+type lockedPin struct {
+	Kind      string
+	Source    string
+	Version   string
+	Signer    *componenttypes.LockedSigner
+	Platforms map[string]componenttypes.LockedPlatform
+}
+
+// pinAdmitted reports whether an existing entry has the configured
+// repository, a signer from that repository, and a version the range admits.
+// A locked sync checks the same things, so a kept pin installs.
+func pinAdmitted(kind, name, sourceRef string, pin lockedPin) bool {
+	if pin.Kind == "external" || pin.Version == "" || pin.Signer == nil {
+		return false
+	}
+	if validateSourceAndSignerMatch(kind, name, sourceRef, pin.Source, pin.Signer, "epack lock") != nil {
+		return false
+	}
+	return ValidateVersionSatisfaction(kind, name, sourceRef, pin.Version, "epack lock") == nil
+}
+
+// missingRequestedPlatform reports whether a kept pin lacks a platform the
+// caller asked for. Locking all platforms keeps whatever the pin carries.
+func missingRequestedPlatform(opts LockOpts, locked map[string]componenttypes.LockedPlatform) bool {
+	if opts.AllPlatforms {
+		return false
+	}
+	requested := opts.Platforms
+	if len(requested) == 0 {
+		requested = []string{platform.Key(runtime.GOOS, runtime.GOARCH)}
+	}
+	for _, plat := range requested {
+		if _, ok := locked[plat]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 type resolvedSourceComponent struct {
@@ -547,19 +605,24 @@ type resolvedSourceComponent struct {
 	platforms   []string
 }
 
+// A pinnedTag skips resolving the range and locks that release.
 func (l *Locker) resolveSourceComponentVersion(
 	ctx context.Context,
 	sourceRef, binaryLookupName string,
 	opts LockOpts,
+	pinnedTag string,
 ) (*resolvedSourceComponent, error) {
 	owner, repo, versionConstraint, err := github.ParseSource(sourceRef)
 	if err != nil {
 		return nil, err
 	}
 	source := fmt.Sprintf("%s/%s", owner, repo)
-	selectedTag, err := l.Registry.ResolveVersion(ctx, source, versionConstraint)
-	if err != nil {
-		return nil, fmt.Errorf("resolving version: %w", err)
+	selectedTag := pinnedTag
+	if selectedTag == "" {
+		selectedTag, err = l.Registry.ResolveVersion(ctx, source, versionConstraint)
+		if err != nil {
+			return nil, fmt.Errorf("resolving version: %w", err)
+		}
 	}
 	release, err := l.Registry.FetchRelease(ctx, source, selectedTag)
 	if err != nil {
@@ -716,7 +779,7 @@ func (l *Locker) verifyAndDigestAsset(
 		SourceRepositoryURI: expectedRepoURI,
 		SourceRepositoryRef: expectedRef,
 	}
-	sigResult, err := VerifySigstoreBundle(bundlePath, binaryPath, expectedIdentity)
+	sigResult, err := l.verifier().Verify(bundlePath, binaryPath, expectedIdentity)
 	if err != nil {
 		return "", nil, fmt.Errorf("verifying sigstore signature: %w (expected repo=%s, ref=%s)", err, expectedRepoURI, expectedRef)
 	}
@@ -739,6 +802,13 @@ func (l *Locker) verifyAndDigestAsset(
 		SourceRepositoryURI: sigResult.SourceRepositoryURI,
 		SourceRepositoryRef: sigResult.SourceRepositoryRef,
 	}, nil
+}
+
+func (l *Locker) verifier() SigstoreVerifier {
+	if l.Verifier != nil {
+		return l.Verifier
+	}
+	return DefaultSigstoreVerifier{}
 }
 
 func ensureSignerMatches(base, candidate *componenttypes.LockedSigner, name, platform string) error {

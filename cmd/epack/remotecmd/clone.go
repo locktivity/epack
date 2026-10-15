@@ -14,6 +14,7 @@ import (
 
 	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/component/config"
+	"github.com/locktivity/epack/internal/component/lockfile"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/project"
 	"github.com/locktivity/epack/internal/remote"
@@ -313,6 +314,9 @@ func PrintFetched(out *output.Writer, clone *CloneResult) {
 	if out.IsQuiet() || out.IsJSON() || clone.Current() && !clone.Created {
 		return
 	}
+	for _, path := range clone.Replaced {
+		out.Print("  Replaced the local %s with the revision's lock\n", path)
+	}
 	if clone.Changes != nil {
 		printChanges(out, clone.Changes)
 		return
@@ -445,6 +449,7 @@ func printCloneResult(out *output.Writer, target ConfigTarget, result *CloneResu
 			"created":  result.Created,
 			"written":  result.Written,
 			"kept":     result.Kept,
+			"replaced": result.Replaced,
 			"summary":  result.Summary,
 			"changes":  result.Changes,
 		})
@@ -467,7 +472,9 @@ func printCloneResult(out *output.Writer, target ConfigTarget, result *CloneResu
 	}
 	PrintFetched(out, result)
 	out.Print("\n%s\n", p.Dim("Next:"))
-	if job := ciJobFile(result.Config.Files); job != "" {
+	if job := ciJobFile(result.Config.Files); job != "" && carriesLock(result.Config) {
+		out.Print("%s  commit the folder; %s runs it from CI\n", p.Dim("  •"), job)
+	} else if job != "" {
 		out.Print("%s  cd %s && epack lock --all-platforms\n", p.Dim("  •"), relDir)
 		out.Print("%s  commit the folder with epack.lock.yaml; %s runs it from CI\n", p.Dim("  •"), job)
 	} else {
@@ -478,7 +485,8 @@ func printCloneResult(out *output.Writer, target ConfigTarget, result *CloneResu
 
 // ciJobFile names the CI job definition a pulled configuration carries, or
 // "" for one that runs where it was cloned. CI runs from a committed lock,
-// so the next step there is to lock, not to run.
+// so the next step there is to lock, not to run, unless the revision
+// arrived locked.
 func ciJobFile(files map[string]string) string {
 	paths := make([]string, 0, len(files))
 	for path := range files {
@@ -491,4 +499,8 @@ func ciJobFile(files map[string]string) string {
 		}
 	}
 	return ""
+}
+
+func carriesLock(cfg remote.ConfigPullResult) bool {
+	return cfg.Lockfile != "" || cfg.Files[lockfile.FileName] != ""
 }

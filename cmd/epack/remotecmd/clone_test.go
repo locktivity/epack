@@ -239,6 +239,39 @@ func TestRunClone_TellsACIConfigurationToLockRatherThanRun(t *testing.T) {
 	}
 }
 
+const lockedCIConfigPullAdapter = `#!/bin/sh
+case "$1" in
+  --capabilities)
+    echo '{"name":"mock","kind":"remote_adapter","deploy_protocol_version":1,"version":"1.0.0","features":{"prepare_finalize":true,"config_pull":true}}'
+    ;;
+  config.pull)
+    printf '%s\n' '{"ok":true,"type":"config.pull.result","config":{"name":"northwind-production","title":"Northwind production","stream":"northwind/production","revision":4,"files":{"epack.yaml":"stream: northwind/production\ncollectors:\n  tls:\n    source: locktivity/epack-collector-tls@^0.1.0\n","epack.gitlab-ci.yml":"include: []\n"},"shas":{"epack.yaml":"abc"},"lockfile":"schema_version: 1\n"}}'
+    ;;
+  *)
+    echo '{"ok":false,"error":{"code":"unknown_command","message":"unknown command"}}'
+    exit 1
+    ;;
+esac
+`
+
+func TestRunClone_TellsALockedCIConfigurationToCommitWithoutLocking(t *testing.T) {
+	isolateHome(t)
+	projectDir := writeMockAdapterProject(t, lockedCIConfigPullAdapter)
+	dest := filepath.Join(projectDir, "cloned")
+	cmd, stdout, stderr := rootCommand(newCloneCommand(), "northwind-production", dest, "--remote", "mock")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("clone: %v (stderr: %s)", err, stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "commit the folder; epack.gitlab-ci.yml runs it from CI") {
+		t.Errorf("next step missing the commit line:\n%s", out)
+	}
+	if strings.Contains(out, "epack lock") {
+		t.Errorf("a revision that arrived locked must not be told to lock:\n%s", out)
+	}
+}
+
 func TestRunClone_JSONOutput(t *testing.T) {
 	isolateHome(t)
 	projectDir := writeMockAdapterProject(t, configPullAdapter)

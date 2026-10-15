@@ -66,6 +66,9 @@ type Result struct {
 	Created bool
 	Written []string
 	Kept    []string
+	// Replaced lists files a run had written that this pull replaced, such
+	// as epack.lock.yaml.
+	Replaced []string
 }
 
 // Current reports whether the folder already matched the revision.
@@ -132,7 +135,7 @@ func Write(cfg remote.ConfigPullResult, remoteName string, opts Options) (*Resul
 			return nil, ErrNotCloned
 		}
 	}
-	toWrite, kept, err := decide(dir, entries, prev, opts.Force)
+	toWrite, kept, replaced, err := decide(dir, entries, prev, opts.Force)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +153,7 @@ func Write(cfg remote.ConfigPullResult, remoteName string, opts Options) (*Resul
 	if err := safefile.WriteJSON(dir, StateFile, state); err != nil {
 		return nil, fmt.Errorf("recording the pull: %w", err)
 	}
-	return &Result{Dir: dir, State: state, Created: prev == nil, Written: written, Kept: kept}, nil
+	return &Result{Dir: dir, State: state, Created: prev == nil, Written: written, Kept: kept, Replaced: replaced}, nil
 }
 
 // LoadState reads the record of the last pull, or nil when there is none.
@@ -298,12 +301,12 @@ func planEntries(dir string, cfg remote.ConfigPullResult, filesDir string) ([]en
 	return entries, nil
 }
 
-func decide(dir string, entries []entry, prev *State, force bool) (toWrite []entry, kept []string, err error) {
+func decide(dir string, entries []entry, prev *State, force bool) (toWrite []entry, kept, replaced []string, err error) {
 	var changed []string
 	for _, e := range entries {
 		local, exists, err := readLocal(filepath.Join(dir, e.path))
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		switch {
 		case !exists:
@@ -318,14 +321,29 @@ func decide(dir string, entries []entry, prev *State, force bool) (toWrite []ent
 			}
 		case force || recordedMatches(prev, e.path, local):
 			toWrite = append(toWrite, e)
+		case undeliveredLock(prev, e.path):
+			toWrite = append(toWrite, e)
+			replaced = append(replaced, e.path)
 		default:
 			changed = append(changed, e.path)
 		}
 	}
 	if len(changed) > 0 {
-		return nil, nil, &LocalChangesError{Paths: changed}
+		return nil, nil, nil, &LocalChangesError{Paths: changed}
 	}
-	return toWrite, kept, nil
+	return toWrite, kept, replaced, nil
+}
+
+// undeliveredLock reports whether path is a lockfile that no earlier pull
+// delivered, so a run in the folder made it. A revision that carries a lock
+// replaces it, since every run verifies what the lock pins.
+func undeliveredLock(prev *State, path string) bool {
+	if prev == nil || path != lockfile.FileName {
+		return false
+	}
+	_, delivered := prev.Files[path]
+	_, templated := prev.Templates[path]
+	return !delivered && !templated
 }
 
 // pulledElsewhere reports whether a folder's last pull came from another

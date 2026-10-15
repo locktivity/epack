@@ -12,6 +12,7 @@ var (
 	lockConfigPath   string
 	lockAllPlatforms bool
 	lockPlatforms    string
+	lockKeepPins     bool
 )
 
 func newLockCommand() *cobra.Command {
@@ -33,11 +34,18 @@ Platforms:
   By default, only the current platform is locked. Use --all-platforms
   to lock all available platforms, or --platform to specify platforms.
 
+Pins:
+  By default, each component resolves to the newest release its version
+  range allows. With --keep-pins, a pinned version stays while its range
+  allows it, and only components that are new, out of range, or from
+  another source are resolved.
+
 Examples:
   epack lock                          # Lock current platform
   epack lock --all-platforms          # Lock all platforms
   epack lock --platform linux/amd64   # Lock specific platform
   epack lock --platform linux/amd64,darwin/arm64
+  epack lock --keep-pins              # Resolve only new or out-of-range components
 
 See also:
   epack install   Lock if needed and download binaries (recommended)
@@ -51,6 +59,8 @@ See also:
 		"lock all available platforms (replaces existing)")
 	cmd.Flags().StringVar(&lockPlatforms, "platform", "",
 		"platforms to lock (comma-separated, e.g., linux/amd64,darwin/arm64)")
+	cmd.Flags().BoolVar(&lockKeepPins, "keep-pins", false,
+		"keep each pinned version its range still allows, and resolve only new or out-of-range components")
 
 	return cmd
 }
@@ -77,6 +87,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 		AllPlatforms: lockAllPlatforms,
 		Platforms:    platforms,
 		Prune:        true,
+		KeepPins:     lockKeepPins,
 	}
 
 	out.Print("Locking dependencies...\n")

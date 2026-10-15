@@ -439,3 +439,78 @@ func TestAllowedPathAcceptsEpacksOwnDataFilesAndNothingElseHidden(t *testing.T) 
 		}
 	}
 }
+
+func unlockedConfig(revision int, body string) remote.ConfigPullResult {
+	cfg := sampleConfig(revision, body)
+	cfg.Lockfile = ""
+	return cfg
+}
+
+func TestWrite_ReplacesALockNoPullDelivered(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cfg")
+	if _, err := Write(unlockedConfig(1, "a\n"), "locktivity", Options{Dir: dir, FilesDir: ".locktivity"}); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+	lockPath := filepath.Join(dir, "epack.lock.yaml")
+	if err := os.WriteFile(lockPath, []byte("schema_version: 1\n# locked by a run here\n"), 0o644); err != nil {
+		t.Fatalf("writing a local lock: %v", err)
+	}
+
+	locked := sampleConfig(2, "a\n")
+	locked.Lockfile = "schema_version: 1\n# resolved by the remote\n"
+	result, err := Write(locked, "locktivity", Options{Dir: dir, FilesDir: ".locktivity"})
+	if err != nil {
+		t.Fatalf("Write of a locked revision: %v", err)
+	}
+	if got := readFile(t, lockPath); got != locked.Lockfile {
+		t.Errorf("epack.lock.yaml = %q, want the revision's lock", got)
+	}
+	if len(result.Replaced) != 1 || result.Replaced[0] != "epack.lock.yaml" {
+		t.Errorf("Replaced = %v, want [epack.lock.yaml]", result.Replaced)
+	}
+	if _, recorded := result.State.Files["epack.lock.yaml"]; !recorded {
+		t.Error("the pull record does not list the delivered lock")
+	}
+}
+
+func TestWrite_RefusesALockItDeliveredAndARunChanged(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cfg")
+	if _, err := Write(sampleConfig(1, "a\n"), "locktivity", Options{Dir: dir, FilesDir: ".locktivity"}); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+	lockPath := filepath.Join(dir, "epack.lock.yaml")
+	if err := os.WriteFile(lockPath, []byte("schema_version: 1\n# relocked here\n"), 0o644); err != nil {
+		t.Fatalf("editing the delivered lock: %v", err)
+	}
+
+	next := sampleConfig(2, "a\n")
+	next.Lockfile = "schema_version: 1\n# revision 2\n"
+	_, err := Write(next, "locktivity", Options{Dir: dir, FilesDir: ".locktivity"})
+	var changes *LocalChangesError
+	if !errors.As(err, &changes) || len(changes.Paths) != 1 || changes.Paths[0] != "epack.lock.yaml" {
+		t.Fatalf("err = %v, want LocalChangesError for epack.lock.yaml", err)
+	}
+}
+
+func TestWrite_LeavesALocalLockWhenTheRevisionCarriesNone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cfg")
+	if _, err := Write(unlockedConfig(1, "a\n"), "locktivity", Options{Dir: dir, FilesDir: ".locktivity"}); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+	lockPath := filepath.Join(dir, "epack.lock.yaml")
+	own := "schema_version: 1\n# locked by a run here\n"
+	if err := os.WriteFile(lockPath, []byte(own), 0o644); err != nil {
+		t.Fatalf("writing a local lock: %v", err)
+	}
+
+	result, err := Write(unlockedConfig(2, "b\n"), "locktivity", Options{Dir: dir, FilesDir: ".locktivity"})
+	if err != nil {
+		t.Fatalf("second Write: %v", err)
+	}
+	if got := readFile(t, lockPath); got != own {
+		t.Errorf("epack.lock.yaml = %q, want the local lock untouched", got)
+	}
+	if len(result.Replaced) != 0 {
+		t.Errorf("Replaced = %v, want nothing", result.Replaced)
+	}
+}
