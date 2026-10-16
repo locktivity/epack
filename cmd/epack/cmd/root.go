@@ -68,7 +68,7 @@ Examples:
 
 		// Initialize output writer with current settings
 		// CI mode is auto-detected from common CI environment variables
-		isCI := ciMode || os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != ""
+		isCI := ciMode || inCI(os.Getenv)
 		out = output.New(os.Stdout, os.Stderr, output.Options{
 			Quiet:   quiet,
 			JSON:    jsonOut,
@@ -76,6 +76,7 @@ Examples:
 			Verbose: verbose,
 			CI:      isCI,
 		})
+		startUpdateCheck(cmd)
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
@@ -183,6 +184,26 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+// FinishUpdateCheck prints the update notice the command's check found, if
+// any. main calls it after printing the command's error, so the notice is
+// the last line.
+func FinishUpdateCheck() {
+	finishUpdateCheck()
+}
+
+// ciEnvVars are set by CI systems; any of them turns on CI mode.
+var ciEnvVars = []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CODEBUILD_BUILD_ID", "JENKINS_URL", "BUILDKITE", "TF_BUILD"}
+
+// inCI reports whether getenv describes a CI job.
+func inCI(getenv func(string) string) bool {
+	for _, name := range ciEnvVars {
+		if getenv(name) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
 	// Global flags available to all commands
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress non-essential output")
@@ -192,7 +213,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noRedact, "no-redact", false,
 		"disable redaction of secrets in errors/logs (env: EPACK_NO_REDACT)")
 	rootCmd.PersistentFlags().BoolVar(&ciMode, "ci", false,
-		"CI mode: disable spinners, add timestamps (auto-detected from CI/GITHUB_ACTIONS env)")
+		"CI mode: disable spinners, add timestamps (auto-detected from common CI environment variables)")
 
 	// Register collector commands (full build) or stub (minimal build).
 	// This is controlled by build tags - see register_collector.go and register_collector_stub.go.

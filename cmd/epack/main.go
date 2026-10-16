@@ -14,19 +14,22 @@ import (
 )
 
 func main() {
+	code := 0
 	if err := cmd.Execute(); err != nil {
 		// Single error rendering boundary: use exitmap.ToExit for all errors.
 		// This:
 		// - Preserves full error context (Message + Cause + Hint) via err.Error()
 		// - Sanitizes via redact.Error() to remove secrets
 		// - Extracts proper exit code from *errors.Error or defaults to 1
-		msg, code := exitmap.ToExit(err)
+		var msg string
+		msg, code = exitmap.ToExit(err)
 		if msg != "" {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
 		}
 		if path := os.Getenv(exitmap.ErrorFileEnv); path != "" {
 			_ = exitmap.WriteErrorFile(path, err)
 		}
-		os.Exit(code)
 	}
+	cmd.FinishUpdateCheck()
+	os.Exit(code)
 }

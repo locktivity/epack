@@ -128,6 +128,18 @@ func NewClientWithBaseURL(baseURL string) (*Client, error) {
 	}, nil
 }
 
+// NewAnonymousClient creates a client that never sends GITHUB_TOKEN, for
+// requests that must not carry the person's credentials. The base URL is
+// validated as NewClientWithBaseURL validates it.
+func NewAnonymousClient(baseURL string) (*Client, error) {
+	client, err := NewClientWithBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	client.token = ""
+	return client, nil
+}
+
 // Release represents a GitHub release.
 type Release struct {
 	TagName         string  `json:"tag_name"`
