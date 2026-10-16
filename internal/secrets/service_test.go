@@ -60,7 +60,8 @@ func TestService_SetRefusesBadInput(t *testing.T) {
 	if _, err := service.Set(testScope, "AZURE_CLIENT_SECRET", "", conf, false, false); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Errorf("empty value: %v", err)
 	}
-	if _, err := service.Set(testScope, "NOT_LISTED", "x", conf, false, false); err == nil || !strings.Contains(err.Error(), "--unlisted") {
+	var unlisted *UnlistedError
+	if _, err := service.Set(testScope, "NOT_LISTED", "x", conf, false, false); !errors.As(err, &unlisted) || unlisted.Name != "NOT_LISTED" || !strings.Contains(err.Error(), "--unlisted") {
 		t.Errorf("unlisted name: %v", err)
 	}
 	if _, err := service.Set(testScope, "NOT_LISTED", "x", conf, false, true); err != nil {

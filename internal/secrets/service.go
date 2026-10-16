@@ -88,7 +88,7 @@ func (s *Service) Set(scope Scope, name, value string, conf *Configuration, inte
 	}
 	readers := ReadersOf(conf.Config, name)
 	if len(readers) == 0 && !unlisted {
-		return nil, fmt.Errorf("no component in this configuration lists %s; pass --unlisted to store it anyway", name)
+		return nil, &UnlistedError{Name: name}
 	}
 	unlock, err := s.Paths.lockScope(scope, true)
 	if err != nil {

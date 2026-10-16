@@ -160,6 +160,63 @@ func TestSet_FromFileStripsOneNewline(t *testing.T) {
 	}
 }
 
+func TestSet_UnlistedNameSuggestsRefreshingTheFolder(t *testing.T) {
+	h := setup(t)
+	readAllStdin = func() ([]byte, error) { return []byte("sentry-token"), nil }
+	err := h.run(t, "set", "SENTRY_AUTH_TOKEN", "--stdin")
+	want := "no component in revision 4 of northwind-laptop lists SENTRY_AUTH_TOKEN\n  Hint: This folder may be behind the current revision. Run 'epack remote clone' in this folder to update it, then run this command again. If the current revision does not list SENTRY_AUTH_TOKEN either, pass --unlisted to store it anyway"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v\nwant %s", err, want)
+	}
+	if len(h.store.values) != 0 {
+		t.Error("nothing may be stored")
+	}
+
+	if err := os.Chdir(filepath.Join(h.dir, ".epack")); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = h.run(t, "set", "SENTRY_AUTH_TOKEN", "--stdin")
+	if err == nil || !strings.Contains(err.Error(), "Run 'epack remote clone' in "+filepath.Dir(cwd)+" to update it") {
+		t.Fatalf("from a folder below, the hint must name the folder: %v", err)
+	}
+
+	refreshed := laptopConfig + "  sentry:\n    source: locktivity/epack-collector-sentry@^0.1\n    secrets: [SENTRY_AUTH_TOKEN]\n"
+	if err := os.WriteFile(filepath.Join(h.dir, "epack.yaml"), []byte(refreshed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record := `{"remote":"locktivity","id":"pl_8f3a2c","name":"northwind-laptop","revision":5,"pulled_at":"2026-10-15T00:00:00Z","files":{}}`
+	if err := os.WriteFile(filepath.Join(h.dir, ".epack", "remote-config.json"), []byte(record), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run(t, "set", "SENTRY_AUTH_TOKEN", "--stdin"); err != nil {
+		t.Fatalf("after the refresh: %v\n%s", err, h.out)
+	}
+	if !strings.Contains(h.out.String(), "approved for sentry") {
+		t.Errorf("output = %s", h.out)
+	}
+}
+
+func TestSet_UnlistedNameWithoutAPullRecordOffersOnlyUnlisted(t *testing.T) {
+	h := setup(t)
+	t.Setenv(secrets.PipelineIDEnvVar, "pl_8f3a2c")
+	withRemote := laptopConfig + "remotes:\n  locktivity:\n    source: locktivity/epack-remote-locktivity@^0.3\n"
+	if err := os.WriteFile(filepath.Join(h.dir, "epack.yaml"), []byte(withRemote), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(h.dir, ".epack", "remote-config.json")); err != nil {
+		t.Fatal(err)
+	}
+	readAllStdin = func() ([]byte, error) { return []byte("sentry-token"), nil }
+	err := h.run(t, "set", "SENTRY_AUTH_TOKEN", "--stdin")
+	if err == nil || err.Error() != "no component in this configuration lists SENTRY_AUTH_TOKEN; pass --unlisted to store it anyway" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestApprove_ShowsTheChangeAndRecordsWithYes(t *testing.T) {
 	h := setup(t)
 	readAllStdin = func() ([]byte, error) { return []byte("azure-secret"), nil }

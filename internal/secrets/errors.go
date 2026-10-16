@@ -52,6 +52,15 @@ func CodeOf(err error) Code {
 	return ""
 }
 
+// UnlistedError means no component in the configuration lists the name.
+type UnlistedError struct {
+	Name string
+}
+
+func (e *UnlistedError) Error() string {
+	return fmt.Sprintf("no component in this configuration lists %s; pass --unlisted to store it anyway", e.Name)
+}
+
 func notFound(name string) error {
 	return &StoreError{Code: CodeNotFound, Message: fmt.Sprintf("no value stored for %s", name)}
 }

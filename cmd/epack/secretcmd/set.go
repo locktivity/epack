@@ -3,9 +3,13 @@
 package secretcmd
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
+	"github.com/locktivity/epack/internal/cli/output"
 	"github.com/locktivity/epack/internal/cmdutil"
+	"github.com/locktivity/epack/internal/remoteconfig"
 	"github.com/locktivity/epack/internal/secrets"
 	"github.com/spf13/cobra"
 )
@@ -65,6 +69,10 @@ func runSet(cmd *cobra.Command, name string, fromStdin bool, fromFile string, un
 		return err
 	}
 	readers, err := s.service.Set(s.scope, name, value, s.conf, s.interactive, unlisted)
+	var notListed *secrets.UnlistedError
+	if errors.As(err, &notListed) {
+		return s.notListedError(notListed)
+	}
 	if err != nil {
 		return cmdutil.HandleError(err)
 	}
@@ -75,6 +83,30 @@ func runSet(cmd *cobra.Command, name string, fromStdin bool, fromFile string, un
 	s.out.Print("Kept in your keychain for %s and approved for %s.\n", s.scope, readerNames(readers))
 	s.printStillNeeded()
 	return nil
+}
+
+func (s *session) notListedError(err *secrets.UnlistedError) error {
+	state, _ := remoteconfig.LoadState(s.workDir)
+	if state == nil || state.Name == "" || state.Remote == "" {
+		return cmdutil.HandleError(err)
+	}
+	held := output.Printable(state.Name)
+	if state.Revision > 0 {
+		held = fmt.Sprintf("revision %d of %s", state.Revision, held)
+	}
+	return userError(
+		fmt.Sprintf("no component in %s lists %s", held, err.Name),
+		fmt.Sprintf("This folder may be behind the current revision. Run 'epack remote clone' %s to update it, then run this command again. If the current revision does not list %s either, pass --unlisted to store it anyway", s.cloneLocation(), err.Name),
+	)
+}
+
+// cloneLocation is where to run a bare 'epack remote clone', which reads the
+// pull record from the working directory only.
+func (s *session) cloneLocation() string {
+	if cwd, err := os.Getwd(); err == nil && cwd == s.workDir {
+		return "in this folder"
+	}
+	return "in " + s.workDir
 }
 
 func (s *session) readValue(name string, fromStdin bool, fromFile string) (string, error) {
