@@ -1,1 +1,2 @@
 *.golden text eol=lf
+*.tmpl text eol=lf
