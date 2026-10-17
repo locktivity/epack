@@ -51,7 +51,8 @@ Pushing the tag triggers the release workflow (`.github/workflows/release.yaml`)
    - `epack-core-{os}-{arch}` (minimal version: no components)
    - `*.intoto.jsonl` provenance attestations for each binary
 3. **GitHub Release created** - With checksums and release notes
-4. **Homebrew formulas updated** - In `locktivity/homebrew-tap`
+4. **Homebrew formulas updated** - In `locktivity/homebrew-tap` (final versions only)
+5. **Container images pushed** - `ghcr.io/locktivity/epack` and `ghcr.io/locktivity/epack-core` for linux/amd64 and linux/arm64, tagged with the version and, for final versions, `latest`. Each image's digest is attached to the release as `<variant>-image-digest.txt`.
 
 ### 5. Verify the Release
 
@@ -66,6 +67,7 @@ After the workflow completes:
    - `epack-core-windows-amd64.exe`, `epack-core-windows-arm64.exe` (core only; the components build is not supported on Windows)
    - `*.intoto.jsonl` (provenance attestations)
    - `checksums.txt`
+   - `epack-image-digest.txt`, `epack-core-image-digest.txt`
 3. Test Homebrew installation:
    ```bash
    brew update
@@ -79,6 +81,16 @@ After the workflow completes:
      --source-uri github.com/locktivity/epack \
      --source-tag v0.2.0
    ```
+
+## Release Candidates
+
+A tag with a semver prerelease suffix, such as `v0.2.0-rc.1`, runs the same workflow with three differences:
+
+- The GitHub Release is marked as a prerelease.
+- The Homebrew formulas are not updated.
+- Container images get only the version tag, so `latest` stays on the last final release.
+
+Go's `@latest` skips prerelease versions too. To test a candidate, install it by its exact version, from its release page or the `ghcr.io/locktivity/epack:0.2.0-rc.1` image. When it passes, tag the final version on the same commit. A fix goes into the next candidate, `-rc.2`.
 
 ## SLSA Level 3 Provenance
 
@@ -107,6 +119,8 @@ Follow [Semantic Versioning](https://semver.org/):
 - **MAJOR** (1.0.0): Breaking changes to CLI flags, library API, or pack format
 - **MINOR** (0.2.0): New features, backward-compatible
 - **PATCH** (0.1.1): Bug fixes, backward-compatible
+
+Don't use v0.8.0. The Go module proxy already serves an earlier build with that number, and a new v0.8.0 would fail checksum verification.
 
 ## Build Artifacts
 
@@ -148,7 +162,7 @@ Build configurations are in `.slsa-goreleaser/`.
 1. Check the [Actions tab](https://github.com/locktivity/epack/actions) for error details
 2. Common issues:
    - Tests failing - fix and re-tag
-   - `HOMEBREW_TAP_TOKEN` expired - regenerate the PAT
+   - Homebrew job can't push to the tap - see [Homebrew formula not updated](#homebrew-formula-not-updated)
    - SLSA builder version mismatch - update `@v2.1.0` reference if needed
 
 ### Re-releasing a version
@@ -167,13 +181,15 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
+Re-tag only the same commit. The Go module proxy keeps the first contents it fetched for a tag, so a tag moved to a different commit fails checksum verification for anyone installing with Go. For a code fix, release a new version or a new release candidate.
+
 **Note:** If the GitHub Release was already created, delete it manually before re-pushing the tag.
 
 ### Homebrew formula not updated
 
-The `HOMEBREW_TAP_TOKEN` must have `repo` scope for `locktivity/homebrew-tap`. Verify:
-1. The token hasn't expired
-2. The token has correct permissions
+Release candidates never update the formulas. For a final version, the homebrew job pushes to `locktivity/homebrew-tap` with a short-lived GitHub App token, generated from the `APP_ID` and `APP_PRIVATE_KEY` repository secrets. Verify:
+1. Both secrets are set, and `APP_PRIVATE_KEY` holds a current key for the app
+2. The app is installed on `locktivity/homebrew-tap` with read and write access to repository contents
 3. The `locktivity/homebrew-tap` repository exists with `Formula/` directory
 
 ### SLSA provenance verification fails
