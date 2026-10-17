@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/locktivity/epack/internal/cli/exitmap"
 	"github.com/locktivity/epack/internal/component/config"
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/lockprovenance"
@@ -36,6 +37,10 @@ func newReportLockCommand() *cobra.Command {
 This command is intended for CI bootstrap and refresh flows. It sends the raw
 lockfile, a SHA-256 hash, a normalized component summary, and runtime context
 from the runner environment.
+
+A failure report also lists the collectors that failed, with each one's
+failure code and exit code, when the last error in EPACK_ERROR_FILE has the
+code given as --failure-code.
 
 Examples:
   epack remote report-lock locktivity --reason bootstrap
@@ -94,6 +99,7 @@ func runReportLock(cmd *cobra.Command, args []string) error {
 		Outcome:        reportLockOutcome,
 		FailureCode:    reportLockFailureCode,
 		FailureMessage: reportLockFailureMessage,
+		Metadata:       reportLockMetadata(reportLockOutcome, reportLockFailureCode, os.Getenv),
 	})
 	if err != nil {
 		return exitError("report-lock failed: %v", err)
@@ -144,6 +150,21 @@ func loadReportLockConfig(remoteName, envName string) (string, *config.JobConfig
 		return "", nil, nil, err
 	}
 	return projectRoot, cfg, remoteCfg, nil
+}
+
+// reportLockMetadata lists the collectors a failed command named in
+// EPACK_ERROR_FILE under collect.failures, where 'epack run' reports its own.
+// The file carries no error text for each collector, so the entries have
+// none.
+func reportLockMetadata(outcome, failureCode string, getenv func(string) string) map[string]any {
+	if outcome != lockprovenance.OutcomeFailure {
+		return nil
+	}
+	failures := exitmap.ReadCollectorFailures(getenv(exitmap.ErrorFileEnv), failureCode)
+	if len(failures) == 0 {
+		return nil
+	}
+	return map[string]any{"collect": map[string]any{"failures": failures}}
 }
 
 func buildReportLockTarget(remoteCfg *config.RemoteConfig) remote.TargetConfig {

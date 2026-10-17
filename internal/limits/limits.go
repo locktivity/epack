@@ -34,6 +34,10 @@ var (
 	// ConfigFile is the limit for epack.yaml and similar config files (1 MB).
 	ConfigFile SizeLimit = 1 * 1024 * 1024
 
+	// ErrorFile is the limit for the EPACK_ERROR_FILE that failed commands
+	// append to (1 MB).
+	ErrorFile SizeLimit = 1 * 1024 * 1024
+
 	// ProfileFile is the limit for profile and overlay YAML files (1 MB).
 	ProfileFile SizeLimit = 1 * 1024 * 1024
 

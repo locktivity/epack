@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func TestBuildConformanceCommand_NormalizesKind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd, err := buildConformanceCommand(context.Background(), tt.kind, "./component", false)
+			cmd, err := buildConformanceCommand(context.Background(), tt.kind, "./component", conformanceFlags{})
 			if err != nil {
 				t.Fatalf("buildConformanceCommand returned error: %v", err)
 			}
@@ -49,5 +50,30 @@ func TestBuildConformanceCommand_NormalizesKind(t *testing.T) {
 				t.Fatalf("expected binary path ./component, got %q", got)
 			}
 		})
+	}
+}
+
+func TestBuildConformanceCommand_FlagsFollowTypeAndBinary(t *testing.T) {
+	tempDir := t.TempDir()
+	binaryName := "epack-conformance"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, binaryName), []byte("stub"), 0o755); err != nil {
+		t.Fatalf("write conformance stub: %v", err)
+	}
+	t.Setenv("PATH", tempDir)
+
+	cmd, err := buildConformanceCommand(context.Background(), "collector", "./component", conformanceFlags{
+		Verbose: true,
+		Config:  "testdata/conformance.json",
+		Secrets: []string{"API_TOKEN", "API_SECRET"},
+	})
+	if err != nil {
+		t.Fatalf("buildConformanceCommand returned error: %v", err)
+	}
+	want := "collector ./component --verbose --config testdata/conformance.json --secret API_TOKEN --secret API_SECRET"
+	if got := strings.Join(cmd.Args[1:], " "); got != want {
+		t.Fatalf("args = %q, want %q", got, want)
 	}
 }

@@ -5,8 +5,11 @@ package componentconf
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,28 +18,40 @@ import (
 	"unicode/utf8"
 
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/internal/procexec"
 	"github.com/locktivity/epack/internal/validate"
 )
 
 // Runner executes conformance tests against a component binary.
 type Runner struct {
-	Binary     string                       // Path to component binary
-	Type       componenttypes.ComponentKind // Component type (collector, tool, remote, utility)
-	Timeout    time.Duration                // Execution timeout
-	WorkDir    string                       // Working directory for tests
-	Verbose    bool                         // Enable verbose output
-	results    []TestResult
-	caps       map[string]interface{}
-	binaryName string
+	Binary          string                       // Path to component binary
+	Type            componenttypes.ComponentKind // Component type (collector, tool, remote, utility)
+	Timeout         time.Duration                // Execution timeout
+	WorkDir         string                       // Working directory for tests
+	Verbose         bool                         // Enable verbose output
+	CollectorConfig string                       // Config file a collector can collect with (--config)
+	// CollectorSecrets name the variables a collector reads credentials
+	// from (--secret). Every run sets each to a canary value no output may
+	// contain.
+	CollectorSecrets []string
+	results          []TestResult
+	timeouts         int               // runs killed at Timeout
+	signalDelay      time.Duration     // COL-031's wait for a collector that reports no progress
+	canaries         map[string]string // secret name to its canary value
+	leaks            []secretLeak
+	collectRun       execResult // the run with --config, which should collect
+	caps             map[string]interface{}
+	binaryName       string
 }
 
 // NewRunner creates a new conformance test runner.
 func NewRunner(binary string, componentType componenttypes.ComponentKind) *Runner {
 	return &Runner{
-		Binary:  binary,
-		Type:    componentType,
-		Timeout: 30 * time.Second,
+		Binary:      binary,
+		Type:        componentType,
+		Timeout:     30 * time.Second,
+		signalDelay: defaultSignalDelay,
 	}
 }
 
@@ -52,6 +67,24 @@ func (r *Runner) Run(ctx context.Context) (*Report, error) {
 			return nil, fmt.Errorf("resolve binary path: %w", err)
 		}
 		r.Binary = abs
+	}
+	if r.CollectorConfig != "" && !filepath.IsAbs(r.CollectorConfig) {
+		abs, err := filepath.Abs(r.CollectorConfig)
+		if err != nil {
+			return nil, fmt.Errorf("resolve config path: %w", err)
+		}
+		r.CollectorConfig = abs
+	}
+
+	if len(r.CollectorSecrets) > 0 {
+		r.canaries = make(map[string]string, len(r.CollectorSecrets))
+		for _, name := range r.CollectorSecrets {
+			canary, err := newCanary()
+			if err != nil {
+				return nil, err
+			}
+			r.canaries[name] = canary
+		}
 	}
 
 	// Create temp working directory
@@ -144,18 +177,14 @@ type execResult struct {
 func (r *Runner) exec(ctx context.Context, args []string, stdin []byte, env map[string]string) execResult {
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()
-
-	// Build environment
-	cmdEnv := os.Environ()
-	for k, v := range env {
-		cmdEnv = append(cmdEnv, k+"="+v)
-	}
+	env, outputDir, cleanup := r.withOutputDir(env)
+	defer cleanup()
 
 	res, err := procexec.RunCapture(ctx, procexec.Spec{
 		Path:  r.Binary,
 		Args:  args,
 		Dir:   r.WorkDir,
-		Env:   cmdEnv,
+		Env:   r.envList(env),
 		Stdin: bytes.NewReader(stdin),
 	})
 
@@ -168,8 +197,132 @@ func (r *Runner) exec(ctx context.Context, args []string, stdin []byte, env map[
 		result.ExitCode = res.ExitCode
 		result.Err = err
 	}
+	if res.TimedOut {
+		r.timeouts++
+	}
+	r.recordLeaks(env, res.Stdout, res.Stderr, res.ExitCode)
+	r.recordFileLeaks(env, outputDir, res.ExitCode)
 
 	return result
+}
+
+// withOutputDir gives a collector run a fresh staging directory, as the epack
+// runner does, and returns the cleanup that removes it. It lives in the
+// working directory, so a scan of that directory covers file artifacts too.
+func (r *Runner) withOutputDir(env map[string]string) (map[string]string, string, func()) {
+	if r.Type != componenttypes.KindCollector {
+		return env, "", func() {}
+	}
+	dir, err := os.MkdirTemp(r.WorkDir, "output-")
+	if err != nil {
+		return env, "", func() {}
+	}
+	withDir := make(map[string]string, len(env)+1)
+	for k, v := range env {
+		withDir[k] = v
+	}
+	withDir["EPACK_COLLECTOR_OUTPUT_DIR"] = dir
+	return withDir, dir, func() { _ = os.RemoveAll(dir) }
+}
+
+// envList is this process's environment with env added, then each secret's
+// canary. Later entries win, so a real credential in this process's
+// environment never reaches the component.
+func (r *Runner) envList(env map[string]string) []string {
+	list := os.Environ()
+	for k, v := range env {
+		list = append(list, k+"="+v)
+	}
+	for name, canary := range r.canaries {
+		list = append(list, name+"="+canary)
+	}
+	return list
+}
+
+// secretLeak is a secret's canary found in something a run wrote.
+type secretLeak struct {
+	name   string
+	stream string // "stdout", "stderr", "staged file <path>", or "working-directory file <path>"
+	run    string
+	exit   int
+}
+
+// newCanary returns a value no component could print by chance.
+func newCanary() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate canary: %w", err)
+	}
+	return "epack-canary-" + hex.EncodeToString(b[:]), nil
+}
+
+// recordLeaks notes each canary in a run's stdout, which carries its data
+// artifacts and progress lines, and its stderr.
+func (r *Runner) recordLeaks(env map[string]string, stdout, stderr []byte, exit int) {
+	r.recordLeak(env, "stdout", stdout, exit)
+	r.recordLeak(env, "stderr", stderr, exit)
+}
+
+// recordFileLeaks notes each canary in a file the run left in its working
+// directory, which holds its staging directory and so its file artifacts.
+// A file an earlier run left is scanned again but noted once.
+func (r *Runner) recordFileLeaks(env map[string]string, outputDir string, exit int) {
+	if len(r.canaries) == 0 {
+		return
+	}
+	_ = filepath.WalkDir(r.WorkDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() > limits.Artifact.Bytes() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		where := "working-directory file "
+		rel, err := filepath.Rel(r.WorkDir, path)
+		if outputDir != "" {
+			if staged, serr := filepath.Rel(outputDir, path); serr == nil && !strings.HasPrefix(staged, "..") {
+				where, rel, err = "staged file ", staged, nil
+			}
+		}
+		if err != nil {
+			return nil
+		}
+		where += filepath.ToSlash(rel)
+		for _, leak := range r.leaks {
+			if leak.stream == where {
+				return nil
+			}
+		}
+		r.recordLeak(env, where, data, exit)
+		return nil
+	})
+}
+
+// recordLeak notes each canary in data. It matches the random part, so a
+// leak survives a stripped prefix or quoting.
+func (r *Runner) recordLeak(env map[string]string, where string, data []byte, exit int) {
+	for name, canary := range r.canaries {
+		if bytes.Contains(data, []byte(strings.TrimPrefix(canary, "epack-canary-"))) {
+			r.leaks = append(r.leaks, secretLeak{name: name, stream: where, run: r.runLabel(env), exit: exit})
+		}
+	}
+}
+
+// runLabel names a collector run by the config it had.
+func (r *Runner) runLabel(env map[string]string) string {
+	switch env["EPACK_COLLECTOR_CONFIG"] {
+	case "":
+		return "the run without config"
+	case r.CollectorConfig:
+		return "the run with --config"
+	default:
+		return "a run with a test config"
+	}
 }
 
 // Common test helpers

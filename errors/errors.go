@@ -66,6 +66,16 @@ const (
 	BinaryNotFound            Code = "binary_not_found"
 	InsecureInstall           Code = "insecure_install"
 
+	// Collector run failures. CollectFailed is the code of the error a run
+	// returns when collectors fail. The others class one failed collector:
+	// by the exit code it used (2 config, 3 auth, any other collector_error;
+	// exit 4 is NetworkError), or by a result epack could not use.
+	CollectFailed          Code = "collect_failed"
+	CollectorConfigInvalid Code = "config_invalid"
+	CollectorAuthFailed    Code = "auth_failed"
+	CollectorError         Code = "collector_error"
+	CollectorOutputInvalid Code = "invalid_output"
+
 	// Remote adapter errors
 	RemoteNotFound    Code = "remote_not_found"
 	AdapterNotFound   Code = "adapter_not_found"

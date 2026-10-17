@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -80,15 +81,24 @@ type rawArtifactEntry struct {
 }
 
 // ParseCollectorOutput decodes collector stdout.
-// If stdout is not protocol-envelope JSON, it is preserved as a single artifact for lossless passthrough.
+// If stdout is JSON without the protocol envelope, it is preserved as a single artifact for lossless passthrough.
 // Handles:
 // - New format with "artifacts" array (multiple artifacts with schema/path)
 // - Legacy format with "data" field (single artifact)
 // - Plain JSON (single artifact, no envelope)
-// - Non-JSON (wrapped as string)
+//
+// Empty stdout, JSON null, non-JSON text, and an envelope that lists no
+// artifacts are errors: none of them is evidence.
 func ParseCollectorOutput(output []byte) (*CollectorOutput, error) {
+	trimmed := bytes.TrimSpace(output)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("stdout is empty")
+	}
 	if !json.Valid(output) {
-		return wrapNonJSONOutput(output)
+		return nil, fmt.Errorf("stdout is not JSON (%d bytes)", len(output))
+	}
+	if bytes.Equal(trimmed, []byte("null")) {
+		return nil, fmt.Errorf("stdout is JSON null")
 	}
 
 	var raw map[string]json.RawMessage
@@ -140,6 +150,9 @@ func extractEnvelope(raw map[string]json.RawMessage) (*CollectorOutput, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(artifacts) == 0 {
+			return nil, fmt.Errorf("the result lists no artifacts")
+		}
 		output.Artifacts = artifacts
 		return output, nil
 	}
@@ -176,18 +189,6 @@ func parseArtifactsArray(raw json.RawMessage) ([]CollectorArtifact, error) {
 		}
 	}
 	return artifacts, nil
-}
-
-// wrapNonJSONOutput wraps non-JSON output as a JSON string in a single artifact.
-func wrapNonJSONOutput(output []byte) (*CollectorOutput, error) {
-	quoted, err := json.Marshal(string(output))
-	if err != nil {
-		return nil, fmt.Errorf("marshaling non-JSON output: %w", err)
-	}
-	return &CollectorOutput{
-		ProtocolVersion: 0,
-		Artifacts:       []CollectorArtifact{{RawData: quoted}},
-	}, nil
 }
 
 // preserveAsRawData creates output with the original JSON preserved as a single artifact.
@@ -721,6 +722,10 @@ func (r *Runner) runOne(ctx context.Context, jobCfg *config.JobConfig, run singl
 	}, opts)
 	if err != nil {
 		result.Error = err
+		return result
+	}
+	if _, err := ParseCollectorOutput(output); err != nil {
+		result.Error = errors.E(errors.CollectorOutputInvalid, "collector exited 0 without a usable result", err)
 		return result
 	}
 

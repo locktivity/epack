@@ -6,6 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/version"
 )
 
 // TestOptions configures conformance testing.
@@ -15,6 +18,15 @@ type TestOptions struct {
 
 	// Verbose enables detailed test output.
 	Verbose bool
+
+	// ConfigPath is a collector config to pass to the conformance harness.
+	// Empty in directory mode uses the project's testdata/conformance.json
+	// when it has one.
+	ConfigPath string
+
+	// Secrets name the variables a collector reads credentials from. The
+	// harness sets each to a canary value and fails if any output contains it.
+	Secrets []string
 
 	// OnBuildStart is called when building starts (for directory mode).
 	OnBuildStart func()
@@ -56,7 +68,16 @@ func Test(ctx context.Context, opts TestOptions) (*TestResult, error) {
 		opts.OnTestStart(caps)
 	}
 
-	conformanceCmd, err := buildConformanceCommand(ctx, caps.Kind, binaryPath, opts.Verbose)
+	configPath := opts.ConfigPath
+	if configPath == "" && caps.Kind == string(componenttypes.KindCollector) {
+		configPath = projectConformanceConfig(opts.BinaryPath)
+	}
+
+	conformanceCmd, err := buildConformanceCommand(ctx, caps.Kind, binaryPath, conformanceFlags{
+		Verbose: opts.Verbose,
+		Config:  configPath,
+		Secrets: opts.Secrets,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +113,10 @@ func resolveTestBinary(ctx context.Context, opts TestOptions) (string, error) {
 }
 
 func buildProjectBinary(ctx context.Context, opts TestOptions) (string, error) {
-	projectDir := opts.BinaryPath
+	projectDir, err := filepath.Abs(opts.BinaryPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving path: %w", err)
+	}
 	if !IsGoProject(projectDir) {
 		return "", fmt.Errorf("directory mode requires a Go project (go.mod not found in %s)", projectDir)
 	}
@@ -101,7 +125,7 @@ func buildProjectBinary(ctx context.Context, opts TestOptions) (string, error) {
 		opts.OnBuildStart()
 	}
 
-	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", binaryPath, ".")
+	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", binaryPath, MainPackage(projectDir))
 	buildCmd.Dir = projectDir
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
@@ -118,17 +142,56 @@ func buildProjectBinary(ctx context.Context, opts TestOptions) (string, error) {
 	return binaryPath, nil
 }
 
-func buildConformanceCommand(ctx context.Context, kind, binaryPath string, verbose bool) (*exec.Cmd, error) {
+// projectConformanceConfig is the testdata/conformance.json of the project
+// directory path names, or "" when path is a binary or the file is absent.
+func projectConformanceConfig(path string) string {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	config := filepath.Join(path, "testdata", "conformance.json")
+	if _, err := os.Stat(config); err != nil {
+		return ""
+	}
+	return config
+}
+
+// conformanceFlags are the epack-conformance flags epack sdk test passes.
+type conformanceFlags struct {
+	Verbose bool
+	Config  string
+	Secrets []string
+}
+
+func buildConformanceCommand(ctx context.Context, kind, binaryPath string, flags conformanceFlags) (*exec.Cmd, error) {
 	conformancePath, err := exec.LookPath("epack-conformance")
 	if err != nil {
-		return nil, fmt.Errorf("epack-conformance not found in PATH\n\nInstall with: go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest")
+		return nil, fmt.Errorf("epack-conformance not found in PATH\n\nInstall with: %s", ConformanceInstallCommand())
 	}
 
+	// epack-conformance reads the type and binary first, then its flags.
 	args := []string{conformanceType(kind), binaryPath}
-	if verbose {
-		args = append([]string{"-v"}, args...)
+	if flags.Verbose {
+		args = append(args, "--verbose")
+	}
+	if flags.Config != "" {
+		args = append(args, "--config", flags.Config)
+	}
+	for _, name := range flags.Secrets {
+		args = append(args, "--secret", name)
 	}
 	return exec.CommandContext(ctx, conformancePath, args...), nil
+}
+
+// ConformanceInstallCommand installs the conformance harness of this epack's
+// release, or of main for a source build, so the harness matches the epack
+// that runs it rather than whatever @latest resolves to.
+func ConformanceInstallCommand() string {
+	v := epackModuleVersion(version.Version)
+	if v == "" {
+		v = "main"
+	}
+	return "go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@" + v
 }
 
 func conformanceType(kind string) string {

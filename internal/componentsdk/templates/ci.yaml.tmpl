@@ -43,7 +43,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: go build -o {{.BinaryName}} .
+        run: go build -o {{.BinaryName}} {{.MainPackage}}
 
       - name: Verify binary runs
         run: ./{{.BinaryName}} --version
@@ -56,12 +56,23 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+{{- if eq .Kind "collector"}}
+
+      # The Makefile pins the harness to go.mod's epack version and passes
+      # testdata/conformance.json and CONFORMANCE_SECRETS.
+      - name: Run conformance tests
+        run: make conformance
+{{- else}}
 
       - name: Build
-        run: go build -o {{.BinaryName}} .
+        run: go build -o {{.BinaryName}} {{.MainPackage}}
 
       - name: Install epack-conformance
-        run: go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest
+        run: |
+          EPACK_VERSION="$(go list -m -f '{{"{{"}}.Version{{"}}"}}' github.com/locktivity/epack)"
+          echo "Installing epack-conformance at ${EPACK_VERSION}"
+          go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@"${EPACK_VERSION}"
 
       - name: Run conformance tests
         run: epack-conformance {{.Kind}} ./{{.BinaryName}} --level standard
+{{- end}}

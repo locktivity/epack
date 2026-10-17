@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/locktivity/epack/errors"
@@ -192,5 +193,92 @@ func TestWriteErrorFile_PlainErrorAppends(t *testing.T) {
 	want := "code=error\nexit=1\nsummary=first\ncode=error\nexit=1\nsummary=second\n"
 	if got != want {
 		t.Fatalf("error file = %q, want %q", got, want)
+	}
+}
+
+// failedRun stands in for collector.FailedError, which the collector package
+// tests against WriteErrorFile end to end.
+type failedRun struct{ summary *errors.Error }
+
+func (f failedRun) Error() string { return f.summary.Message }
+func (f failedRun) Unwrap() error { return f.summary }
+
+func (failedRun) EachCollectorFailure(fn func(collector string, code errors.Code, exit int, codeSource string)) {
+	fn("okta", "auth_failed", 3, "exit_code")
+	fn("sentry", errors.Timeout, exitcode.Timeout, "runner")
+}
+
+func TestWriteErrorFile_ListsEachFailedCollector(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "error.txt")
+	err := fmt.Errorf("collect failed: %w", failedRun{&errors.Error{Code: "collect_failed", Exit: exitcode.General, Message: "2 collectors failed: okta, sentry"}})
+
+	if werr := WriteErrorFile(path, err); werr != nil {
+		t.Fatalf("WriteErrorFile() = %v", werr)
+	}
+
+	data, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("reading error file: %v", rerr)
+	}
+	got := string(data)
+	want := "code=collect_failed\nexit=1\nsummary=collect failed: 2 collectors failed: okta, sentry\n" +
+		"collector=okta code=auth_failed exit=3 code_source=exit_code\n" +
+		fmt.Sprintf("collector=sentry code=timeout exit=%d code_source=runner\n", exitcode.Timeout)
+	if got != want {
+		t.Fatalf("error file = %q, want %q", got, want)
+	}
+}
+
+func TestReadCollectorFailures_ReadsWhatWriteErrorFileWrote(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "error.txt")
+	err := failedRun{&errors.Error{Code: "collect_failed", Exit: exitcode.General, Message: "2 collectors failed: okta, sentry"}}
+	if werr := WriteErrorFile(path, err); werr != nil {
+		t.Fatalf("WriteErrorFile() = %v", werr)
+	}
+
+	got := ReadCollectorFailures(path, "collect_failed")
+	want := []CollectorFailure{{Collector: "okta", Code: "auth_failed", Exit: 3, CodeSource: "exit_code"}, {Collector: "sentry", Code: "timeout", Exit: exitcode.Timeout, CodeSource: "runner"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ReadCollectorFailures() = %+v, want %+v", got, want)
+	}
+}
+
+func TestReadCollectorFailures_OnlyTheLastErrorWithTheReportedCode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "error.txt")
+	earlier := "code=collect_failed\nexit=1\nsummary=2 collectors failed: okta, sentry\n" +
+		"collector=okta code=auth_failed exit=3\ncollector=sentry code=timeout exit=13\n"
+	last := "code=collect_failed\nexit=3\nsummary=okta: exited with code 3: 401 Unauthorized\n" +
+		"collector=okta code=auth_failed exit=3\ncollector=tls code=collector_error exit=three\n"
+	if err := os.WriteFile(path, []byte(earlier+last), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ReadCollectorFailures(path, "collect_failed")
+	want := []CollectorFailure{{Collector: "okta", Code: "auth_failed", Exit: 3}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ReadCollectorFailures() = %+v, want %+v", got, want)
+	}
+	if got := ReadCollectorFailures(path, "workflow_failed"); got != nil {
+		t.Errorf("another code = %+v, want none", got)
+	}
+
+	hook := "code=hook_failed\nexit=1\nsummary=post-collect hook exited 1\n"
+	if err := os.WriteFile(path, []byte(earlier+hook), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadCollectorFailures(path, "collect_failed"); got != nil {
+		t.Errorf("collect failure before a later error = %+v, want none", got)
+	}
+	if got := ReadCollectorFailures(path, "hook_failed"); got != nil {
+		t.Errorf("later error without collectors = %+v, want none", got)
+	}
+}
+
+func TestReadCollectorFailures_NoFileListsNone(t *testing.T) {
+	if got := ReadCollectorFailures("", "collect_failed"); got != nil {
+		t.Errorf("no path = %+v, want none", got)
+	}
+	if got := ReadCollectorFailures(filepath.Join(t.TempDir(), "missing.txt"), "collect_failed"); got != nil {
+		t.Errorf("missing file = %+v, want none", got)
 	}
 }

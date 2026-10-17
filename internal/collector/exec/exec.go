@@ -87,6 +87,17 @@ type RunResult struct {
 	Err    error
 }
 
+// ExitError reports a collector that exited with a non-zero code, or -1 when
+// a signal ended it. Stderr is already sanitized.
+type ExitError struct {
+	Code   int
+	Stderr string
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("collector exited with code %d: %s", e.Code, e.Stderr)
+}
+
 // streamingStdoutWriter intercepts stdout, parses progress messages, and collects
 // the final result. Progress messages are forwarded via callback; the result
 // message is accumulated in the result buffer.
@@ -220,7 +231,7 @@ func Run(ctx context.Context, inv Invocation) RunResult {
 			// SECURITY: Sanitize stderr before including in error messages.
 			sanitized := SanitizeStderr(stderr.String(), secretValues(inv.Env)...)
 			return RunResult{
-				Err: fmt.Errorf("collector exited with code %d: %s", exitErr.ExitCode(), sanitized),
+				Err: &ExitError{Code: exitErr.ExitCode(), Stderr: sanitized},
 			}
 		}
 		return RunResult{

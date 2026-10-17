@@ -125,89 +125,45 @@ echo ""
 	return files, nil
 }
 
-// generateCollectorMocks creates mock inputs for testing collectors.
+// generateCollectorMocks creates mock inputs for testing collectors: a JSON
+// config and a script that runs a collector the way epack does, with the
+// config named by EPACK_COLLECTOR_CONFIG and nothing on stdin.
 func generateCollectorMocks(outputDir string) ([]string, error) {
-	var files []string
-
-	// Create sample configuration
-	configPath := filepath.Join(outputDir, "sample-config.yaml")
-	configContent := `# Sample collector configuration for testing
-#
-# This file simulates the configuration that would be passed to your collector
-# via the epack.yaml job configuration.
-
-# Example configuration fields (customize for your collector)
-target: https://api.example.com
-credentials:
-  api_key: ${API_KEY}  # Will be expanded from environment
-options:
-  include_metadata: true
-  max_results: 100
+	configPath := filepath.Join(outputDir, "config.json")
+	configContent := `{
+  "level": "trust",
+  "targets": ["example"]
+}
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		return nil, fmt.Errorf("writing config: %w", err)
 	}
-	files = append(files, configPath)
 
-	// Create environment file
-	envPath := filepath.Join(outputDir, "sample.env")
-	envContent := `# Sample environment variables for testing your collector
+	scriptPath := filepath.Join(outputDir, "run-collector.sh")
+	scriptContent := `#!/bin/sh
+# Runs a collector the way epack does. Config arrives as the JSON file named
+# by EPACK_COLLECTOR_CONFIG, never on stdin. Export the variables your
+# collector lists under secrets: in epack.yaml before running.
 #
-# Source this file before running your collector:
-#   source sample.env && ./your-collector
-
-# Standard epack environment variables
-EPACK_OUTPUT_DIR=./output
-EPACK_WORK_DIR=./work
-
-# Collector-specific variables (customize for your collector)
-API_KEY=test-api-key-12345
-API_SECRET=test-secret-value
-`
-	if err := os.WriteFile(envPath, []byte(envContent), 0644); err != nil {
-		return nil, fmt.Errorf("writing env file: %w", err)
-	}
-	files = append(files, envPath)
-
-	// Create output directory
-	outputPath := filepath.Join(outputDir, "output")
-	if err := os.MkdirAll(outputPath, 0755); err != nil {
-		return nil, fmt.Errorf("creating output directory: %w", err)
-	}
-
-	// Create test script
-	scriptPath := filepath.Join(outputDir, "test-collector.sh")
-	scriptContent := `#!/bin/bash
-# Test script for running your collector with sample inputs
-#
-# Usage: ./test-collector.sh ./your-collector-binary
+# Usage: ./run-collector.sh ./epack-collector-<name>
+set -eu
 
 COLLECTOR="${1:?Usage: $0 <collector-binary>}"
-SCRIPT_DIR="$(dirname "$0")"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+NAME="$(basename "$COLLECTOR")"
+mkdir -p "$DIR/output"
 
-echo "Testing collector: $COLLECTOR"
-echo ""
-
-# Set up environment
-source "$SCRIPT_DIR/sample.env"
-
-# Create output directory
-mkdir -p "$SCRIPT_DIR/output"
-
-# Run the collector
-# Note: Collectors receive configuration via stdin in JSON format
-echo '{"target":"https://api.example.com","options":{"include_metadata":true}}' | \
-    "$COLLECTOR"
-
-echo ""
-echo "Check output in: $SCRIPT_DIR/output/"
+EPACK_COLLECTOR_NAME="${NAME#epack-collector-}" \
+EPACK_PROTOCOL_VERSION=1 \
+EPACK_COLLECTOR_CONFIG="$DIR/config.json" \
+EPACK_COLLECTOR_OUTPUT_DIR="$DIR/output" \
+  "$COLLECTOR" < /dev/null
 `
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
-		return nil, fmt.Errorf("writing test script: %w", err)
+		return nil, fmt.Errorf("writing run script: %w", err)
 	}
-	files = append(files, scriptPath)
 
-	return files, nil
+	return []string{configPath, scriptPath}, nil
 }
 
 // generateRemoteMocks creates mock inputs for testing remote adapters.

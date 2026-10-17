@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/locktivity/epack/internal/componentconf"
@@ -58,13 +59,18 @@ func main() {
 
 	// Parse optional flags
 	jsonOutput := false
+	verbose := false
 	level := "standard" // minimal, standard, full
 	timeout := 30 * time.Second
+	configPath := ""
+	var secrets []string
 
 	for i := 3; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--json":
 			jsonOutput = true
+		case "-v", "--verbose":
+			verbose = true
 		case "--level":
 			if i+1 < len(os.Args) {
 				level = os.Args[i+1]
@@ -78,12 +84,45 @@ func main() {
 				}
 				i++
 			}
+		case "--config":
+			if i+1 < len(os.Args) {
+				configPath = os.Args[i+1]
+				i++
+			}
+		case "--secret":
+			if i+1 < len(os.Args) {
+				secrets = append(secrets, os.Args[i+1])
+				i++
+			}
+		}
+	}
+	for _, name := range secrets {
+		if !envName.MatchString(name) {
+			fmt.Fprintf(os.Stderr, "Error: --secret takes an environment variable name, got %q\n", name)
+			os.Exit(1)
+		}
+	}
+	if len(secrets) > 0 && ct != componenttypes.KindCollector {
+		fmt.Fprintf(os.Stderr, "Error: --secret applies to collectors only\n")
+		os.Exit(1)
+	}
+	if configPath != "" {
+		if ct != componenttypes.KindCollector {
+			fmt.Fprintf(os.Stderr, "Error: --config applies to collectors only\n")
+			os.Exit(1)
+		}
+		if _, err := os.Stat(configPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: config file not found: %s\n", configPath)
+			os.Exit(1)
 		}
 	}
 
 	// Run conformance tests
 	runner := componentconf.NewRunner(binaryPath, ct)
 	runner.Timeout = timeout
+	runner.Verbose = verbose
+	runner.CollectorConfig = configPath
+	runner.CollectorSecrets = secrets
 
 	ctx := context.Background()
 	report, err := runner.Run(ctx)
@@ -98,7 +137,7 @@ func main() {
 		enc.SetIndent("", "  ")
 		enc.Encode(report)
 	} else {
-		printReport(report)
+		printReport(report, verbose)
 	}
 
 	// Exit code based on conformance level
@@ -121,6 +160,9 @@ func main() {
 	os.Exit(exitCode)
 }
 
+// envName matches an environment variable name.
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "epack-conformance - Test component conformance")
 	fmt.Fprintln(os.Stderr, "")
@@ -137,16 +179,35 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  --json            Output JSON report")
 	fmt.Fprintln(os.Stderr, "  --level <level>   Required conformance level (minimal, standard, full)")
 	fmt.Fprintln(os.Stderr, "  --timeout <dur>   Test timeout (e.g., 30s, 1m)")
+	fmt.Fprintln(os.Stderr, "  --config <file>   Collector config to collect with; without it, a collector")
+	fmt.Fprintln(os.Stderr, "                    that needs config skips its output checks")
+	fmt.Fprintln(os.Stderr, "  --secret <name>   Variable the collector reads a credential from; every run sets")
+	fmt.Fprintln(os.Stderr, "                    it to a canary value, which no output may contain (repeatable)")
+	fmt.Fprintln(os.Stderr, "  -v, --verbose     List every result, including passes")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Examples:")
 	fmt.Fprintln(os.Stderr, "  epack-conformance collector ./my-collector")
+	fmt.Fprintln(os.Stderr, "  epack-conformance collector ./my-collector --config testdata/config.json")
+	fmt.Fprintln(os.Stderr, "  epack-conformance collector ./my-collector --config testdata/config.json --secret API_TOKEN")
 	fmt.Fprintln(os.Stderr, "  epack-conformance tool ./my-tool --json")
 	fmt.Fprintln(os.Stderr, "  epack-conformance remote ./my-adapter --level minimal")
 }
 
-func printReport(report *componentconf.Report) {
+func printReport(report *componentconf.Report, verbose bool) {
 	fmt.Printf("Conformance Report: %s (%s)\n", report.Component, report.Type)
 	fmt.Printf("Level: %s\n\n", report.Level)
+
+	if verbose {
+		fmt.Println("Results:")
+		for _, r := range report.Results {
+			line := fmt.Sprintf("  %-4s %s [%s]", r.Status, r.ID, r.Level)
+			if detail := r.Message + r.Reason; detail != "" {
+				line += " " + detail
+			}
+			fmt.Println(line)
+		}
+		fmt.Println()
+	}
 
 	// Summary
 	fmt.Println("Summary:")

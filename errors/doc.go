@@ -50,5 +50,6 @@
 //   - Filesystem: symlink_not_allowed, path_traversal, permission_denied
 //   - Operations: timeout, network_error
 //   - Collector: lockfile_invalid, binary_not_found, insecure_install
+//   - Collector runs: collect_failed, config_invalid, auth_failed, collector_error, invalid_output
 //   - Input: invalid_input
 package errors

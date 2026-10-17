@@ -2,14 +2,17 @@ package runflow
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	epackerrors "github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/collector"
+	collectorexec "github.com/locktivity/epack/internal/collector/exec"
 	"github.com/locktivity/epack/internal/component/config"
+	"github.com/locktivity/epack/internal/exitcode"
 	"github.com/locktivity/epack/internal/secrets"
 	"github.com/locktivity/epack/internal/testutil/testhome"
 	"github.com/locktivity/epack/internal/trustedpublishers"
@@ -241,18 +244,32 @@ func TestRemoteOnlyNames(t *testing.T) {
 func TestCollectFailures_NameTheCollectorsAndKeepTheirErrors(t *testing.T) {
 	collected := &collector.CollectWorkflowResult{CollectorResults: []collector.RunResult{
 		{Collector: "tls", Success: true},
-		{Collector: "okta", Success: false, Error: errors.New("collector exited with code 1: 401 Unauthorized")},
+		{Collector: "okta", Success: false, Error: &collectorexec.ExitError{Code: 3, Stderr: "401 Unauthorized"}},
 	}}
 	failures := collectFailures(collected)
-	if len(failures) != 1 || failures[0].Collector != "okta" || failures[0].Error != "exited with code 1: 401 Unauthorized" {
-		t.Fatalf("failures = %+v", failures)
+	want := collectFailure{Collector: "okta", Error: "exited with code 3: 401 Unauthorized", Code: "auth_failed", Exit: 3, CodeSource: "exit_code"}
+	if len(failures) != 1 || failures[0] != want {
+		t.Fatalf("failures = %+v, want %+v", failures, want)
 	}
-	if got := collectFailureMessage(failures); got != "okta: exited with code 1: 401 Unauthorized" {
+	if got := collectFailureMessage(failures); got != "okta: exited with code 3: 401 Unauthorized" {
 		t.Errorf("one failure message = %q", got)
 	}
-	collected.CollectorResults = append(collected.CollectorResults, collector.RunResult{Collector: "sentry", Error: errors.New("timeout")})
-	if got := collectFailureMessage(collectFailures(collected)); got != "2 collectors failed: okta, sentry" {
+	encoded, err := json.Marshal(failures[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"collector":"okta","error":"exited with code 3: 401 Unauthorized","code":"auth_failed","exit":3,"code_source":"exit_code"}` {
+		t.Errorf("report entry = %s", encoded)
+	}
+
+	timedOut := epackerrors.WithHint(epackerrors.Timeout, exitcode.Timeout, `collector "sentry" timed out after 10m0s`, "Increase timeout", nil)
+	collected.CollectorResults = append(collected.CollectorResults, collector.RunResult{Collector: "sentry", Error: timedOut})
+	failures = collectFailures(collected)
+	if got := collectFailureMessage(failures); got != "2 collectors failed: okta, sentry" {
 		t.Errorf("two failures message = %q", got)
+	}
+	if len(failures) != 2 || failures[1].Code != "timeout" || failures[1].Exit != exitcode.Timeout || failures[1].CodeSource != "runner" {
+		t.Errorf("timeout failure = %+v", failures[1])
 	}
 	if collectFailures(nil) != nil {
 		t.Error("no collect result means no failures")

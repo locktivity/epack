@@ -1013,12 +1013,6 @@ func TestParseCollectorOutput_EnvelopeExtraction(t *testing.T) {
 			wantVersion:     0,
 			wantDataContain: `"key":"value"`,
 		},
-		{
-			name:            "non-JSON text",
-			input:           "plain text output",
-			wantVersion:     0,
-			wantDataContain: "plain text output",
-		},
 	}
 
 	for _, tt := range tests {

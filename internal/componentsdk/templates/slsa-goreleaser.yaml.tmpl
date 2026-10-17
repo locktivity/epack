@@ -7,6 +7,8 @@ ldflags:
   - "-s"
   - "-w"
   - "-X main.Version={{"{{"}} .Env.VERSION {{"}}"}}"
+  - "-X main.Commit={{"{{"}} .Env.COMMIT {{"}}"}}"
 goos: {{.GOOS}}
 goarch: {{.GOARCH}}
+main: {{.MainPackage}}
 binary: {{.BinaryName}}-{{.GOOS}}-{{.GOARCH}}

@@ -94,11 +94,6 @@ func TestAddCollectorArtifacts_OutputConsistency(t *testing.T) {
 			wantJSON: `[1,2,3]`,
 		},
 		{
-			name:     "non-JSON output becomes string",
-			output:   "plain text output",
-			wantJSON: `"plain text output"`,
-		},
-		{
 			name:     "empty JSON object",
 			output:   `{}`,
 			wantJSON: `{}`,

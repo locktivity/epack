@@ -1,5 +1,7 @@
 module {{.ModulePath}}
 
-go 1.23.0
+go 1.26.0
+{{- if .EpackVersion}}
 
 require github.com/locktivity/epack {{.EpackVersion}}
+{{- end}}

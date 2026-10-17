@@ -370,18 +370,18 @@ The parser detects legacy format (has `data` instead of `artifacts`) and convert
 
 Any valid JSON object or array without the envelope. The protocol version is inferred as 0.
 
-**Non-JSON text:**
+**Output that is not evidence:**
 
-Plain text output is preserved as a JSON string.
+A collector that exits 0 must print a result. epack fails the collector, with the code `invalid_output`, when its stdout (after progress messages) is empty, is JSON `null`, is not JSON, or is an envelope whose `artifacts` array is empty or `null`.
 
 ### Output Parsing
 
 The parser handles output as follows:
 
-1. **Protocol envelope with `artifacts`**: Extracts each artifact's data, schema, and path
+1. **Protocol envelope with `artifacts`**: Extracts each artifact's data, schema, and path; an empty `artifacts` array is an error
 2. **Protocol envelope with `data` (legacy)**: Converts to single artifact, preserving exact bytes (prevents float64 precision loss for large integers)
 3. **Plain JSON**: Preserves as-is as single artifact with `protocol_version = 0`
-4. **Non-JSON text**: Quoted as JSON string with `protocol_version = 0`
+4. **Anything else** (empty, `null`, or non-JSON): Fails the collector with `invalid_output`
 
 ### Artifact Storage
 
@@ -478,6 +478,27 @@ Collectors should use these exit codes:
 - `4`: Network/API error
 - `5-9`: Collector-specific errors
 
+SDK collectors get these from the typed errors: `ConfigError` exits 2, `AuthError` 3, and `NetworkError` 4, including when one is returned as a pointer or wrapped with `%w`. An error that reaches `context.DeadlineExceeded` without a typed error around it exits 4. Any other error exits 1.
+
+### Collector Failures
+
+When collectors fail, `epack collect`, `epack collector run`, and `epack run` stop before building a pack and report each failed collector with a code and an exit code:
+
+| Code | Failure | Exit |
+|------|---------|------|
+| `config_invalid` | The collector exited 2 | `2` |
+| `auth_failed` | The collector exited 3 | `3` |
+| `network_error` | The collector exited 4 | `4` |
+| `collector_error` | Any other non-zero exit, or a signal ended the collector | The collector's exit code, or `-1` for a signal |
+| `invalid_output` | The collector exited 0 without a result (see Output Convention) | `1` |
+| `timeout` | The collector ran past `--timeout` and was stopped | `13` |
+
+A failure epack detects before the collector runs keeps its own code and exit code, such as `binary_not_found` (14) or `digest_mismatch` (11).
+
+Each failure also says where its code came from, as `code_source`: `exit_code` when the runner inferred the code from the collector's exit code, and `runner` when epack observed the failure itself, as with a timeout, unusable output, or a missing binary. Both are the runner's best guess, marked as such so that a code the collector reports itself can take precedence.
+
+The command's error has the code `collect_failed`. Its message is `<collector>: <error>` for one failed collector and `N collectors failed: a, b` for several. When one collector failed, epack exits with that collector's exit code if it is between 2 and 9, or with epack's code for a failure epack detected, such as 13 for a timeout; otherwise, and when several failed, it exits 1. With `EPACK_ERROR_FILE` set, each failed collector also gets a `collector=` line (see the remote protocol's Lock Reporting section).
+
 ### Workflow Exit Codes
 
 The `epack collect` workflow uses these exit codes:
@@ -486,14 +507,13 @@ The `epack collect` workflow uses these exit codes:
 |------|---------|
 | `0` | Success |
 | `1` | General failure |
-| `10` | Collector not found |
+| `2-9` | The exit code of the one collector that failed |
+| `10` | Lockfile missing, invalid, or mismatched |
 | `11` | Digest verification failed |
-| `12` | Pack verification failed |
-| `13` | Lockfile missing or invalid |
-| `14` | Run directory creation failed |
-| `15` | Config file write failed |
-| `16` | Pack required but not provided |
-| `17` | Dependency missing |
+| `12` | Signature verification failed |
+| `13` | Collector timed out |
+| `14` | Collector binary not installed or not pinned |
+| `15` | Network error while fetching |
 
 ## CLI Commands
 

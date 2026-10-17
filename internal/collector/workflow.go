@@ -291,7 +291,7 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 
 	// Check for failures
 	if result.Failures > 0 {
-		return result, fmt.Errorf("%d collector(s) failed", result.Failures)
+		return result, &FailedError{Failures: Failures(runResult.Results)}
 	}
 
 	// Build evidence pack
@@ -538,7 +538,9 @@ func lockfileNeedsUpdateWorkflow(cfg *config.JobConfig, lf *lockfile.LockFile, p
 //   - Multiple artifacts: each artifact gets its own path (from artifact or default)
 //   - Protocol envelope output: extracts artifacts array or data field
 //   - Plain JSON output: uses as-is as single artifact
-//   - Non-JSON output: wraps in {"collector": name, "raw": output}
+//
+// The runner already failed any collector whose output ParseCollectorOutput
+// rejects, so results reaching here parse.
 //
 // Artifact paths:
 //   - If artifact specifies a path, use it directly
@@ -697,7 +699,7 @@ func RunAndBuild(ctx context.Context, cfg *config.JobConfig, opts RunAndBuildOpt
 
 	// Check for failures
 	if result.Failures > 0 {
-		return result, fmt.Errorf("%d collector(s) failed", result.Failures)
+		return result, &FailedError{Failures: Failures(runResult.Results)}
 	}
 
 	// Build evidence pack

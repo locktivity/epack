@@ -679,6 +679,32 @@ Stable frozen failure codes include:
 
 CI extracts these codes without scraping logs: when the `EPACK_ERROR_FILE` environment variable names a file, every failed epack command appends `code=`, `exit=`, and `summary=` lines to it. A workflow reads that file to pass `--failure-code` and `--failure-message` to `epack remote report-lock` and to render a job summary.
 
+When collectors fail, the code is `collect_failed`, and each failed collector adds one line after the summary with its name, its failure code, its exit code, and where the code came from, as space-separated fields that never contain spaces:
+
+```
+code=collect_failed
+exit=3
+summary=okta: exited with code 3: 401 Unauthorized
+collector=okta code=auth_failed exit=3 code_source=exit_code
+```
+
+The collect protocol lists the failure codes and the `code_source` values. Read the command's own fields with `^code=`, `^exit=`, and `^summary=`, which a `collector=` line never matches.
+
+A run that fails in its collect stage (`epack run`) reports `failure_code: collect_failed` and lists the failed collectors under `metadata.collect.failures`, each with `collector`, `error` (secrets replaced), `code`, `exit`, and `code_source`. `epack remote report-lock --outcome failure` lists them too, from the `collector=` lines of the last error in `EPACK_ERROR_FILE` when its code matches `--failure-code`, without `error`:
+
+```json
+"metadata": {
+  "run_id": "20261017T091500Z-3f9a1c2e",
+  "collect": {
+    "failures": [
+      {"collector": "okta", "error": "exited with code 3: 401 Unauthorized", "code": "auth_failed", "exit": 3, "code_source": "exit_code"}
+    ]
+  }
+}
+```
+
+`epack remote report-lock --outcome failure` lists them the same way from `EPACK_ERROR_FILE`: when the last error in the file has the code passed as `--failure-code`, each of that error's `collector=` lines becomes an entry with `collector`, `code`, and `exit`. The file has no error text for each collector, so these entries have no `error`; the report's `failure_message` is the summary.
+
 ### lock.report Response
 
 ```json

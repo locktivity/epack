@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/locktivity/epack/internal/componentsdk"
+	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/spf13/cobra"
 )
 
-var newForce bool
+var (
+	newForce  bool
+	newModule string
+)
 
 func newNewCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -29,12 +34,17 @@ This scaffolds a complete Go project with:
   - main.go           SDK-based implementation template
   - go.mod            Module with SDK dependency
   - docs/             Registry documentation (overview, config, examples)
-  - .goreleaser.yaml  Multi-platform release configuration
-  - .github/workflows/release.yaml  Sigstore signing on tag
+  - .slsa-goreleaser/ Multi-platform release configuration
+  - .github/workflows/ CI with conformance, and SLSA signing on tag
+
+A collector gets the layout the epack collectors share: its entrypoint in
+cmd/epack-collector-<name>/main.go, collection logic in internal/collector,
+a Makefile, and testdata/conformance.json, a config CI passes to the
+conformance harness so the output checks run.
 
 Examples:
   epack sdk new tool my-analyzer
-  epack sdk new collector github-posture
+  epack sdk new collector github-posture --module github.com/acme/epack-collector-github-posture
   epack sdk new remote s3-registry
   epack sdk new utility pack-viewer`,
 		Args: cobra.ExactArgs(2),
@@ -42,6 +52,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVarP(&newForce, "force", "f", false, "overwrite existing directory")
+	cmd.Flags().StringVar(&newModule, "module", "", "Go module path (default github.com/OWNER/epack-<type>-<name>)")
 
 	return cmd
 }
@@ -87,9 +98,10 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	// Scaffold the component
 	result, err := componentsdk.Scaffold(componentsdk.ScaffoldOptions{
-		TargetDir: targetDir,
-		Name:      componentName,
-		Kind:      kind,
+		TargetDir:  targetDir,
+		Name:       componentName,
+		Kind:       kind,
+		ModulePath: newModule,
 	})
 	if err != nil {
 		return err
@@ -99,31 +111,28 @@ func runNew(cmd *cobra.Command, args []string) error {
 	p := out.Palette()
 
 	out.Print("%s Created %s\n\n", p.Green("✓"), dirName)
-
-	// Print structure
-	out.Print("  %s/\n", dirName)
-	out.Print("  ├── main.go              %s\n", p.Dim("# SDK-based implementation"))
-	out.Print("  ├── go.mod               %s\n", p.Dim("# Module configuration"))
-	out.Print("  ├── docs/                %s\n", p.Dim("# Registry documentation"))
-	out.Print("  │   ├── overview.md\n")
-	out.Print("  │   ├── configuration.md\n")
-	out.Print("  │   └── examples.md\n")
-	out.Print("  ├── .goreleaser.yaml     %s\n", p.Dim("# Multi-platform builds"))
-	out.Print("  ├── .github/workflows/\n")
-	out.Print("  │   └── release.yaml     %s\n", p.Dim("# Sigstore signing"))
-	out.Print("  ├── README.md            %s\n", p.Dim("# Development guide"))
-	out.Print("  └── .gitignore\n")
+	files := append([]string(nil), result.FilesCreated...)
+	sort.Strings(files)
+	for _, file := range files {
+		out.Print("  %s/%s\n", dirName, file)
+	}
 	out.Print("\n")
 
 	out.Print("%s\n", p.Bold("Next steps:"))
 	out.Print("  cd %s\n", dirName)
-	out.Print("  # Edit main.go to implement your %s\n", kind)
-	out.Print("  # Update go.mod with your module path\n")
+	if newModule == "" {
+		out.Print("  # Replace github.com/OWNER in go.mod%s with your module path\n", importNote(kind))
+	}
+	if result.EpackVersion == "" {
+		out.Print("  go get github.com/locktivity/epack@main  %s\n", p.Dim("# source build of epack: pick the SDK to build against"))
+	}
+	out.Print("  go mod tidy\n")
+	out.Print("  # Edit %s to implement your %s\n", implementationFile(kind), kind)
 	out.Print("  # Edit docs/ for registry documentation\n")
 	out.Print("\n")
 
 	out.Print("%s\n", p.Bold("Build & test:"))
-	out.Print("  go build -o %s .\n", result.BinaryName)
+	out.Print("  go build -o %s %s\n", result.BinaryName, result.MainPackage)
 	out.Print("  ./%s --capabilities\n", result.BinaryName)
 	out.Print("\n")
 
@@ -131,4 +140,18 @@ func runNew(cmd *cobra.Command, args []string) error {
 	out.Print("  epack sdk test .\n")
 
 	return nil
+}
+
+func importNote(kind componenttypes.ComponentKind) string {
+	if kind == componenttypes.KindCollector {
+		return " and cmd/ imports"
+	}
+	return ""
+}
+
+func implementationFile(kind componenttypes.ComponentKind) string {
+	if kind == componenttypes.KindCollector {
+		return "internal/collector/collector.go"
+	}
+	return "main.go"
 }

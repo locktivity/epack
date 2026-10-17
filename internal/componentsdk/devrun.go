@@ -224,7 +224,7 @@ func buildComponentBinary(ctx context.Context, opts WatchOptions) bool {
 	}
 	if err := procexec.Run(ctx, procexec.Spec{
 		Path:   "go",
-		Args:   []string{"build", "-o", opts.BinaryPath, "."},
+		Args:   []string{"build", "-o", opts.BinaryPath, MainPackage(opts.ProjectDir)},
 		Dir:    opts.ProjectDir,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
@@ -384,6 +384,29 @@ func InferBinaryPath(path string) (projectDir, binaryPath string, err error) {
 	}
 
 	return projectDir, binaryPath, nil
+}
+
+// MainPackage returns the package that builds a project's binary: the
+// cmd/<project directory name> package of the shared collector layout, the
+// only package under cmd/ when there is one, or the project root.
+func MainPackage(projectDir string) string {
+	if info, err := os.Stat(filepath.Join(projectDir, "cmd", filepath.Base(projectDir))); err == nil && info.IsDir() {
+		return "./cmd/" + filepath.Base(projectDir)
+	}
+	entries, err := os.ReadDir(filepath.Join(projectDir, "cmd"))
+	if err != nil {
+		return "."
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, entry.Name())
+		}
+	}
+	if len(dirs) == 1 {
+		return "./cmd/" + dirs[0]
+	}
+	return "."
 }
 
 // IsGoProject checks if a directory contains a go.mod file.

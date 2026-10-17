@@ -664,10 +664,15 @@ func reportFailure(ctx context.Context, cfg *config.JobConfig, opts Options, rem
 }
 
 // collectFailure is one failed collector as the report carries it: its
-// name and its error, with every secret value already replaced.
+// name, its error with every secret value already replaced, the failure's
+// code, the collector's exit code, and where the code came from (see
+// collector.Failure).
 type collectFailure struct {
-	Collector string `json:"collector"`
-	Error     string `json:"error"`
+	Collector  string `json:"collector"`
+	Error      string `json:"error"`
+	Code       string `json:"code"`
+	Exit       int    `json:"exit"`
+	CodeSource string `json:"code_source"`
 }
 
 func collectFailures(collected *collector.CollectWorkflowResult) []collectFailure {
@@ -675,13 +680,13 @@ func collectFailures(collected *collector.CollectWorkflowResult) []collectFailur
 		return nil
 	}
 	var failures []collectFailure
-	for _, result := range collected.CollectorResults {
-		if result.Success || result.Error == nil {
-			continue
-		}
+	for _, failure := range collector.Failures(collected.CollectorResults) {
 		failures = append(failures, collectFailure{
-			Collector: result.Collector,
-			Error:     redact.Error(strings.TrimPrefix(result.Error.Error(), "collector ")),
+			Collector:  failure.Collector,
+			Error:      redact.Error(failure.Message()),
+			Code:       string(failure.Code),
+			Exit:       failure.Exit,
+			CodeSource: failure.CodeSource,
 		})
 	}
 	return failures

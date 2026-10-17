@@ -188,6 +188,13 @@ func TestAllErrorCodes(t *testing.T) {
 		{LockfileInvalid, "lockfile_invalid"},
 		{BinaryNotFound, "binary_not_found"},
 		{InsecureInstall, "insecure_install"},
+
+		// Collector run failures
+		{CollectFailed, "collect_failed"},
+		{CollectorConfigInvalid, "config_invalid"},
+		{CollectorAuthFailed, "auth_failed"},
+		{CollectorError, "collector_error"},
+		{CollectorOutputInvalid, "invalid_output"},
 	}
 
 	for _, tc := range allCodes {

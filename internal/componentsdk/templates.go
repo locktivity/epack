@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"regexp"
+	"strings"
 	"text/template"
 
 	"github.com/locktivity/epack/internal/componenttypes"
@@ -19,27 +21,44 @@ type templateData struct {
 	Kind          string // Component kind (e.g., "tool")
 	BinaryName    string // Full binary name (e.g., "epack-tool-my-analyzer")
 	ModulePath    string // Go module path
+	MainPackage   string // Package to build (e.g., ".", "./cmd/epack-collector-github")
 	ConfigSection string // YAML config section (e.g., "tools", "collectors")
 	GOOS          string // Target OS for SLSA configs (e.g., "linux", "darwin")
 	GOARCH        string // Target architecture for SLSA configs (e.g., "amd64", "arm64")
-	EpackVersion  string // epack version for go.mod (e.g., "v0.1.16")
+	EpackVersion  string // epack module version for go.mod (e.g., "v0.5.3"); empty to let go mod tidy pick
 }
 
 // newTemplateData creates template data from scaffold options.
 func newTemplateData(name string, kind componenttypes.ComponentKind, modulePath string) templateData {
-	// Determine config section (plural form for YAML)
-	configSection := string(kind) + "s"
-	if kind == componenttypes.KindUtility {
-		configSection = "utilities"
+	binaryName := fmt.Sprintf("epack-%s-%s", kind, name)
+	mainPackage := "."
+	if kind == componenttypes.KindCollector {
+		mainPackage = "./cmd/" + binaryName
 	}
-
 	return templateData{
 		Name:          name,
 		Kind:          string(kind),
-		BinaryName:    fmt.Sprintf("epack-%s-%s", kind, name),
+		BinaryName:    binaryName,
 		ModulePath:    modulePath,
-		ConfigSection: configSection,
+		MainPackage:   mainPackage,
+		ConfigSection: kind.Plural(),
+		EpackVersion:  epackModuleVersion(version.Version),
 	}
+}
+
+// releaseVersion matches the versions a release build of epack reports,
+// with or without the v prefix.
+var releaseVersion = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-(alpha|beta|rc)(\.\d+)?)?$`)
+
+// epackModuleVersion is the epack module version a scaffold requires: this
+// build's own release, with the v prefix Go needs. A source build reports
+// "dev" and a build past a tag reports a git describe string; neither is a
+// module version, so go mod tidy picks the latest release instead.
+func epackModuleVersion(v string) string {
+	if !releaseVersion.MatchString(v) {
+		return ""
+	}
+	return "v" + strings.TrimPrefix(v, "v")
 }
 
 // renderTemplate renders a template by name with the given data.
@@ -60,70 +79,4 @@ func renderTemplate(name string, data templateData) (string, error) {
 	}
 
 	return buf.String(), nil
-}
-
-// generateMainGo generates main.go content for the given component kind.
-func generateMainGo(name string, kind componenttypes.ComponentKind) (string, error) {
-	templateName := string(kind) + ".main.go.tmpl"
-	data := newTemplateData(name, kind, "")
-	return renderTemplate(templateName, data)
-}
-
-// generateGoMod generates go.mod content.
-func generateGoMod(modulePath string) (string, error) {
-	data := templateData{
-		ModulePath:   modulePath,
-		EpackVersion: version.Version,
-	}
-	return renderTemplate("go.mod.tmpl", data)
-}
-
-// generateReleaseWorkflow generates .github/workflows/release.yaml content.
-func generateReleaseWorkflow(name string, kind componenttypes.ComponentKind) (string, error) {
-	data := newTemplateData(name, kind, "")
-	return renderTemplate("release.yaml.tmpl", data)
-}
-
-// generateReadme generates README.md content.
-func generateReadme(name string, kind componenttypes.ComponentKind, modulePath string) (string, error) {
-	data := newTemplateData(name, kind, modulePath)
-	return renderTemplate("readme.md.tmpl", data)
-}
-
-// generateGitignore generates .gitignore content.
-func generateGitignore(name string, kind componenttypes.ComponentKind) (string, error) {
-	data := newTemplateData(name, kind, "")
-	return renderTemplate("gitignore.tmpl", data)
-}
-
-// generateDocsOverview generates docs/overview.md content.
-func generateDocsOverview(name string, kind componenttypes.ComponentKind) (string, error) {
-	data := newTemplateData(name, kind, "")
-	return renderTemplate("docs/overview.md.tmpl", data)
-}
-
-// generateDocsConfiguration generates docs/configuration.md content.
-func generateDocsConfiguration(name string, kind componenttypes.ComponentKind) (string, error) {
-	data := newTemplateData(name, kind, "")
-	return renderTemplate("docs/configuration.md.tmpl", data)
-}
-
-// generateDocsExamples generates docs/examples.md content.
-func generateDocsExamples(name string, kind componenttypes.ComponentKind) (string, error) {
-	data := newTemplateData(name, kind, "")
-	return renderTemplate("docs/examples.md.tmpl", data)
-}
-
-// generateSLSAGoreleaser generates a .slsa-goreleaser config for a specific platform.
-func generateSLSAGoreleaser(name string, kind componenttypes.ComponentKind, goos, goarch string) (string, error) {
-	data := newTemplateData(name, kind, "")
-	data.GOOS = goos
-	data.GOARCH = goarch
-	return renderTemplate("slsa-goreleaser.yaml.tmpl", data)
-}
-
-// generateCIWorkflow generates .github/workflows/ci.yaml content.
-func generateCIWorkflow(name string, kind componenttypes.ComponentKind) (string, error) {
-	data := newTemplateData(name, kind, "")
-	return renderTemplate("ci.yaml.tmpl", data)
 }

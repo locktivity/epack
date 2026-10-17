@@ -2,7 +2,11 @@ package componentsdk
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,6 +151,58 @@ func TestCollectorArtifactEntry_CarriesDisplayFields(t *testing.T) {
 		if _, present := bare[key]; present {
 			t.Errorf("bare artifact should omit %q", key)
 		}
+	}
+}
+
+func TestMapCollectorError(t *testing.T) {
+	deadline := &url.Error{Op: "Get", URL: "https://graph.example.com/v1.0/users", Err: context.DeadlineExceeded}
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"untyped", errors.New("boom"), 1},
+		{"config value", NewConfigError("tenant_id is required"), 2},
+		{"auth value", NewAuthError("token rejected"), 3},
+		{"network value", NewNetworkError("503 from API"), 4},
+		{"wrapped config", fmt.Errorf("loading config: %w", NewConfigError("tenant_id is required")), 2},
+		{"wrapped auth", fmt.Errorf("listing users: %w", NewAuthError("token rejected")), 3},
+		{"wrapped network", fmt.Errorf("listing users: %w", NewNetworkError("503 from API")), 4},
+		{"config pointer", &ConfigError{Err: errors.New("bad level")}, 2},
+		{"auth pointer", &AuthError{Err: errors.New("token rejected")}, 3},
+		{"wrapped network pointer", fmt.Errorf("listing users: %w", &NetworkError{Err: errors.New("reset")}), 4},
+		{"joined", errors.Join(errors.New("cleanup failed"), NewAuthError("token rejected")), 3},
+		{"deadline", context.DeadlineExceeded, 4},
+		{"wrapped deadline", fmt.Errorf("listing users: %w", deadline), 4},
+		{"typed error over a deadline keeps its class", NewAuthError("token exchange: %w", context.DeadlineExceeded), 3},
+		{"outermost typed error wins", NetworkError{Err: NewConfigError("bad region")}, 4},
+		{"cancellation", fmt.Errorf("listing users: %w", context.Canceled), 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got int
+			stderr := captureStderr(t, func() { got = mapCollectorError(tc.err) })
+			if got != tc.want {
+				t.Errorf("mapCollectorError() = %d, want %d", got, tc.want)
+			}
+			if !strings.Contains(stderr, tc.err.Error()) {
+				t.Errorf("stderr = %q, want the error message", stderr)
+			}
+		})
+	}
+}
+
+func TestTypedErrors_Unwrap(t *testing.T) {
+	err := NewNetworkError("listing users: %w", io.ErrUnexpectedEOF)
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Error("errors.Is should see through NetworkError")
+	}
+	var urlErr *url.Error
+	if !errors.As(AuthError{Err: &url.Error{Op: "Post", URL: "https://login.example.com", Err: io.EOF}}, &urlErr) {
+		t.Error("errors.As should see through AuthError")
+	}
+	if !errors.Is(&ConfigError{Err: io.EOF}, io.EOF) {
+		t.Error("errors.Is should see through a ConfigError pointer")
 	}
 }
 

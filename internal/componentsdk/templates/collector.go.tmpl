@@ -1,0 +1,80 @@
+// Package collector gathers the evidence {{.BinaryName}} emits. It does not
+// import the epack SDK, so its tests run without a collector process.
+package collector
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// Config is the collector's configuration from epack.yaml, plus callbacks
+// that report progress.
+type Config struct {
+	// Targets are what the collector gathers evidence about.
+	Targets []string
+
+	OnStatus   func(message string)
+	OnProgress func(current, total int64, message string)
+}
+
+// ParseConfig reads Config from the collector's config. A missing or
+// malformed field is an error, which main reports as a config error (exit 2).
+func ParseConfig(raw map[string]any) (Config, error) {
+	var cfg Config
+	items, ok := raw["targets"].([]any)
+	if raw["targets"] != nil && !ok {
+		return Config{}, fmt.Errorf("targets must be a list of strings")
+	}
+	for i, item := range items {
+		target, ok := item.(string)
+		if !ok || target == "" {
+			return Config{}, fmt.Errorf("targets[%d] must be a non-empty string", i)
+		}
+		cfg.Targets = append(cfg.Targets, target)
+	}
+	if len(cfg.Targets) == 0 {
+		return Config{}, fmt.Errorf("targets is required")
+	}
+	return cfg, nil
+}
+
+// Output is the evidence the collector emits.
+type Output struct {
+	CollectedAt string   `json:"collected_at"`
+	Targets     []Target `json:"targets"`
+}
+
+// Target is the evidence for one configured target.
+type Target struct {
+	Name string `json:"name"`
+	// TODO: Add the fields this collector measures.
+}
+
+// Collect gathers evidence for every target. It stops when ctx ends, which
+// happens on SIGTERM and when the collector's timeout passes.
+func Collect(ctx context.Context, cfg Config) (*Output, error) {
+	cfg.status("Collecting")
+	output := &Output{CollectedAt: time.Now().UTC().Format(time.RFC3339)}
+	for i, name := range cfg.Targets {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		cfg.progress(int64(i+1), int64(len(cfg.Targets)), "Collecting "+name)
+		// TODO: Fetch this target's evidence, passing ctx to every API call.
+		output.Targets = append(output.Targets, Target{Name: name})
+	}
+	return output, nil
+}
+
+func (c Config) status(message string) {
+	if c.OnStatus != nil {
+		c.OnStatus(message)
+	}
+}
+
+func (c Config) progress(current, total int64, message string) {
+	if c.OnProgress != nil {
+		c.OnProgress(current, total, message)
+	}
+}

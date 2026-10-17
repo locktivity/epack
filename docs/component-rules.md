@@ -498,9 +498,11 @@ If you have the full epack build with SDK commands:
 epack sdk test ./my-component
 epack sdk test .                    # Test current directory
 epack sdk test --verbose ./my-tool  # Verbose output
+epack sdk test --config cfg.json .  # Collector config to collect with
+epack sdk test --secret API_TOKEN . # Check how a collector handles its credential
 ```
 
-When given a directory, `epack sdk test` builds the Go project first, then runs conformance tests on the resulting binary.
+When given a directory, `epack sdk test` builds the Go project first, then runs conformance tests on the resulting binary. It builds `cmd/<directory name>`, or the only package under `cmd/`, else the project root. For a collector project with `testdata/conformance.json`, that config is passed to the harness unless `--config` names another.
 
 ### 8.2 Building the Harness
 
@@ -557,7 +559,9 @@ Skipped (MUST/SHOULD):
 | `--json` | Output results as JSON |
 | `--level <level>` | Minimum required conformance level: `minimal`, `standard`, or `full` |
 | `--timeout <duration>` | Test timeout (default: 30s) |
-| `-v, --verbose` | Enable verbose output |
+| `--config <file>` | Collector config the collector can collect with, passed as `EPACK_COLLECTOR_CONFIG` to the runs that check its output, signal handling, filesystem boundary, and `NO_COLOR` |
+| `--secret <name>` | Variable the collector reads a credential from (repeatable). Every run sets it to a random canary value, overriding any real value in the environment |
+| `-v, --verbose` | List every result, including passes |
 
 ### 8.6 Exit Codes
 
@@ -596,17 +600,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build component
-        run: go build -o epack-collector-myname ./cmd/collector
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
-      - name: Download epack-conformance
+      - name: Build component
+        run: go build -o epack-collector-myname ./cmd/epack-collector-myname
+
+      - name: Install epack-conformance
         run: |
-          # Download from releases or build from source
-          go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@latest
+          # The harness at the epack version go.mod pins, so CI and local runs agree
+          EPACK_VERSION="$(go list -m -f '{{.Version}}' github.com/locktivity/epack)"
+          go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@"${EPACK_VERSION}"
 
       - name: Run conformance tests
-        run: epack-conformance collector ./epack-collector-myname --level standard
+        run: |
+          set -- --level standard --secret MYNAME_API_TOKEN
+          if [ -f testdata/conformance.json ]; then set -- "$@" --config testdata/conformance.json; fi
+          epack-conformance collector ./epack-collector-myname "$@"
 ```
+
+A collector made with `epack sdk new collector` runs the same thing with `make conformance`, which takes the secret names from `CONFORMANCE_SECRETS` in its Makefile. `testdata/conformance.json` is a config with no secrets in it. A collector that can collect without credentials collects with it, so the output, signal, and timeout checks run against a real collection. One that needs credentials reaches its API with the `--secret` canaries instead, which checks how it handles a rejected credential.
 
 **Note**: In CI, `actions/setup-go` adds `~/go/bin` to PATH automatically. For local development, either add `$(go env GOPATH)/bin` to your PATH or use the full path:
 
@@ -624,10 +638,21 @@ Some tests are skipped by default because they require specific conditions:
 
 | Condition | Affected Tests |
 |-----------|----------------|
-| No network mock available | COL-052, COL-043, COL-044 |
+| No network mock available | COL-052, COL-044 |
 | No pack fixture provided | TOOL-060, TOOL-061 |
-| Requires log inspection | C-031, C-032, C-033 |
+| Collector: no `--secret` given | C-031, C-032, COL-043 |
+| Collector: `--secret` without `--config`, so it never uses the credential | C-032, COL-043 |
+| Requires malformed input injection | C-033 |
 | Feature not supported | REM-020 to REM-061 (based on capabilities) |
+| Collector exits 2 (needs config), 3 (needs credentials), or 4 (cannot reach its API) on the run that should collect | C-010, C-020, COL-001, COL-002, COL-005, COL-006, COL-010, COL-011, COL-034, COL-040 |
+| Collector exits before SIGTERM is sent | COL-031 |
+| No general-error scenario | COL-041 |
+
+Every collector run gets its own `EPACK_COLLECTOR_OUTPUT_DIR`, as under `epack collect`. With `--secret`, C-031 fails when a canary value appears in anything a run wrote: its stdout, with the data artifacts and progress lines, its stderr, its staged file artifacts, and any other file it left in its working directory. C-032 fails when one appears in an error message: a failed run's stderr, or the warnings of a run that exited 0. The run that should collect (with `--config`, when the collector needs config) holds canary credentials, which a real API rejects. COL-043 passes when the collector exits 3, and fails when it exits with another code and its error or output says the credentials were rejected (status 401 or 403, "unauthorized", "invalid token", and similar). A collector that exits 0 and emits evidence after the rejection also fails COL-034: every metric the credential gates would read as zero. An error that says nothing about the credentials, such as a DNS failure, skips COL-043.
+
+Name variables that hold a credential, not a path to one: a canary path printed in a "file not found" error would fail C-031. A credential that must parse before it is used, such as a JSON key, fails parsing with a canary value; the collector exits 2 and COL-043 skips.
+
+COL-031 sends SIGTERM at the collector's first `epack_progress` line, when it is mid-collection, or 5 seconds after start for a collector that reports no progress. It fails when SIGTERM kills the collector, which means it installed no handler, and when the collector is still running 5 seconds after the signal. COL-030 fails when any run is stopped at `--timeout`.
 
 To achieve full conformance, components must pass all testable requirements. Skipped tests do not count as failures.
 

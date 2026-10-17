@@ -1,0 +1,44 @@
+package collector
+
+import (
+	"context"
+	"errors"
+	"testing"
+)
+
+func TestParseConfig_RequiresTargets(t *testing.T) {
+	for name, raw := range map[string]map[string]any{
+		"missing":    nil,
+		"empty":      {"targets": []any{}},
+		"not list":   {"targets": "example"},
+		"not string": {"targets": []any{42}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseConfig(raw); err == nil {
+				t.Error("ParseConfig() should fail")
+			}
+		})
+	}
+}
+
+func TestCollect_OneEntryPerTarget(t *testing.T) {
+	cfg, err := ParseConfig(map[string]any{"targets": []any{"a", "b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := Collect(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Targets) != 2 || output.Targets[0].Name != "a" || output.Targets[1].Name != "b" {
+		t.Errorf("targets = %+v", output.Targets)
+	}
+}
+
+func TestCollect_StopsWhenContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Collect(ctx, Config{Targets: []string{"a"}}); !errors.Is(err, context.Canceled) {
+		t.Errorf("Collect() error = %v, want context.Canceled", err)
+	}
+}

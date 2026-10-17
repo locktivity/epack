@@ -3,6 +3,7 @@ package componentsdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -152,7 +153,8 @@ type CollectedArtifact struct {
 	Controls []string
 }
 
-// Typed errors for specific exit codes
+// Typed errors for specific exit codes. A typed error keeps its exit code
+// when returned as a pointer or wrapped with fmt.Errorf's %w.
 type (
 	// ConfigError indicates a configuration error (exit code 2).
 	ConfigError struct{ Err error }
@@ -167,6 +169,17 @@ type (
 func (e ConfigError) Error() string  { return e.Err.Error() }
 func (e AuthError) Error() string    { return e.Err.Error() }
 func (e NetworkError) Error() string { return e.Err.Error() }
+
+func (e ConfigError) Unwrap() error  { return e.Err }
+func (e AuthError) Unwrap() error    { return e.Err }
+func (e NetworkError) Unwrap() error { return e.Err }
+
+// exitCoder is implemented by the typed errors, in value and pointer form.
+type exitCoder interface{ exitCode() int }
+
+func (ConfigError) exitCode() int  { return componenttypes.ExitConfigError }
+func (AuthError) exitCode() int    { return componenttypes.ExitAuthError }
+func (NetworkError) exitCode() int { return componenttypes.ExitNetworkError }
 
 // Helper functions to create typed errors
 func NewConfigError(format string, args ...any) error {
@@ -260,18 +273,20 @@ func loadCollectorConfig(ctx *collectorContext) error {
 	return nil
 }
 
+// mapCollectorError picks the exit code from the outermost typed error in
+// err's chain, so wrapping one with %w keeps its class. A deadline that no
+// typed error claimed is a network error: the collector ran out of time
+// waiting on its API.
 func mapCollectorError(err error) int {
 	fmt.Fprintf(os.Stderr, "error: %v\n", err)
-	switch err.(type) {
-	case ConfigError:
-		return componenttypes.ExitConfigError
-	case AuthError:
-		return componenttypes.ExitAuthError
-	case NetworkError:
-		return componenttypes.ExitNetworkError
-	default:
-		return 1
+	var typed exitCoder
+	if errors.As(err, &typed) {
+		return typed.exitCode()
 	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return componenttypes.ExitNetworkError
+	}
+	return 1
 }
 
 func finalizeCollectorRun(ctx *collectorContext) int {

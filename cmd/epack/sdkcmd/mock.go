@@ -23,13 +23,13 @@ works correctly before running conformance tests.
 
 Supported types:
   tool       - Creates a minimal evidence pack for testing tools
-  collector  - Creates a sample configuration and mock environment
+  collector  - Creates a sample JSON config and a script that runs the collector as epack does
   remote     - Creates sample registry responses (push/pull/list)
   utility    - Creates sample command-line invocation scripts
 
 Examples:
   epack sdk mock tool              # Creates sample-evidence.epack
-  epack sdk mock collector         # Creates sample-config.yaml and env vars
+  epack sdk mock collector         # Creates config.json and run-collector.sh
   epack sdk mock tool -o testdata  # Output to testdata/ directory`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"tool", "collector", "remote", "utility"},
