@@ -34,21 +34,21 @@
                 "type": ["number", "null"],
                 "minimum": 0,
                 "maximum": 100,
-                "description": "Percentage of IAM users with MFA enabled"
+                "description": "Percentage of human user identities that can sign in to the account and have MFA enabled"
               },
               "root_mfa_enabled": {
                 "type": ["boolean", "null"],
-                "description": "Whether root/owner account has MFA enabled"
+                "description": "Whether the account's highest-privilege owner identity (the AWS root user, a Google Cloud organization administrator, an Azure Global Administrator) has MFA enabled"
               },
               "root_access_protected": {
                 "type": ["boolean", "null"],
-                "description": "Whether the highest-privilege root or tenant-root access path is protected from password-only use by MFA or by absence of standing root credentials"
+                "description": "Whether the account's highest-privilege owner identity (the AWS root user, a Google Cloud organization administrator, an Azure Global Administrator) is protected from password-only use, by MFA or by having no standing credentials"
               },
               "access_key_rotation_compliant_pct": {
                 "type": ["number", "null"],
                 "minimum": 0,
                 "maximum": 100,
-                "description": "Percentage of access keys rotated within policy (typically 90 days)"
+                "description": "Percentage of long-lived programmatic credentials (access keys, service account keys, client secrets) rotated within policy (typically 90 days)"
               }
             }
           },
@@ -72,13 +72,23 @@
           "logging": {
             "type": ["object", "null"],
             "properties": {
+              "audit_log_enabled": {
+                "type": ["boolean", "null"],
+                "description": "Whether an account-wide audit log of management activity is enabled, for example CloudTrail, Cloud Audit Logs, or an exported Azure Activity Log"
+              },
+              "audit_log_all_regions": {
+                "type": ["boolean", "null"],
+                "description": "Whether the audit log covers every region the account uses. True where the provider's audit log is global"
+              },
               "cloudtrail_enabled": {
                 "type": ["boolean", "null"],
-                "description": "Whether audit logging is enabled (CloudTrail/Cloud Audit Logs/Activity Log)"
+                "deprecated": true,
+                "description": "Deprecated alias of audit_log_enabled, with the same value. Removed in v2"
               },
               "cloudtrail_multiregion": {
                 "type": ["boolean", "null"],
-                "description": "Whether audit logging covers all regions"
+                "deprecated": true,
+                "description": "Deprecated alias of audit_log_all_regions, with the same value. Removed in v2"
               }
             }
           },
@@ -89,13 +99,13 @@
                 "type": ["number", "null"],
                 "minimum": 0,
                 "maximum": 100,
-                "description": "Percentage of security groups allowing SSH (port 22) from 0.0.0.0/0"
+                "description": "Percentage of network rules (security groups, network security groups, firewall rules) allowing SSH (port 22) from any address"
               },
               "rdp_open_to_world_pct": {
                 "type": ["number", "null"],
                 "minimum": 0,
                 "maximum": 100,
-                "description": "Percentage of security groups allowing RDP (port 3389) from 0.0.0.0/0"
+                "description": "Percentage of network rules (security groups, network security groups, firewall rules) allowing RDP (port 3389) from any address"
               }
             }
           },
