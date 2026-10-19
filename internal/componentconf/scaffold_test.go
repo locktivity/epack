@@ -17,8 +17,11 @@ import (
 )
 
 // TestScaffoldedCollectorConforms builds what `epack sdk new collector`
-// generates against this checkout and runs the harness on it, so a template
-// that drifts from the SDK or from the protocol fails here.
+// generates against this checkout, runs its tests, which include the
+// collectortest suite, and runs the harness on it, so a template that drifts
+// from the SDK or from the protocol fails here. The scaffold signs in to an
+// API this test cannot reach, so the harness checks its configuration and
+// exit codes, and the suite checks its output.
 func TestScaffoldedCollectorConforms(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a scaffolded collector")
@@ -46,6 +49,7 @@ func TestScaffoldedCollectorConforms(t *testing.T) {
 	useCheckout(t, dir, repoRoot)
 
 	goCmd(t, dir, "test", "./...")
+	goCmd(t, dir, "vet", "-tags", "record", "./...")
 	binary := filepath.Join(dir, result.BinaryName)
 	goCmd(t, dir, "build", "-o", binary, result.MainPackage)
 
@@ -63,7 +67,7 @@ func TestScaffoldedCollectorConforms(t *testing.T) {
 			t.Errorf("%s failed: %s", r.ID, r.Message)
 		}
 	}
-	for _, id := range append(outputChecks, "COL-024", "COL-031", "COL-042") {
+	for _, id := range []string{"COL-024", "COL-042"} {
 		if got := results[id]; got.Status != StatusPass {
 			t.Errorf("%s = %s (%s), want pass", id, got.Status, got.Reason)
 		}

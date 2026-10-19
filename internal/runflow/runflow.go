@@ -499,6 +499,7 @@ func collect(ctx context.Context, cfg *config.JobConfig, opts Options, result *R
 		OnCollectorEvent: collectorEvents(opts),
 		Credentials:      credentials.Resolver{Session: session},
 		Getenv:           resolution.Getenv,
+		RunID:            result.RunID,
 	})
 	result.Collect = collected
 	return err

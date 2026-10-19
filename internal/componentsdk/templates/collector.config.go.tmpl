@@ -1,0 +1,20 @@
+package collector
+
+import "errors"
+
+// Config is the collector's configuration from epack.yaml. The SDK reads
+// the level key itself, through componentsdk.CollectorContext.Level.
+type Config struct {
+	// Organization is the organization to collect from.
+	Organization string
+}
+
+// ParseConfig reads Config from the collector's config. A missing or
+// malformed field is an error, which Run reports as a config error (exit 2).
+func ParseConfig(raw map[string]any) (Config, error) {
+	organization, ok := raw["organization"].(string)
+	if !ok || organization == "" {
+		return Config{}, errors.New("organization must be a non-empty string")
+	}
+	return Config{Organization: organization}, nil
+}

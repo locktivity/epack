@@ -51,6 +51,10 @@ type CollectOpts struct {
 	// Getenv reads the variables collectors list under secrets:; nil means
 	// the process environment.
 	Getenv func(string) string
+
+	// RunID names the run to collectors. The runner generates one when it
+	// is empty.
+	RunID string
 }
 
 // CollectWorkflowResult contains the outcomes of evidence collection.
@@ -277,6 +281,7 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 			OnCollectorEvent: opts.OnCollectorEvent,
 		},
 		Credentials: opts.Credentials,
+		RunID:       opts.RunID,
 	}
 
 	runResult, err := runner.Run(ctx, cfg, runOpts)

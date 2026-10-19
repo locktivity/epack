@@ -258,11 +258,16 @@ func (e *BundleNotFoundError) Error() string {
 	return "sigstore bundle not found for " + e.BinaryAsset
 }
 
-// releaseTags extracts tag names in API order for semver resolution.
+// releaseTags extracts tag names in API order for semver resolution. It
+// leaves out drafts and releases GitHub marks as prereleases, so a range
+// never resolves to a release its maintainers have not published.
 func releaseTags(releases []github.Release) []string {
-	tags := make([]string, len(releases))
-	for i, r := range releases {
-		tags[i] = r.TagName
+	tags := make([]string, 0, len(releases))
+	for _, r := range releases {
+		if r.Draft || r.Prerelease {
+			continue
+		}
+		tags = append(tags, r.TagName)
 	}
 	return tags
 }

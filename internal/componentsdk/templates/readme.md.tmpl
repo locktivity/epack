@@ -19,15 +19,6 @@ epack sdk run --watch .
 # Run conformance tests (builds the project first)
 epack sdk test .
 ```
-{{- if eq .Kind "collector"}}
-
-`make conformance`, which CI runs, passes `testdata/conformance.json` and a
-`--secret` for each variable listed in the Makefile's `CONFORMANCE_SECRETS`.
-Keep the config free of secrets. Each `--secret` variable gets a canary value:
-conformance fails if any output prints it and checks that the rejected
-credential exits 3. To run the output checks against a real collection, run
-`epack sdk test .` with real credentials in the environment.
-{{- end}}
 
 ### Manual Testing
 
@@ -37,7 +28,7 @@ credential exits 3. To run the output checks against a real collection, run
 
 # Run conformance at the epack version go.mod pins, as CI does
 go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@"$(go list -m -f '{{"{{"}}.Version{{"}}"}}' github.com/locktivity/epack)"
-$(go env GOPATH)/bin/epack-conformance {{.Kind}} ./{{.BinaryName}}{{if eq .Kind "collector"}} --config testdata/conformance.json{{end}}
+$(go env GOPATH)/bin/epack-conformance {{.Kind}} ./{{.BinaryName}}
 ```
 
 ## Testing

@@ -183,10 +183,12 @@ func (r *Runner) testCollectorConfig(ctx context.Context) {
 	result := r.exec(ctx, nil, nil, env)
 
 	// COL-020: Parse config file as JSON
-	// Exit codes 0, 1, or 2 are valid - the collector parsed the JSON successfully.
+	// Exit codes 0 to 4 are valid - the collector parsed the JSON successfully.
 	// Exit 2 (config error) is valid because the test config may not contain
-	// required fields for this specific collector.
-	if result.ExitCode == 0 || result.ExitCode == 1 || result.ExitCode == 2 {
+	// required fields for this specific collector. Exits 3 and 4 mean it got
+	// past its config to its API, as one that needs no config does when the
+	// run carries the --secret canaries.
+	if result.ExitCode >= 0 && result.ExitCode <= 4 {
 		r.pass("COL-020")
 		r.pass("COL-012")
 	} else {
@@ -195,13 +197,14 @@ func (r *Runner) testCollectorConfig(ctx context.Context) {
 	}
 
 	// COL-021: Not crash or hang when config file is missing
-	// Any valid exit code (0, 1, 2) is acceptable - just must complete
+	// Any valid exit code (0 to 4) is acceptable - just must complete. A
+	// collector that needs no config reaches its API and exits 3 or 4.
 	envNoConfig := map[string]string{
 		"EPACK_COLLECTOR_NAME":   "test",
 		"EPACK_PROTOCOL_VERSION": "1",
 	}
 	resultNoConfig := r.exec(ctx, nil, nil, envNoConfig)
-	if resultNoConfig.ExitCode >= 0 && resultNoConfig.ExitCode <= 2 {
+	if resultNoConfig.ExitCode >= 0 && resultNoConfig.ExitCode <= 4 {
 		r.pass("COL-021")
 	} else {
 		r.fail("COL-021", "crashed or exited with unexpected code")

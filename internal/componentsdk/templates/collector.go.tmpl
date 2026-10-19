@@ -1,80 +1,143 @@
-// Package collector gathers the evidence {{.BinaryName}} emits. It does not
-// import the epack SDK, so its tests run without a collector process.
 package collector
 
 import (
-	"context"
 	"fmt"
+	"math"
 	"time"
+
+	"github.com/locktivity/epack/componentsdk"
+
+	"{{.ModulePath}}/internal/{{.VendorPackage}}"
 )
 
-// Config is the collector's configuration from epack.yaml, plus callbacks
-// that report progress.
-type Config struct {
-	// Targets are what the collector gathers evidence about.
-	Targets []string
+// SchemaVersion is the version of docs/schema/v1.0.0.json, which describes
+// Output. It stays 1.0.0 until the collector itself reaches v1.0.0.
+const SchemaVersion = "1.0.0"
 
-	OnStatus   func(message string)
-	OnProgress func(current, total int64, message string)
-}
-
-// ParseConfig reads Config from the collector's config. A missing or
-// malformed field is an error, which main reports as a config error (exit 2).
-func ParseConfig(raw map[string]any) (Config, error) {
-	var cfg Config
-	items, ok := raw["targets"].([]any)
-	if raw["targets"] != nil && !ok {
-		return Config{}, fmt.Errorf("targets must be a list of strings")
-	}
-	for i, item := range items {
-		target, ok := item.(string)
-		if !ok || target == "" {
-			return Config{}, fmt.Errorf("targets[%d] must be a non-empty string", i)
-		}
-		cfg.Targets = append(cfg.Targets, target)
-	}
-	if len(cfg.Targets) == 0 {
-		return Config{}, fmt.Errorf("targets is required")
-	}
-	return cfg, nil
-}
-
-// Output is the evidence the collector emits.
+// Output is the artifact the collector emits at artifactPath.
 type Output struct {
-	CollectedAt string   `json:"collected_at"`
-	Targets     []Target `json:"targets"`
+	SchemaVersion    string       `json:"schema_version"`
+	CollectedAt      string       `json:"collected_at"`
+	CollectedAtLevel string       `json:"collected_at_level"`
+	Organization     Organization `json:"organization"`
+	// Users is left out, with a gap, when the users could not be listed.
+	Users *Users `json:"users,omitempty"`
 }
 
-// Target is the evidence for one configured target.
-type Target struct {
+// Organization describes the organization the collector signed in to.
+type Organization struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	MFARequired bool   `json:"mfa_required"`
+}
+
+// Users rolls up the organization's users.
+type Users struct {
+	TotalCount int `json:"total_count"`
+	// MFAEnabledCount and MFAEnabledPct are null, with a partial gap, when
+	// some user's factors could not be read. MFAEnabledPct is also null when
+	// there are no users.
+	MFAEnabledCount *int     `json:"mfa_enabled_count"`
+	MFAEnabledPct   *float64 `json:"mfa_enabled_pct"`
+	// Inventory lists every user at the internal level.
+	Inventory []User `json:"inventory,omitzero"`
+}
+
+// User is one row of the inventory.
+type User struct {
+	ID   string `json:"id"`
 	Name string `json:"name"`
-	// TODO: Add the fields this collector measures.
+	// MFAEnabled is null, with a gap, when the user's factors could not be
+	// read.
+	MFAEnabled *bool `json:"mfa_enabled"`
 }
 
-// Collect gathers evidence for every target. It stops when ctx ends, which
-// happens on SIGTERM and when the collector's timeout passes.
-func Collect(ctx context.Context, cfg Config) (*Output, error) {
-	cfg.status("Collecting")
-	output := &Output{CollectedAt: time.Now().UTC().Format(time.RFC3339)}
-	for i, name := range cfg.Targets {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+// collect signs in and reads the organization's users. It fails only when
+// the sign-in fails. A value it cannot read after that is left out of the
+// output with a gap, never written as zero or false.
+func collect(ctx componentsdk.CollectorContext, client *{{.VendorPackage}}.Client) (*Output, error) {
+	ctx.Status("Signing in")
+	org, err := client.GetOrganization(ctx.Context())
+	if err != nil {
+		return nil, fmt.Errorf("signing in: %w", err)
+	}
+	rec := componentsdk.Records(ctx)
+	rec.SignedInAs(componentsdk.Principal{Provider: "{{.Name}}", Kind: "api_token", TenantID: org.ID})
+
+	out := &Output{
+		SchemaVersion:    SchemaVersion,
+		CollectedAt:      componentsdk.Now(ctx).UTC().Format(time.RFC3339),
+		CollectedAtLevel: string(ctx.Level()),
+		Organization:     Organization{ID: org.ID, Name: org.Name, MFARequired: *org.MFARequired},
+	}
+	gaps := gapLog{rec: rec}
+
+	ctx.Status("Listing users")
+	users, err := client.ListUsers(ctx.Context())
+	if err != nil {
+		gaps.notCollected(err, "/users")
+		return out, nil
+	}
+	out.Users = readUsers(ctx, client, gaps, users)
+	return out, nil
+}
+
+// readUsers reads each user's factors. A user whose factors cannot be read
+// has mfa_enabled left out, and so do the rollups over every user.
+func readUsers(ctx componentsdk.CollectorContext, client *{{.VendorPackage}}.Client, gaps gapLog, users []{{.VendorPackage}}.User) *Users {
+	inventory := ctx.Level().AtLeast(componentsdk.LevelInternal)
+	rows := make([]User, len(users))
+	enabled, unmeasured := 0, 0
+	var firstErr error
+	for i, u := range users {
+		ctx.Progress(int64(i+1), int64(len(users)), "Reading MFA factors")
+		rows[i] = User{ID: u.ID, Name: u.Name}
+		factors, err := client.ListFactors(ctx.Context(), u.ID)
+		if err != nil {
+			unmeasured++
+			if firstErr == nil {
+				firstErr = err
+			}
+			if inventory {
+				gaps.notCollected(err, rowPointer("/users/inventory", i, "mfa_enabled"))
+			}
+			continue
 		}
-		cfg.progress(int64(i+1), int64(len(cfg.Targets)), "Collecting "+name)
-		// TODO: Fetch this target's evidence, passing ctx to every API call.
-		output.Targets = append(output.Targets, Target{Name: name})
+		on := hasActiveFactor(factors)
+		rows[i].MFAEnabled = &on
+		if on {
+			enabled++
+		}
 	}
-	return output, nil
+
+	out := &Users{TotalCount: len(users)}
+	if unmeasured > 0 {
+		gaps.partial(unmeasured, firstErr, "/users/mfa_enabled_count", "/users/mfa_enabled_pct")
+	} else {
+		out.MFAEnabledCount = &enabled
+		out.MFAEnabledPct = percent(enabled, len(users))
+	}
+	if inventory {
+		out.Inventory = rows
+	}
+	return out
 }
 
-func (c Config) status(message string) {
-	if c.OnStatus != nil {
-		c.OnStatus(message)
+func hasActiveFactor(factors []{{.VendorPackage}}.Factor) bool {
+	for _, f := range factors {
+		if f.Status == "active" {
+			return true
+		}
 	}
+	return false
 }
 
-func (c Config) progress(current, total int64, message string) {
-	if c.OnProgress != nil {
-		c.OnProgress(current, total, message)
+// percent is n of total as a percentage rounded to one decimal place, or nil
+// when total is 0.
+func percent(n, total int) *float64 {
+	if total == 0 {
+		return nil
 	}
+	p := math.Round(float64(n)*1000/float64(total)) / 10
+	return &p
 }

@@ -206,6 +206,47 @@ func TestSensitive(t *testing.T) {
 	}
 }
 
+func TestSensitiveLeavesProseAndDigests(t *testing.T) {
+	digest := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		// A credential keyword followed by an ordinary word is prose.
+		{"keyword before a word", "token endpoint returned 503", "token endpoint returned 503"},
+		{"keyword in an identifier before a word", "client_secret authentication requires a secret", "client_secret authentication requires a secret"},
+		{"capitalized word", "auth Provider unavailable", "auth Provider unavailable"},
+		{"word at the end of a sentence", "missing credential settings.", "missing credential settings."},
+		{"error code after a colon and a space", "requesting token: invalid_client", "requesting token: invalid_client"},
+		{"digest in a path", "artifacts/documents/" + digest + "/policy.pdf", "artifacts/documents/" + digest + "/policy.pdf"},
+		{"digest in a URL", "GET https://storage.example.com/blobs/" + digest + " failed", "GET https://storage.example.com/blobs/" + digest + " failed"},
+
+		// Values stay redacted.
+		{"keyword before a value", "auth failed with token abc123def456ghi", "auth failed with token " + Placeholder},
+		{"keyword before a mixed-case value", "secret AbCdEfGhIjKlMnOp", "secret " + Placeholder},
+		{"keyword colon space value", "password: hunter2hunter2", "password: " + Placeholder},
+		{"header colon space value", "X-Api-Key: abcdef1234567890", "X-Api-Key: " + Placeholder},
+		{"keyword equals value with spaces", "token = s3cr3t-v4lu3-123", "token = " + Placeholder},
+		{"keyword equals a word", "password=correcthorsebattery", "password=" + Placeholder},
+		{"keyword colon a word", "the secret:verylongsecretvalue", "the secret:" + Placeholder},
+		{"JSON key and value", `{"client_secret": "abcdefgh12345678"}`, `{"client_secret": "` + Placeholder + `"}`},
+		{"quoted word", `token "endpointvalue"`, `token "` + Placeholder + `"`},
+		{"bearer token", "Authorization: Bearer abc123def456", "Authorization: Bearer " + Placeholder},
+		{"JWT", "id_token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl", "id_token " + Placeholder},
+		{"long token with slashes", "key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "key " + Placeholder},
+		{"long token beside a digest", "blobs/" + digest + "/wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "blobs/" + digest + "/" + Placeholder},
+		{"hex of another length", "commit 0123456789abcdef0123456789abcdef01234567", "commit " + Placeholder},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SensitiveAlways(tt.input); got != tt.want {
+				t.Errorf("SensitiveAlways(%q) =\n  %q\nwant:\n  %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestError(t *testing.T) {
 	// Error is an alias for Sensitive
 	Enable()

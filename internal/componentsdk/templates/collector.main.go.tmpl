@@ -14,37 +14,5 @@ var (
 )
 
 func main() {
-	componentsdk.RunCollector(componentsdk.CollectorSpec{
-		Name:        "{{.Name}}",
-		Version:     Version,
-		Commit:      Commit,
-		Description: "TODO: Describe what this collector gathers",
-	}, run)
-}
-
-func run(ctx componentsdk.CollectorContext) error {
-	cfg, err := collector.ParseConfig(ctx.Config())
-	if err != nil {
-		return componentsdk.NewConfigError("%w", err)
-	}
-	cfg.OnStatus = ctx.Status
-	cfg.OnProgress = ctx.Progress
-	// Secrets listed under secrets: in epack.yaml arrive as environment
-	// variables: ctx.Secret("API_TOKEN").
-
-	output, err := collector.Collect(ctx.Context(), cfg)
-	if err != nil {
-		// Wrap rejected credentials with componentsdk.NewAuthError (exit 3)
-		// and API or network failures with componentsdk.NewNetworkError
-		// (exit 4). Any other error exits 1.
-		return err
-	}
-
-	return ctx.Emit([]componentsdk.CollectedArtifact{
-		componentsdk.JSONArtifact("artifacts/{{.Name}}.json", output, componentsdk.ArtifactMeta{
-			Schema:      "evidencepack/{{.Name}}@v1",
-			DisplayName: "TODO: Display name",
-			Description: "TODO: One line on what this evidence shows",
-		}),
-	})
+	componentsdk.RunCollector(collector.Spec(Version, Commit), collector.Run)
 }

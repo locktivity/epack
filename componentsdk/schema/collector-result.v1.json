@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "evidencepack/collector-result@v1",
+  "description": "What a collector could not measure and why, what its output checks found, the calls it made, the identity it signed in as, and when it ran.",
+  "type": "object",
+  "required": ["collector", "outcome", "gaps", "calls", "run"],
+  "additionalProperties": false,
+  "properties": {
+    "collector": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" },
+        "commit": { "type": "string" }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["collected", "partial"] },
+        "code": { "$ref": "#/$defs/code" },
+        "owner": { "$ref": "#/$defs/owner" }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/gap" }
+    },
+    "checks": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "checks_dropped": { "type": "integer", "minimum": 0 },
+    "calls": {
+      "type": "object",
+      "required": ["operations"],
+      "additionalProperties": false,
+      "properties": {
+        "operations": { "type": "array", "items": { "$ref": "#/$defs/operation" } },
+        "requests": { "type": "array", "items": { "$ref": "#/$defs/request" } },
+        "requests_dropped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "signed_in_as": {
+      "type": "object",
+      "required": ["provider", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string" },
+        "kind": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+        "id": { "type": "string", "description": "Present at the audit and internal levels only." }
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": ["started_at", "finished_at", "proxy", "custom_ca"],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "proxy": { "type": "boolean" },
+        "custom_ca": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "code": {
+      "enum": ["auth_failed", "permission_denied", "config_invalid", "not_licensed", "rate_limited", "vendor_error", "timeout", "invalid_response", "internal"]
+    },
+    "owner": {
+      "enum": ["customer", "nobody", "vendor", "vendor_or_runner", "publisher"]
+    },
+    "gap": {
+      "type": "object",
+      "required": ["pointer", "status", "code", "owner"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "type": "string" },
+        "path": { "type": "string" },
+        "pointer": { "type": "string", "pattern": "^(/.*)?$" },
+        "status": { "enum": ["not_collected", "partial"] },
+        "code": { "$ref": "#/$defs/code" },
+        "owner": { "$ref": "#/$defs/owner" },
+        "vendor_code": { "type": "string" },
+        "unmeasured": { "type": "integer", "minimum": 0 },
+        "detail": { "type": "string", "description": "Present at the audit and internal levels only." }
+      }
+    },
+    "check": {
+      "type": "object",
+      "required": ["check", "pointer", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "check": { "type": "string", "description": "schema, schema_unusable, population, nulls, or rollups." },
+        "path": { "type": "string", "description": "The artifact the finding is about. A schema_unusable finding has none." },
+        "pointer": { "type": "string", "pattern": "^(/.*)?$" },
+        "message": { "type": "string" }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": ["name", "calls", "attempts", "retries"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "calls": { "type": "integer", "minimum": 0 },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "retries": { "type": "integer", "minimum": 0 },
+        "statuses": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "errors": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "deprecation": { "type": "string" },
+        "sunset": { "type": "string" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "required": ["operation", "method", "host", "attempt", "duration_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "operation": { "type": "string" },
+        "method": { "type": "string", "description": "The HTTP method, DNS and the record type looked up, such as DNS TXT, or DIAL." },
+        "host": { "type": "string", "description": "The request's host, the name a DNS lookup queried, or the host dialed." },
+        "route": { "type": "string", "description": "HTTP requests only." },
+        "query_keys": { "type": "array", "items": { "type": "string" } },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "status": { "type": "integer" },
+        "rcode": { "enum": ["NOERROR", "NXDOMAIN", "SERVFAIL"], "description": "DNS lookups only: the response code. A lookup that got no response has none." },
+        "error": { "$ref": "#/$defs/code" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "request_id": { "type": "string" }
+      }
+    }
+  }
+}

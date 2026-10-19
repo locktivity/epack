@@ -1,0 +1,78 @@
+package collector
+
+import (
+	"testing"
+
+	"github.com/locktivity/epack/componentsdk"
+	"github.com/locktivity/epack/componentsdk/collectortest"
+
+	"{{.ModulePath}}/internal/{{.VendorPackage}}"
+)
+
+// TestCollectorKit runs the collector against the scenarios below, then
+// injects faults into each operation's calls and checks the output against
+// the schema, every collection level, and the credential and sensitivity
+// rules.
+func TestCollectorKit(t *testing.T) {
+	collectortest.Run(t, collectortest.Suite{
+		Spec:    Spec("test", "collectortest"),
+		Run:     Run,
+		Config:  kitConfig(),
+		Secrets: kitSecrets(),
+		Scenarios: []collectortest.Scenario{
+			kitClean(),
+			{
+				Name: "no users",
+				Responses: []collectortest.Response{
+					{URL: kitOrg, Body: kitOrgBody},
+					{URL: kitOrg + "/users", Body: `[]`},
+				},
+				Expect: map[string]map[string]any{
+					artifactPath: {
+						"/users/total_count":       0,
+						"/users/mfa_enabled_count": 0,
+						"/users/mfa_enabled_pct":   nil,
+						"/users/inventory":         []any{},
+					},
+				},
+			},
+		},
+		// The sign-in is the only call whose failure may fail the run.
+		Required: []string{ {{- .VendorPackage}}.OpGetOrganization},
+		Semantics: []collectortest.Semantic{
+			{
+				Operation:     {{.VendorPackage}}.OpGetOrganization,
+				Fault:         "404",
+				Meaning:       "organization not found",
+				ExpectFailure: componentsdk.CodeConfigInvalid,
+			},
+		},
+		Operations: []string{
+			{{.VendorPackage}}.OpGetOrganization,
+			{{.VendorPackage}}.OpListUsers,
+			{{.VendorPackage}}.OpListFactors,
+		},
+	})
+}
+
+func TestRunRejectsInvalidConfiguration(t *testing.T) {
+	cases := map[string]struct {
+		config  map[string]any
+		secrets map[string]string
+	}{
+		"no organization":           {map[string]any{"level": "internal"}, kitSecrets()},
+		"organization not a string": {map[string]any{"organization": 42}, kitSecrets()},
+		"no token":                  {kitConfig(), nil},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			res := componentsdk.RunInProcess(Spec("test", "collectortest"), Run, componentsdk.InProcessOptions{
+				Config:  tc.config,
+				Secrets: tc.secrets,
+			})
+			if res.ExitCode != 2 || res.Failure == nil || res.Failure.Code != componentsdk.CodeConfigInvalid {
+				t.Errorf("exit %d, failure %+v; want exit 2 with config_invalid", res.ExitCode, res.Failure)
+			}
+		})
+	}
+}

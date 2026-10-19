@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "demo collector output",
+  "type": "object",
+  "required": ["org"],
+  "properties": {
+    "org": { "type": "string" },
+    "mfa_enforced": { "type": ["boolean", "null"] },
+    "users": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "x-epack-rollup": { "rows": "user_mfa", "as": "count" }
+    },
+    "mfa_pct": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 100,
+      "x-epack-denominator": "users",
+      "x-epack-rollup": { "rows": "user_mfa", "where": "/mfa", "as": "pct" }
+    },
+    "score": { "type": ["integer", "null"] },
+    "user_mfa": {
+      "type": "array",
+      "x-epack-level": "audit",
+      "items": { "$ref": "#/$defs/user" }
+    }
+  },
+  "$defs": {
+    "user": {
+      "type": "object",
+      "required": ["mfa"],
+      "properties": { "mfa": { "type": "boolean" } }
+    }
+  }
+}

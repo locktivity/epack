@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "provider", "accounts"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "collected_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when data was collected"
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["aws", "gcp", "azure", "other"],
+      "description": "Cloud provider vendor"
+    },
+    "accounts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["account_id"],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "Account/project/subscription identifier"
+          },
+          "iam": {
+            "type": ["object", "null"],
+            "properties": {
+              "mfa_coverage_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of IAM users with MFA enabled"
+              },
+              "root_mfa_enabled": {
+                "type": ["boolean", "null"],
+                "description": "Whether root/owner account has MFA enabled"
+              },
+              "root_access_protected": {
+                "type": ["boolean", "null"],
+                "description": "Whether the highest-privilege root or tenant-root access path is protected from password-only use by MFA or by absence of standing root credentials"
+              },
+              "access_key_rotation_compliant_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of access keys rotated within policy (typically 90 days)"
+              }
+            }
+          },
+          "storage": {
+            "type": ["object", "null"],
+            "properties": {
+              "encryption_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of storage resources with encryption at rest"
+              },
+              "public_access_blocked_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of storage resources with public access blocked"
+              }
+            }
+          },
+          "logging": {
+            "type": ["object", "null"],
+            "properties": {
+              "cloudtrail_enabled": {
+                "type": ["boolean", "null"],
+                "description": "Whether audit logging is enabled (CloudTrail/Cloud Audit Logs/Activity Log)"
+              },
+              "cloudtrail_multiregion": {
+                "type": ["boolean", "null"],
+                "description": "Whether audit logging covers all regions"
+              }
+            }
+          },
+          "network": {
+            "type": ["object", "null"],
+            "properties": {
+              "ssh_open_to_world_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of security groups allowing SSH (port 22) from 0.0.0.0/0"
+              },
+              "rdp_open_to_world_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of security groups allowing RDP (port 3389) from 0.0.0.0/0"
+              }
+            }
+          },
+          "backup": {
+            "type": ["object", "null"],
+            "properties": {
+              "retention_days_min": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "description": "Minimum backup retention period across all backup-enabled resources (days)"
+              }
+            }
+          },
+          "vuln_scanning": {
+            "type": ["object", "null"],
+            "properties": {
+              "enabled": {
+                "type": ["boolean", "null"],
+                "description": "Whether vulnerability scanning is enabled (Inspector/Security Command Center/Defender)"
+              },
+              "unpatched_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Percentage of scanned resources with unpatched vulnerabilities"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

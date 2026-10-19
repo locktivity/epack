@@ -56,13 +56,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-{{- if eq .Kind "collector"}}
-
-      # The Makefile pins the harness to go.mod's epack version and passes
-      # testdata/conformance.json and CONFORMANCE_SECRETS.
-      - name: Run conformance tests
-        run: make conformance
-{{- else}}
 
       - name: Build
         run: go build -o {{.BinaryName}} {{.MainPackage}}
@@ -75,4 +68,3 @@ jobs:
 
       - name: Run conformance tests
         run: epack-conformance {{.Kind}} ./{{.BinaryName}} --level standard
-{{- end}}

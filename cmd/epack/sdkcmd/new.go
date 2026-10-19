@@ -38,9 +38,11 @@ This scaffolds a complete Go project with:
   - .github/workflows/ CI with conformance, and SLSA signing on tag
 
 A collector gets the layout the epack collectors share: its entrypoint in
-cmd/epack-collector-<name>/main.go, collection logic in internal/collector,
-a Makefile, and testdata/conformance.json, a config CI passes to the
-conformance harness so the output checks run.
+cmd/epack-collector-<name>/main.go, its handler and gap records in
+internal/collector, an API client under internal/, its artifact's JSON
+Schema in docs/schema, a collectortest suite that go test runs, a test that
+records a scenario from a real account, and CI that calls epack's shared
+collector workflow.
 
 Examples:
   epack sdk new tool my-analyzer
@@ -134,6 +136,9 @@ func runNew(cmd *cobra.Command, args []string) error {
 	out.Print("%s\n", p.Bold("Build & test:"))
 	out.Print("  go build -o %s %s\n", result.BinaryName, result.MainPackage)
 	out.Print("  ./%s --capabilities\n", result.BinaryName)
+	if kind == componenttypes.KindCollector {
+		out.Print("  go test ./...  %s\n", p.Dim("# runs the collectortest suite"))
+	}
 	out.Print("\n")
 
 	out.Print("%s\n", p.Bold("Run conformance:"))
@@ -144,14 +149,14 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 func importNote(kind componenttypes.ComponentKind) string {
 	if kind == componenttypes.KindCollector {
-		return " and cmd/ imports"
+		return " and the imports"
 	}
 	return ""
 }
 
 func implementationFile(kind componenttypes.ComponentKind) string {
 	if kind == componenttypes.KindCollector {
-		return "internal/collector/collector.go"
+		return "internal/collector/collector.go and the API client under internal/"
 	}
 	return "main.go"
 }

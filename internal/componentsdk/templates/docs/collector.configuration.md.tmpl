@@ -1,0 +1,26 @@
+## Configuration
+
+Add to your `epack.yaml`:
+
+```yaml
+collectors:
+  {{.Name}}:
+    source: OWNER/{{.BinaryName}}@v1
+    config:
+      organization: your-org
+    secrets:
+      - {{.TokenEnv}}
+```
+
+## Options
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `organization` | string | Yes | The organization to collect from |
+| `level` | string | No | `trust` (the default), `audit`, or `internal`. `internal` adds the list of users. |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `{{.TokenEnv}}` | TODO: The API token, and the permissions it needs |

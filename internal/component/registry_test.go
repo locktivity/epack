@@ -69,6 +69,64 @@ func TestGitHubRegistry_ResolveVersion_Caret(t *testing.T) {
 	}
 }
 
+// A push-access token lists drafts too. Ranges resolve only to published,
+// non-prerelease releases; an exact pin still names any release.
+func TestGitHubRegistry_ResolveVersion_SkipsDraftsAndPrereleases(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/owner/repo/releases":
+			_, _ = w.Write([]byte(`[
+				{"tag_name": "v2.0.0", "draft": true, "prerelease": false, "assets": []},
+				{"tag_name": "v1.4.0", "draft": true, "prerelease": false, "assets": []},
+				{"tag_name": "v1.3.0", "draft": false, "prerelease": true, "assets": []},
+				{"tag_name": "v1.2.1", "draft": false, "prerelease": false, "assets": []},
+				{"tag_name": "v1.2.0", "draft": false, "prerelease": false, "assets": []}
+			]`))
+		case "/repos/owner/repo/releases/tags/v1.3.0":
+			_, _ = w.Write([]byte(`{"tag_name": "v1.3.0", "draft": false, "prerelease": true, "assets": []}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	registry := sync.NewGitHubRegistryWithClient(github.NewClientForTest(server.Client(), server.URL))
+	ctx := context.Background()
+
+	tests := []struct {
+		constraint string
+		want       string
+	}{
+		{"^1.0.0", "v1.2.1"},
+		{"~1.2", "v1.2.1"},
+		{"latest", "v1.2.1"},
+		{"v1.3.0", "v1.3.0"},
+		{"v1.4.0", "v1.4.0"},
+	}
+	for _, tt := range tests {
+		got, err := registry.ResolveVersion(ctx, "owner/repo", tt.constraint)
+		if err != nil {
+			t.Errorf("ResolveVersion(%q): %v", tt.constraint, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ResolveVersion(%q) = %q, want %q", tt.constraint, got, tt.want)
+		}
+	}
+
+	if got, err := registry.ResolveVersion(ctx, "owner/repo", "^2.0.0"); err == nil {
+		t.Errorf("ResolveVersion(^2.0.0) = %q, want an error since v2.0.0 is a draft", got)
+	}
+
+	info, err := registry.FetchRelease(ctx, "owner/repo", "v1.3.0")
+	if err != nil {
+		t.Fatalf("FetchRelease(v1.3.0): %v", err)
+	}
+	if info.Version != "v1.3.0" {
+		t.Errorf("FetchRelease(v1.3.0).Version = %q", info.Version)
+	}
+}
+
 func TestGitHubRegistry_FetchRelease(t *testing.T) {
 	release := github.Release{
 		TagName:         "v1.2.3",

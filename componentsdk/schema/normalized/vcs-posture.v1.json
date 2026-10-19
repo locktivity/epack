@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "provider", "organization"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "collected_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when data was collected"
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["github", "gitlab", "bitbucket", "azure_devops", "other"],
+      "description": "Version control provider"
+    },
+    "organization": {
+      "type": "string",
+      "description": "Organization, group, or workspace name"
+    },
+    "org_security": {
+      "type": ["object", "null"],
+      "properties": {
+        "two_factor_required": {
+          "type": ["boolean", "null"],
+          "description": "Whether organization requires 2FA for all members"
+        }
+      }
+    },
+    "repo_coverage_pct": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Percentage of repositories covered by the scan (based on include/exclude patterns)"
+    },
+    "branch_protection": {
+      "type": ["object", "null"],
+      "description": "Coverage percentages for branch protection rules on default branches",
+      "properties": {
+        "pr_required_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of repos requiring pull requests before merge"
+        },
+        "approving_reviews_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of repos requiring at least one approving review"
+        },
+        "status_checks_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of repos requiring status checks to pass"
+        },
+        "signed_commits_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of repos requiring signed commits"
+        }
+      }
+    },
+    "security_features": {
+      "type": ["object", "null"],
+      "description": "Coverage percentages for security scanning features",
+      "properties": {
+        "vuln_alerts_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of repos with dependency vulnerability alerts enabled"
+        },
+        "secret_scanning_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of repos with secret scanning enabled"
+        },
+        "code_scanning_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of repos with code scanning (SAST) enabled"
+        }
+      }
+    }
+  }
+}

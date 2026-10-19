@@ -1,4 +1,4 @@
-.PHONY: build build-all test lint clean conformance sdk-test sdk-run
+.PHONY: build build-all test lint clean conformance record sdk-test sdk-run
 
 BINARY_NAME := {{.BinaryName}}
 MAIN := {{.MainPackage}}
@@ -6,10 +6,11 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 COMMIT := $(shell git rev-parse --verify HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)'
 EPACK_VERSION = $(shell go list -m -f '{{"{{"}}.Version{{"}}"}}' github.com/locktivity/epack)
-# Variables the collector reads credentials from. Conformance sets each to a
-# canary value, fails if any output prints it, and checks that the rejected
+# Variables the collector reads credentials from, as conformance-secrets in
+# .github/workflows/ci.yaml lists them. Conformance sets each to a canary
+# value, fails if any output prints it, and checks that the rejected
 # credential exits 3.
-CONFORMANCE_SECRETS :=
+CONFORMANCE_SECRETS := {{.TokenEnv}}
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) $(MAIN)
@@ -20,6 +21,7 @@ build-all:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-darwin-amd64 $(MAIN)
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-darwin-arm64 $(MAIN)
 
+# Runs the unit tests and the collectortest suite.
 test:
 	go test -race -v ./...
 
@@ -35,10 +37,15 @@ lint: $(GOLANGCI_LINT)
 clean:
 	rm -f $(BINARY_NAME) $(BINARY_NAME)-*
 
-# Conformance at the epack version go.mod pins. CI runs this target.
+# Conformance at the epack version go.mod pins, as CI runs it.
 conformance: build
 	go run -tags conformance github.com/locktivity/epack/cmd/epack-conformance@$(EPACK_VERSION) collector ./$(BINARY_NAME) --level standard \
 		$(if $(wildcard testdata/conformance.json),--config testdata/conformance.json) $(foreach s,$(CONFORMANCE_SECRETS),--secret $(s))
+
+# Records the clean scenario from the organization RECORD_ORGANIZATION names,
+# with the token in {{.TokenEnv}}. See internal/collector/record_test.go.
+record:
+	go test -tags record -run TestRecord -count=1 -v ./internal/collector/
 
 sdk-test:
 	epack sdk test .

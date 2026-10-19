@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/locktivity/epack-collector-email-dns/docs/schema/v1.0.0.json",
+  "title": "Email DNS Posture",
+  "description": "Email DNS security posture for a list of domains",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "domains"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "collected_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "domains": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DomainResult"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "diagnostics": {
+      "$ref": "#/$defs/Diagnostics"
+    }
+  },
+  "$defs": {
+    "DomainResult": {
+      "type": "object",
+      "required": ["domain"],
+      "properties": {
+        "domain": {
+          "type": "string",
+          "description": "The domain name"
+        },
+        "mx": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MXRecord"
+          }
+        },
+        "spf": {
+          "oneOf": [
+            { "$ref": "#/$defs/SPFRecord" },
+            { "type": "null" }
+          ]
+        },
+        "dmarc": {
+          "oneOf": [
+            { "$ref": "#/$defs/DMARCRecord" },
+            { "type": "null" }
+          ]
+        },
+        "dkim": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DKIMRecord"
+          }
+        },
+        "assessment": {
+          "$ref": "#/$defs/Assessment"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "MXRecord": {
+      "type": "object",
+      "required": ["host", "priority"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Mail server hostname"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "MX priority (lower is higher priority)"
+        }
+      }
+    },
+    "SPFRecord": {
+      "type": "object",
+      "required": ["record"],
+      "properties": {
+        "record": {
+          "type": "string",
+          "description": "The SPF TXT record value"
+        },
+        "valid": {
+          "type": ["boolean", "null"],
+          "description": "Whether the record is valid"
+        }
+      }
+    },
+    "DMARCRecord": {
+      "type": "object",
+      "required": ["record"],
+      "properties": {
+        "record": {
+          "type": "string",
+          "description": "The DMARC TXT record value"
+        },
+        "policy": {
+          "type": "string",
+          "enum": ["none", "quarantine", "reject", "unknown"],
+          "description": "DMARC policy (p= value)"
+        },
+        "subdomain_policy": {
+          "type": "string",
+          "enum": ["none", "quarantine", "reject", "unknown", ""],
+          "description": "Subdomain policy (sp= value, defaults to policy)"
+        },
+        "pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of messages to apply policy"
+        },
+        "rua": {
+          "type": "string",
+          "description": "Aggregate report URI"
+        },
+        "ruf": {
+          "type": "string",
+          "description": "Forensic report URI"
+        },
+        "valid": {
+          "type": ["boolean", "null"],
+          "description": "Whether the record is valid"
+        }
+      }
+    },
+    "DKIMRecord": {
+      "type": "object",
+      "required": ["selector", "record"],
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "DKIM selector name"
+        },
+        "record": {
+          "type": "string",
+          "description": "The DKIM TXT record value"
+        },
+        "valid": {
+          "type": ["boolean", "null"],
+          "description": "Whether the record is valid"
+        }
+      }
+    },
+    "Assessment": {
+      "type": ["object", "null"],
+      "properties": {
+        "enforced": {
+          "type": ["boolean", "null"],
+          "description": "True if DMARC policy is reject with pct=100"
+        },
+        "has_reporting": {
+          "type": ["boolean", "null"],
+          "description": "True if rua (aggregate reports) is configured"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of problems found"
+        }
+      }
+    },
+    "Summary": {
+      "type": ["object", "null"],
+      "properties": {
+        "total_domains": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Total number of domains scanned"
+        },
+        "with_mx_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of domains with MX records"
+        },
+        "with_spf_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of domains with SPF records"
+        },
+        "with_dmarc_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of domains with DMARC records"
+        },
+        "with_dkim_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of domains with DKIM records"
+        },
+        "with_all_three_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of domains with MX, SPF, and DMARC"
+        },
+        "enforced_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of domains with DMARC p=reject"
+        },
+        "with_reporting_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of domains with rua configured"
+        },
+        "all_enforced": {
+          "type": ["boolean", "null"],
+          "description": "True if all domains have p=reject"
+        }
+      }
+    },
+    "Diagnostics": {
+      "type": "object",
+      "properties": {
+        "domain_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Errors encountered for specific domains"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Non-fatal warnings"
+        }
+      }
+    }
+  }
+}

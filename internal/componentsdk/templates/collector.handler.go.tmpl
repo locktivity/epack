@@ -1,0 +1,60 @@
+package collector
+
+import (
+	"time"
+
+	"github.com/locktivity/epack/componentsdk"
+
+	"{{.ModulePath}}/docs/schema"
+	"{{.ModulePath}}/internal/{{.VendorPackage}}"
+)
+
+const (
+	// artifactPath is where the collector's artifact sits in the pack.
+	artifactPath = "artifacts/{{.Name}}.json"
+
+	// tokenEnv is the variable the API token arrives in, which epack.yaml
+	// lists under secrets.
+	tokenEnv = "{{.TokenEnv}}"
+)
+
+// Spec describes the collector to componentsdk.RunCollector.
+func Spec(version, commit string) componentsdk.CollectorSpec {
+	return componentsdk.CollectorSpec{
+		Name:        "{{.Name}}",
+		Version:     version,
+		Commit:      commit,
+		Description: "TODO: Describe what this collector gathers",
+		Timeout:     5 * time.Minute,
+		Schemas:     map[string][]byte{artifactPath: schema.Artifact},
+	}
+}
+
+// Run is the collector's handler. It fails only for invalid configuration or
+// a failed sign-in, and otherwise emits what it collected with a gap recorded
+// for each value it could not read.
+func Run(ctx componentsdk.CollectorContext) error {
+	cfg, err := ParseConfig(ctx.Config())
+	if err != nil {
+		return componentsdk.NewConfigError("%w", err)
+	}
+	token := ctx.Secret(tokenEnv)
+	if token == "" {
+		return componentsdk.NewConfigError("%s is required", tokenEnv)
+	}
+
+	httpClient := componentsdk.NewHTTPClient(ctx, componentsdk.HTTPOptions{
+		CredentialHosts: []string{ {{- .VendorPackage}}.Host},
+	})
+	output, err := collect(ctx, {{.VendorPackage}}.NewClient(httpClient, cfg.Organization, token))
+	if err != nil {
+		return err
+	}
+
+	return ctx.Emit([]componentsdk.CollectedArtifact{
+		componentsdk.JSONArtifact(artifactPath, output, componentsdk.ArtifactMeta{
+			DisplayName: "TODO: Display name",
+			Description: "TODO: One line on what this evidence shows",
+		}),
+	})
+}

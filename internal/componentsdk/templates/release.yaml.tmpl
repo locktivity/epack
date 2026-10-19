@@ -29,12 +29,6 @@ jobs:
         with:
           version: v2.9.0
 
-{{- if eq .Kind "collector"}}
-
-      - name: Run conformance tests
-        run: make conformance
-{{- else}}
-
       - name: Build
         run: go build -o {{.BinaryName}} {{.MainPackage}}
 
@@ -44,7 +38,6 @@ jobs:
           echo "Installing epack-conformance at ${EPACK_VERSION}"
           go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@"${EPACK_VERSION}"
           epack-conformance {{.Kind}} ./{{.BinaryName}} --level standard
-{{- end}}
 
   # Compute build arguments (version and commit)
   args:

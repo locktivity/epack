@@ -1,0 +1,52 @@
+package collector
+
+import "github.com/locktivity/epack/componentsdk/collectortest"
+
+const (
+	kitOrganization = "example-org"
+	kitToken        = "kit-api-token-0123456789"
+	kitAPI          = "https://api.example.com/v1"
+	kitOrg          = kitAPI + "/organizations/" + kitOrganization
+	kitOrgBody      = `{"id": "org-1", "name": "Example Org", "mfa_required": true}`
+)
+
+func kitConfig() map[string]any {
+	return map[string]any{"organization": kitOrganization, "level": "internal"}
+}
+
+func kitSecrets() map[string]string {
+	return map[string]string{tokenEnv: kitToken}
+}
+
+// kitClean answers every call a clean run makes, written by hand: an
+// organization that requires MFA, with three users. Two have an active
+// factor, and one has none. A recording that record_test.go makes of a real
+// organization can replace it.
+func kitClean() collectortest.Scenario {
+	return collectortest.Scenario{
+		Name: "clean",
+		Responses: []collectortest.Response{
+			{URL: kitOrg, Body: kitOrgBody},
+			{URL: kitOrg + "/users", Body: `[
+				{"id": "u1", "name": "Avery"},
+				{"id": "u2", "name": "Blake"},
+				{"id": "u3", "name": "Casey"}
+			]`},
+			{URL: kitAPI + "/users/u1/factors", Body: `[{"id": "f1", "type": "totp", "status": "active"}]`},
+			{URL: kitAPI + "/users/u2/factors", Body: `[]`},
+			{URL: kitAPI + "/users/u3/factors", Body: `[
+				{"id": "f2", "type": "webauthn", "status": "active"},
+				{"id": "f3", "type": "sms", "status": "pending"}
+			]`},
+		},
+		Expect: map[string]map[string]any{
+			artifactPath: {
+				"/organization/mfa_required":     true,
+				"/users/total_count":             3,
+				"/users/mfa_enabled_count":       2,
+				"/users/mfa_enabled_pct":         66.7,
+				"/users/inventory/1/mfa_enabled": false,
+			},
+		},
+	}
+}

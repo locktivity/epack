@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  # Tests, including the collectortest suite, lint, release builds,
+  # conformance, and govulncheck. On a pull request it also compares each
+  # scenario's output with the latest release's.
+  collector:
+{{- if .EpackCommit}}
+    uses: locktivity/epack/.github/workflows/collector-ci.yaml@{{.EpackCommit}} # {{.EpackVersion}}
+{{- else}}
+    # Pin to the commit of the epack release in go.mod, so the workflow, the
+    # SDK, and the conformance harness move together.
+    uses: locktivity/epack/.github/workflows/collector-ci.yaml@main
+{{- end}}
+    with:
+      name: {{.Name}}
+      conformance-secrets: {{.TokenEnv}}

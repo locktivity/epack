@@ -65,8 +65,13 @@ var (
 	// CircleCI: CIRCLE_OIDC_TOKEN format varies but is typically base64
 	ciTokenPattern = regexp.MustCompile(`\b(ghs_|gho_|ghp_|ghr_|glpat-|glcbt-|gloas-|glsoat-)[A-Za-z0-9_-]+\b`)
 
-	// API key patterns: key=value or key:value where key suggests a secret
-	apiKeyPattern = regexp.MustCompile(`(?i)(api[_-]?key|secret|token|password|credential|auth)[=:\s]["']?[A-Za-z0-9_\-\.=+/]{8,}["']?`)
+	// API key patterns: a keyword that suggests a secret, then its value after
+	// "=", ":", or spaces. A quote may close a JSON key or open the value.
+	apiKeyPattern = regexp.MustCompile(`(?i)(api[_-]?key|secret|token|password|credential|auth)("?\s*[=:]\s*|\s+)(["']?)([A-Za-z0-9_\-\.=+/]{8,})(["']?)`)
+
+	// An ordinary word after a keyword and a space is prose, as in "token
+	// endpoint returned 503", not a value.
+	ordinaryWordPattern = regexp.MustCompile(`^(?:[a-z]+(?:[_-][a-z]+)*|[A-Z][a-z]+|[A-Z]+)$`)
 
 	// Long base64 strings (40+ chars) - likely encoded secrets, but exclude hex digests
 	base64SecretPattern = regexp.MustCompile(`[A-Za-z0-9+/]{40,}={0,2}`)
@@ -128,7 +133,13 @@ func Sensitive(s string) string {
 	if !IsEnabled() {
 		return s
 	}
+	return SensitiveAlways(s)
+}
 
+// SensitiveAlways applies Sensitive's pattern redaction whether or not
+// redaction is enabled globally. Collectors use it for text that reaches
+// evidence, where the CLI's switch does not apply.
+func SensitiveAlways(s string) string {
 	truncatedInput, truncated := truncateForRedaction(s)
 	redacted := applySensitiveRedactions(truncatedInput)
 	if truncated {
@@ -153,25 +164,49 @@ func applySensitiveRedactions(s string) string {
 	return base64SecretPattern.ReplaceAllStringFunc(s, redactBase64SecretMatch)
 }
 
+// redactAPIKeyMatch redacts the value after a credential keyword: always
+// after "=", after ":" with nothing between, and in quotes, and otherwise
+// unless the value is an ordinary word.
 func redactAPIKeyMatch(match string) string {
-	for i, c := range match {
-		if c == '=' || c == ':' || c == ' ' {
-			prefix := match[:i+1]
-			rest := match[i+1:]
-			if len(rest) > 0 && (rest[0] == '"' || rest[0] == '\'') {
-				return prefix + string(rest[0]) + Placeholder + string(rest[0])
-			}
-			return prefix + Placeholder
-		}
-	}
-	return Placeholder
-}
-
-func redactBase64SecretMatch(match string) string {
-	if len(match) == 64 && isHexString(match) {
+	m := apiKeyPattern.FindStringSubmatch(match)
+	if m == nil {
 		return match
 	}
-	return Placeholder
+	keyword, sep, open, value, closing := m[1], m[2], m[3], m[4], m[5]
+	spaced := !strings.Contains(sep, "=") && strings.TrimRight(sep, " \t\r\n\f\v") != sep
+	if spaced && open == "" && ordinaryWordPattern.MatchString(strings.TrimRight(value, ".")) {
+		return match
+	}
+	return keyword + sep + open + Placeholder + closing
+}
+
+// redactBase64SecretMatch redacts a long base64 run, except for 64-character
+// hex digests, which stay readable even inside a path or URL such as
+// "blobs/<digest>/data": the text around a digest is judged on its own.
+func redactBase64SecretMatch(match string) string {
+	segments := strings.Split(match, "/")
+	var out, run []string
+	flush := func() {
+		if len(run) == 0 {
+			return
+		}
+		text := strings.Join(run, "/")
+		if len(text) >= 40 {
+			text = Placeholder
+		}
+		out = append(out, text)
+		run = nil
+	}
+	for _, seg := range segments {
+		if len(seg) == 64 && isHexString(seg) {
+			flush()
+			out = append(out, seg)
+			continue
+		}
+		run = append(run, seg)
+	}
+	flush()
+	return strings.Join(out, "/")
 }
 
 // Error is an alias for Sensitive - scans error messages for secrets.

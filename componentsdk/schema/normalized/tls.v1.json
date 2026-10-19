@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evidencepack/tls@v1",
+  "title": "TLS posture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "collected_at", "endpoints"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "collected_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "endpoints": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/endpoint_result"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "diagnostics": {
+      "$ref": "#/$defs/diagnostics"
+    }
+  },
+  "$defs": {
+    "endpoint_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "reachable": {
+          "type": ["boolean", "null"]
+        },
+        "tls": {
+          "$ref": "#/$defs/tls_details"
+        },
+        "certificate": {
+          "$ref": "#/$defs/certificate"
+        },
+        "assessment": {
+          "$ref": "#/$defs/assessment"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tls_details": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "negotiated_version": {
+          "type": "string"
+        },
+        "negotiated_cipher_suite": {
+          "type": "string"
+        },
+        "protocol_support": {
+          "$ref": "#/$defs/protocol_support"
+        }
+      }
+    },
+    "protocol_support": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "tls_1_0": {
+          "type": ["boolean", "null"]
+        },
+        "tls_1_1": {
+          "type": ["boolean", "null"]
+        },
+        "tls_1_2": {
+          "type": ["boolean", "null"]
+        },
+        "tls_1_3": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "certificate": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["not_before", "not_after", "fingerprint_sha256"],
+      "properties": {
+        "subject_common_name": {
+          "type": "string"
+        },
+        "issuer_common_name": {
+          "type": "string"
+        },
+        "serial_number": {
+          "type": "string"
+        },
+        "not_before": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "not_after": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_in_days": {
+          "type": ["integer", "null"]
+        },
+        "dns_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ip_addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[A-F0-9]{64}$"
+        },
+        "signature_algorithm": {
+          "type": "string"
+        },
+        "public_key_algorithm": {
+          "type": "string"
+        },
+        "chain_length": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "trusted_chain": {
+          "type": ["boolean", "null"]
+        },
+        "hostname_valid": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "assessment": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "certificate_valid": {
+          "type": ["boolean", "null"]
+        },
+        "hostname_valid": {
+          "type": ["boolean", "null"]
+        },
+        "expired": {
+          "type": ["boolean", "null"]
+        },
+        "expiring_soon": {
+          "type": ["boolean", "null"]
+        },
+        "modern_protocol": {
+          "type": ["boolean", "null"]
+        },
+        "legacy_protocol_supported": {
+          "type": ["boolean", "null"]
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "total_endpoints": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "reachable_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "certificate_valid_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "hostname_valid_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "modern_protocol_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "expiring_soon_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "legacy_protocol_supported_pct": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "all_certificates_valid": {
+          "type": ["boolean", "null"]
+        },
+        "all_modern_protocol": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "endpoint_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

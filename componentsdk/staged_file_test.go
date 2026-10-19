@@ -2,6 +2,8 @@ package componentsdk
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -215,4 +217,40 @@ func TestStagedFileRel(t *testing.T) {
 			t.Fatal("expected error when OutputDir is unset")
 		}
 	})
+}
+
+func TestRunInProcessRecordsStagedFiles(t *testing.T) {
+	const text = "Passwords rotate yearly."
+	dir := t.TempDir()
+	handler := func(ctx CollectorContext) error {
+		staging, _ := Staging(ctx)
+		name, err := staging.WriteStagedFile("docs/policy.txt", []byte(text))
+		if err != nil {
+			return err
+		}
+		return ctx.Emit([]CollectedArtifact{
+			JSONArtifact("artifacts/index.json", map[string]any{"files": 1}, ArtifactMeta{}),
+			FileArtifact("artifacts/docs/policy.txt", name, ArtifactMeta{}),
+		})
+	}
+	res := RunInProcess(CollectorSpec{Name: "demo"}, handler, InProcessOptions{OutputDir: dir})
+	if res.ExitCode != 0 {
+		t.Fatalf("exit = %d: %s", res.ExitCode, res.Stderr)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(text))
+	for _, a := range res.Artifacts {
+		switch a.Path {
+		case "artifacts/docs/policy.txt":
+			if a.SHA256 != hex.EncodeToString(sum[:]) || a.Size != int64(len(text)) {
+				t.Errorf("file artifact = %+v, want its digest and size kept after the staging directory went", a)
+			}
+		default:
+			if a.SHA256 != "" || a.Size != 0 {
+				t.Errorf("data artifact %s has a digest: %+v", a.Path, a)
+			}
+		}
+	}
 }

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "{{.BinaryName}}/v1.0.0.json",
+  "title": "{{.BinaryName}} output",
+  "description": "The artifact {{.BinaryName}} emits at artifacts/{{.Name}}.json. The x-epack keywords say what each value means. The collector checks its output against this schema when it emits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "collected_at", "collected_at_level", "organization"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "collected_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "collected_at_level": {
+      "type": "string",
+      "enum": ["trust", "audit", "internal"]
+    },
+    "organization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "mfa_required"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mfa_required": {
+          "type": "boolean",
+          "description": "Whether the organization requires every user to enroll an MFA factor."
+        }
+      }
+    },
+    "users": {
+      "type": "object",
+      "description": "The organization's users. Left out, with a gap, when they could not be listed.",
+      "additionalProperties": false,
+      "required": ["total_count", "mfa_enabled_count", "mfa_enabled_pct"],
+      "properties": {
+        "total_count": {
+          "type": "integer",
+          "minimum": 0,
+          "x-epack-rollup": {"rows": "inventory", "as": "count"}
+        },
+        "mfa_enabled_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Users with an active MFA factor. Null, with a partial gap, when some user's factors could not be read.",
+          "x-epack-rollup": {"rows": "inventory", "where": "/mfa_enabled", "as": "count"}
+        },
+        "mfa_enabled_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of users with an active MFA factor. Null when there are no users, or, with a partial gap, when some user's factors could not be read.",
+          "x-epack-denominator": "total_count",
+          "x-epack-rollup": {"rows": "inventory", "where": "/mfa_enabled", "as": "pct"}
+        },
+        "inventory": {
+          "type": "array",
+          "description": "Every user.",
+          "x-epack-level": "internal",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name", "mfa_enabled"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "mfa_enabled": {
+                "type": ["boolean", "null"],
+                "description": "Whether the user has an active MFA factor. Null, with a gap, when the user's factors could not be read."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

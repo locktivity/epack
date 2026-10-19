@@ -40,6 +40,9 @@ type ExecutionRequest struct {
 	// CollectorIndex and CollectorTotal provide progress event context.
 	CollectorIndex int
 	CollectorTotal int
+
+	// RunID is exposed to the collector as EPACK_RUN_ID.
+	RunID string
 }
 
 // CollectorExecutor abstracts single collector binary execution for testability.

@@ -1,0 +1,38 @@
+package collector
+
+import (
+	"fmt"
+
+	"github.com/locktivity/epack/componentsdk"
+)
+
+// gapLog records each value the collector leaves out of its artifact in the
+// run's recorder. The SDK writes the gaps into the collector result, with
+// the code componentsdk.Classify gives each error.
+type gapLog struct {
+	rec *componentsdk.Recorder
+}
+
+// notCollected records the values at pointers as left out because of err.
+func (l gapLog) notCollected(err error, pointers ...string) {
+	for _, pointer := range pointers {
+		l.rec.NotCollected(location(pointer), err)
+	}
+}
+
+// partial records the rollups at pointers as left out because unmeasured of
+// the items they cover could not be read, err being one of the failures.
+func (l gapLog) partial(unmeasured int, err error, pointers ...string) {
+	for _, pointer := range pointers {
+		l.rec.Partial(location(pointer), unmeasured, err)
+	}
+}
+
+func location(pointer string) componentsdk.Location {
+	return componentsdk.Location{Path: artifactPath, Pointer: pointer}
+}
+
+// rowPointer is the pointer to a field of one row of a list.
+func rowPointer(list string, index int, field string) string {
+	return fmt.Sprintf("%s/%d/%s", list, index, field)
+}

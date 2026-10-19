@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "provider", "org_domain"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "collected_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when data was collected"
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["okta", "ping", "entra", "google_workspace", "auth0", "onelogin", "other"],
+      "description": "Identity provider vendor"
+    },
+    "org_domain": {
+      "type": "string",
+      "description": "Organization domain or tenant identifier"
+    },
+    "user_security": {
+      "type": ["object", "null"],
+      "properties": {
+        "mfa_coverage_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of users with any MFA factor enrolled"
+        },
+        "mfa_phishing_resistant_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of users with phishing-resistant MFA (WebAuthn/FIDO2)"
+        },
+        "inactive_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of users inactive for 90+ days"
+        },
+        "locked_out_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of users currently locked out"
+        },
+        "weak_password_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of users with weak passwords"
+        },
+        "password_policy_noncompliant_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of users whose passwords do not meet current password policy requirements"
+        }
+      }
+    },
+    "app_security": {
+      "type": ["object", "null"],
+      "properties": {
+        "sso_coverage_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of applications using federated SSO (SAML/OIDC)"
+        },
+        "provisioning_enabled_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of applications with automated provisioning"
+        },
+        "deprovisioning_enabled_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of applications with automated deprovisioning"
+        },
+        "authorized_third_party_apps_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Count of authorized third-party applications or OAuth integrations"
+        }
+      }
+    },
+    "privileged_access": {
+      "type": ["object", "null"],
+      "properties": {
+        "privileged_users_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Count of users with privileged administrative access"
+        },
+        "super_admin_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Count of highest-privilege administrative accounts (for example Global Admin or Super Admin)"
+        },
+        "privileged_mfa_coverage_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of privileged users with MFA enabled or enforced"
+        },
+        "privileged_phishing_resistant_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of privileged users with phishing-resistant MFA"
+        },
+        "standing_privileged_users_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Count of users with standing privileged access instead of just-in-time or eligible access"
+        }
+      }
+    },
+    "lifecycle": {
+      "type": ["object", "null"],
+      "properties": {
+        "suspended_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of accounts in suspended or disabled state"
+        },
+        "archived_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of accounts in archived, retained, or soft-deleted state"
+        }
+      }
+    },
+    "policy": {
+      "type": ["object", "null"],
+      "properties": {
+        "mfa_required": {
+          "type": ["boolean", "null"],
+          "description": "Whether the tenant enforces MFA for all covered users"
+        },
+        "mfa_required_coverage_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of users covered by policies that require MFA"
+        },
+        "session_lifetime_max_min": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Maximum session lifetime across all policies (minutes)"
+        },
+        "idle_timeout_max_min": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Maximum idle timeout across all policies (minutes)"
+        },
+        "legacy_auth_blocked": {
+          "type": ["boolean", "null"],
+          "description": "Whether legacy authentication protocols are blocked"
+        },
+        "phishing_resistant_required_for_privileged": {
+          "type": ["boolean", "null"],
+          "description": "Whether phishing-resistant authentication is required for privileged users"
+        }
+      }
+    },
+    "device_access": {
+      "type": ["object", "null"],
+      "properties": {
+        "managed_device_required": {
+          "type": ["boolean", "null"],
+          "description": "Whether access to core corporate resources requires a managed or compliant device"
+        },
+        "managed_device_required_for_admins": {
+          "type": ["boolean", "null"],
+          "description": "Whether privileged access requires a managed or compliant device"
+        }
+      }
+    }
+  }
+}

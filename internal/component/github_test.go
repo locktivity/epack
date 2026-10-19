@@ -194,6 +194,42 @@ func TestListReleases(t *testing.T) {
 	}
 }
 
+func TestListReleases_DecodesDraftAndPrereleaseFlags(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[
+			{"tag_name": "v1.2.0", "draft": true, "prerelease": false, "assets": []},
+			{"tag_name": "v1.1.0", "draft": false, "prerelease": true, "assets": []},
+			{"tag_name": "v1.0.0", "draft": false, "prerelease": false, "assets": []}
+		]`))
+	}))
+	defer server.Close()
+
+	client := github.NewClientForTest(server.Client(), server.URL)
+
+	got, err := client.ListReleases(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("ListReleases() error: %v", err)
+	}
+	want := []struct {
+		tag        string
+		draft      bool
+		prerelease bool
+	}{
+		{"v1.2.0", true, false},
+		{"v1.1.0", false, true},
+		{"v1.0.0", false, false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len(releases) = %d, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i].TagName != w.tag || got[i].Draft != w.draft || got[i].Prerelease != w.prerelease {
+			t.Errorf("releases[%d] = %s draft=%v prerelease=%v, want %s draft=%v prerelease=%v",
+				i, got[i].TagName, got[i].Draft, got[i].Prerelease, w.tag, w.draft, w.prerelease)
+		}
+	}
+}
+
 func TestDownloadAsset(t *testing.T) {
 	content := []byte("binary content here")
 

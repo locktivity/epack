@@ -1,0 +1,362 @@
+# Shared CI for epack collectors. A collector repo calls it from its own
+# workflow:
+#
+#   jobs:
+#     collector:
+#       uses: locktivity/epack/.github/workflows/collector-ci.yaml@<commit-sha>
+#       with:
+#         name: example
+#
+# Pin it to the commit of the epack release in the collector's go.mod, so the
+# workflow, the SDK, and the conformance harness move together.
+#
+# Each job sets its own permissions except evidence-diff-comment, which gets
+# the calling job's. Setting comment: true needs pull-requests: write there.
+
+name: Collector CI
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: Collector name. The binary is epack-collector-<name>.
+        required: true
+        type: string
+      main-package:
+        description: Package to build. Defaults to ./cmd/epack-collector-<name>.
+        required: false
+        type: string
+        default: ""
+      checks:
+        description: Commands to run after lint, one per line, such as ./scripts/check-forbidden-data.sh.
+        required: false
+        type: string
+        default: ""
+      conformance-level:
+        description: Conformance level the collector must meet.
+        required: false
+        type: string
+        default: standard
+      conformance-secrets:
+        description: Variables the collector reads credentials from, separated by spaces. Conformance sets each to a canary value. testdata/conformance.json is passed as the config when it exists.
+        required: false
+        type: string
+        default: ""
+      targets:
+        description: Release targets to build, as os/arch separated by spaces.
+        required: false
+        type: string
+        default: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+      golangci-lint-version:
+        description: golangci-lint version.
+        required: false
+        type: string
+        default: v2.9.0
+      profile-url:
+        description: HTTPS URL of a profile. When set, the evidence diff also validates both sides against it and compares control outcomes.
+        required: false
+        type: string
+        default: ""
+      validate-version:
+        description: epack-tool-validate version the evidence diff validates with.
+        required: false
+        type: string
+        default: v0.1.9
+      require-changelog:
+        description: Fail the evidence diff when it lists changes and the pull request changes neither CHANGELOG.md nor changelog-file.
+        required: false
+        type: boolean
+        default: false
+      changelog-file:
+        description: Another changelog file that satisfies require-changelog.
+        required: false
+        type: string
+        default: ""
+      comment:
+        description: Post the evidence diff as a pull request comment and update that comment on later runs. The calling job must grant pull-requests write.
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Includes the collectortest suite, which runs as a Go test.
+      - name: Run tests
+        run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ inputs.golangci-lint-version }}
+
+      - name: Repository checks
+        if: inputs.checks != ''
+        env:
+          CHECKS: ${{ inputs.checks }}
+        run: |
+          while IFS= read -r check; do
+            [ -n "$check" ] || continue
+            echo "::group::$check"
+            bash -euo pipefail -c "$check"
+            echo "::endgroup::"
+          done <<< "$CHECKS"
+
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build release targets
+        env:
+          NAME: ${{ inputs.name }}
+          MAIN_PACKAGE: ${{ inputs.main-package }}
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          main="${MAIN_PACKAGE:-./cmd/epack-collector-$NAME}"
+          for target in $TARGETS; do
+            echo "Building $target"
+            CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" \
+              go build -trimpath -o "dist/epack-collector-$NAME-${target%/*}-${target#*/}" "$main"
+          done
+          go build -o "epack-collector-$NAME" "$main"
+
+      - name: Verify binary runs
+        env:
+          NAME: ${{ inputs.name }}
+        run: ./epack-collector-"$NAME" --version
+
+  conformance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          NAME: ${{ inputs.name }}
+          MAIN_PACKAGE: ${{ inputs.main-package }}
+        run: go build -o "epack-collector-$NAME" "${MAIN_PACKAGE:-./cmd/epack-collector-$NAME}"
+
+      # The harness at the epack version go.mod pins, so CI and local runs agree.
+      - name: Install epack-conformance
+        run: |
+          EPACK_VERSION="$(go list -m -f '{{.Version}}' github.com/locktivity/epack)"
+          echo "Installing epack-conformance at ${EPACK_VERSION}"
+          go install -tags conformance github.com/locktivity/epack/cmd/epack-conformance@"${EPACK_VERSION}"
+
+      - name: Run conformance tests
+        env:
+          NAME: ${{ inputs.name }}
+          LEVEL: ${{ inputs.conformance-level }}
+          SECRETS: ${{ inputs.conformance-secrets }}
+        run: |
+          set -- --level "$LEVEL"
+          for secret in $SECRETS; do
+            set -- "$@" --secret "$secret"
+          done
+          if [ -f testdata/conformance.json ]; then
+            set -- "$@" --config testdata/conformance.json
+          fi
+          epack-conformance collector ./epack-collector-"$NAME" "$@"
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  # Compares each collectortest scenario's output at the pull request with its
+  # output at the latest release.
+  evidence-diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      markdown: ${{ steps.report.outputs.markdown }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Find the latest release
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tag="$(git tag --merged "$BASE_SHA" --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+          if [ -z "$tag" ]; then
+            echo "EVIDENCE_DIFF_SKIP=No release tag is reachable from the base branch, so there is nothing to compare with." >> "$GITHUB_ENV"
+          elif ! git grep -q -F github.com/locktivity/epack/componentsdk/collectortest "$tag" -- '*_test.go'; then
+            echo "EVIDENCE_DIFF_SKIP=Release $tag has no collectortest suite, so there is nothing to compare with." >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run the scenarios at the pull request
+        if: env.EVIDENCE_DIFF_SKIP == ''
+        env:
+          COLLECTORTEST_OUT: ${{ runner.temp }}/evidence/head
+        run: |
+          if ! go test -count=1 ./...; then
+            echo "EVIDENCE_DIFF_SKIP=The tests at this pull request failed, so there is nothing to compare. The test job shows the failures." >> "$GITHUB_ENV"
+          elif [ -z "$(find "$COLLECTORTEST_OUT" -mindepth 2 -maxdepth 2 -type d 2>/dev/null)" ]; then
+            echo "EVIDENCE_DIFF_SKIP=The tests at this pull request wrote no scenarios. Scenario export needs an epack version that reads COLLECTORTEST_OUT." >> "$GITHUB_ENV"
+          fi
+
+      - name: Run the scenarios at the release
+        if: env.EVIDENCE_DIFF_SKIP == ''
+        env:
+          COLLECTORTEST_OUT: ${{ runner.temp }}/evidence/base
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/release" "$RELEASE_TAG"
+          cd "$RUNNER_TEMP/release"
+          if ! go test -count=1 ./...; then
+            echo "EVIDENCE_DIFF_SKIP=The tests at $RELEASE_TAG failed, so there is nothing to compare with." >> "$GITHUB_ENV"
+          elif [ -z "$(find "$COLLECTORTEST_OUT" -mindepth 2 -maxdepth 2 -type d 2>/dev/null)" ]; then
+            echo "EVIDENCE_DIFF_SKIP=The tests at $RELEASE_TAG wrote no scenarios. Its epack version may predate scenario export." >> "$GITHUB_ENV"
+          fi
+
+      - name: Install epack-tool-validate
+        if: env.EVIDENCE_DIFF_SKIP == '' && inputs.profile-url != ''
+        env:
+          VALIDATE_VERSION: ${{ inputs.validate-version }}
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/locktivity/epack-tool-validate@"$VALIDATE_VERSION"
+
+      # The profile gets a directory of its own, which the diff passes to the
+      # validator as its project root.
+      - name: Fetch the profile
+        if: env.EVIDENCE_DIFF_SKIP == '' && inputs.profile-url != ''
+        env:
+          PROFILE_URL: ${{ inputs.profile-url }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/profile"
+          curl --fail --silent --show-error --location --proto '=https' --output "$RUNNER_TEMP/profile/profile.yaml" "$PROFILE_URL"
+
+      # The diff tool at the epack version go.mod pins, as with conformance.
+      - name: Compare with the release
+        if: env.EVIDENCE_DIFF_SKIP == ''
+        env:
+          PROFILE_URL: ${{ inputs.profile-url }}
+        run: |
+          set -- --base "$RUNNER_TEMP/evidence/base" --head "$RUNNER_TEMP/evidence/head" \
+            --markdown "$RUNNER_TEMP/evidence-diff.md" --json "$RUNNER_TEMP/evidence-diff.json"
+          if [ -n "$PROFILE_URL" ]; then
+            set -- "$@" --profile "$RUNNER_TEMP/profile/profile.yaml" --validate "$RUNNER_TEMP/bin/epack-tool-validate"
+          fi
+          EPACK_VERSION="$(go list -m -f '{{.Version}}' github.com/locktivity/epack)"
+          go run github.com/locktivity/epack/cmd/epack-collector-diff@"${EPACK_VERSION}" "$@"
+
+      - name: Write the summary
+        id: report
+        if: ${{ !cancelled() }}
+        run: |
+          summary="$RUNNER_TEMP/evidence-diff-summary.md"
+          if [ -n "$EVIDENCE_DIFF_SKIP" ]; then
+            printf '### Evidence diff\n\n%s\n' "$EVIDENCE_DIFF_SKIP" > "$summary"
+          elif [ -f "$RUNNER_TEMP/evidence-diff.md" ]; then
+            { printf '### Evidence diff against %s\n\n' "$RELEASE_TAG"; cat "$RUNNER_TEMP/evidence-diff.md"; } > "$summary"
+            delimiter="EOF_$(openssl rand -hex 16)"
+            { echo "markdown<<$delimiter"; cat "$summary"; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
+          else
+            printf '### Evidence diff\n\nThe evidence diff did not finish. The job log shows why.\n' > "$summary"
+          fi
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require a changelog entry
+        if: env.EVIDENCE_DIFF_SKIP == '' && inputs.require-changelog
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHANGELOG_FILE: ${{ inputs.changelog-file }}
+        run: |
+          changes="$(jq '.summary.changes' "$RUNNER_TEMP/evidence-diff.json")"
+          if [ "$changes" = 0 ]; then
+            exit 0
+          fi
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-files"
+          if grep -Fxq CHANGELOG.md "$RUNNER_TEMP/changed-files"; then
+            exit 0
+          fi
+          if [ -n "$CHANGELOG_FILE" ] && grep -Fxq -- "$CHANGELOG_FILE" "$RUNNER_TEMP/changed-files"; then
+            exit 0
+          fi
+          echo "::error::The evidence diff lists changes, but this pull request does not change CHANGELOG.md${CHANGELOG_FILE:+ or $CHANGELOG_FILE}. Add a changelog entry that describes them."
+          exit 1
+
+  # Forks get a read-only token, so their pull requests get no comment.
+  evidence-diff-comment:
+    needs: evidence-diff
+    if: ${{ !cancelled() && inputs.comment && needs.evidence-diff.outputs.markdown != '' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKDOWN: ${{ needs.evidence-diff.outputs.markdown }}
+        run: |
+          marker='<!-- epack-evidence-diff -->'
+          body="$marker"$'\n'"$MARKDOWN"
+          id="$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)"
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
+          fi

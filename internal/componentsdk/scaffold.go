@@ -58,9 +58,11 @@ type scaffoldFile struct {
 // The directory must already exist.
 //
 // A collector gets the layout the epack collectors share: the entrypoint in
-// cmd/<binary>, collection logic in internal/collector, a Makefile, and a
-// testdata/conformance.json config that CI passes to the conformance harness.
-// Other kinds keep main.go at the project root.
+// cmd/<binary>, its spec, handler, and gap records in internal/collector, a
+// vendor client in internal/<vendor package>, its artifact's schema in
+// docs/schema, a collectortest suite with a hand-written scenario and a
+// test that records one, and CI that calls epack's shared collector
+// workflow. Other kinds keep main.go at the project root.
 func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 	binaryName := fmt.Sprintf("epack-%s-%s", opts.Kind, opts.Name)
 	modulePath := opts.ModulePath
@@ -76,7 +78,7 @@ func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 		EpackVersion: data.EpackVersion,
 	}
 
-	for _, file := range scaffoldFiles(opts.Kind, binaryName) {
+	for _, file := range scaffoldFiles(opts.Kind, binaryName, data.VendorPackage) {
 		fileData := data
 		fileData.GOOS, fileData.GOARCH = file.goos, file.goarch
 		content, err := renderTemplate(file.template, fileData)
@@ -91,22 +93,34 @@ func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 	return result, nil
 }
 
-func scaffoldFiles(kind componenttypes.ComponentKind, binaryName string) []scaffoldFile {
+func scaffoldFiles(kind componenttypes.ComponentKind, binaryName, vendorPackage string) []scaffoldFile {
 	var files []scaffoldFile
+	readme, ci, release := "readme.md.tmpl", "ci.yaml.tmpl", "release.yaml.tmpl"
+	configuration, examples := "docs/configuration.md.tmpl", "docs/examples.md.tmpl"
 	if kind == componenttypes.KindCollector {
 		files = append(files,
 			scaffoldFile{path: "cmd/" + binaryName + "/main.go", template: "collector.main.go.tmpl"},
+			scaffoldFile{path: "internal/collector/handler.go", template: "collector.handler.go.tmpl"},
+			scaffoldFile{path: "internal/collector/config.go", template: "collector.config.go.tmpl"},
 			scaffoldFile{path: "internal/collector/collector.go", template: "collector.go.tmpl"},
-			scaffoldFile{path: "internal/collector/collector_test.go", template: "collector_test.go.tmpl"},
+			scaffoldFile{path: "internal/collector/gaps.go", template: "collector.gaps.go.tmpl"},
+			scaffoldFile{path: "internal/collector/collectortest_test.go", template: "collector.collectortest_test.go.tmpl"},
+			scaffoldFile{path: "internal/collector/fixtures_test.go", template: "collector.fixtures_test.go.tmpl"},
+			scaffoldFile{path: "internal/collector/record_test.go", template: "collector.record_test.go.tmpl"},
+			scaffoldFile{path: "internal/" + vendorPackage + "/client.go", template: "collector.client.go.tmpl"},
+			scaffoldFile{path: "docs/schema/v1.0.0.json", template: "collector.schema.json.tmpl"},
+			scaffoldFile{path: "docs/schema/embed.go", template: "collector.schema.embed.go.tmpl"},
 			scaffoldFile{path: "testdata/conformance.json", template: "collector.conformance.json.tmpl"},
 			scaffoldFile{path: "Makefile", template: "collector.makefile.tmpl"},
 		)
+		readme, ci, release = "collector.readme.md.tmpl", "collector.ci.yaml.tmpl", "collector.release.yaml.tmpl"
+		configuration, examples = "docs/collector.configuration.md.tmpl", "docs/collector.examples.md.tmpl"
 	} else {
 		files = append(files, scaffoldFile{path: "main.go", template: string(kind) + ".main.go.tmpl"})
 	}
 	files = append(files,
 		scaffoldFile{path: "go.mod", template: "go.mod.tmpl"},
-		scaffoldFile{path: "README.md", template: "readme.md.tmpl"},
+		scaffoldFile{path: "README.md", template: readme},
 		scaffoldFile{path: ".gitignore", template: "gitignore.tmpl"},
 	)
 	for _, p := range []struct{ goos, goarch string }{
@@ -123,11 +137,11 @@ func scaffoldFiles(kind componenttypes.ComponentKind, binaryName string) []scaff
 		})
 	}
 	return append(files,
-		scaffoldFile{path: ".github/workflows/ci.yaml", template: "ci.yaml.tmpl"},
-		scaffoldFile{path: ".github/workflows/release.yaml", template: "release.yaml.tmpl"},
+		scaffoldFile{path: ".github/workflows/ci.yaml", template: ci},
+		scaffoldFile{path: ".github/workflows/release.yaml", template: release},
 		scaffoldFile{path: "docs/overview.md", template: "docs/overview.md.tmpl"},
-		scaffoldFile{path: "docs/configuration.md", template: "docs/configuration.md.tmpl"},
-		scaffoldFile{path: "docs/examples.md", template: "docs/examples.md.tmpl"},
+		scaffoldFile{path: "docs/configuration.md", template: configuration},
+		scaffoldFile{path: "docs/examples.md", template: examples},
 	)
 }
 

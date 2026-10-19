@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/redact"
 	"github.com/locktivity/epack/internal/safefile"
 	"github.com/locktivity/epack/internal/stagedartifact"
 )
@@ -32,8 +34,18 @@ type CollectorSpec struct {
 	// Description is a human-readable description of what the collector gathers.
 	Description string
 
-	// Timeout is the maximum execution time. Default is 60 seconds.
+	// Timeout is the maximum execution time. Default is 60 seconds. A runner
+	// that passes EPACK_DEADLINE can shorten it: the collector then stops
+	// early enough to emit what it collected before the runner's limit.
 	Timeout time.Duration
+
+	// Schemas holds JSON Schemas for the collector's artifacts, keyed by
+	// artifact path or schema ID, such as its docs/schema files embedded with
+	// go:embed. Emit checks each data artifact against its schema, or against
+	// the SDK's schema for a normalized type (see NormalizedSchemaJSON), and
+	// lists what it finds in the result artifact's checks. Each schema must be
+	// self-contained: refs to other files or URLs are not loaded.
+	Schemas map[string][]byte
 }
 
 // CollectorHandler is the function signature for collector implementations.
@@ -59,7 +71,8 @@ type CollectorContext interface {
 	Level() Level
 
 	// Secret returns the value of an environment variable.
-	// Use this for secrets listed in epack.yaml secrets array.
+	// Use this for secrets listed in epack.yaml secrets array. Values read
+	// here are redacted from record details and failure messages.
 	Secret(name string) string
 
 	// Status reports a status update during collection.
@@ -73,7 +86,8 @@ type CollectorContext interface {
 	Progress(current, total int64, message string)
 
 	// Emit outputs collected artifacts wrapped in the protocol envelope.
-	// Each artifact contains data and optional schema/path metadata.
+	// Each artifact contains data and optional schema/path metadata. The SDK
+	// adds the run's result artifact (schema ResultSchema) after them.
 	Emit(artifacts []CollectedArtifact) error
 }
 
@@ -211,10 +225,17 @@ func runCollectorInternal(spec CollectorSpec, handler CollectorHandler) int {
 		return errCode
 	}
 	defer cancel()
-	if err := handler(collectorCtx); err != nil {
-		return mapCollectorError(err)
+	return runCollectorWith(collectorCtx, handler)
+}
+
+// runCollectorWith runs handler and returns the exit code. A failure prints
+// a coded record as a progress line before the exit.
+func runCollectorWith(c *collectorContext, handler CollectorHandler) int {
+	if err := handler(c); err != nil {
+		c.reportFailure(err)
+		return exitCodeFor(c.stderr(), err)
 	}
-	return finalizeCollectorRun(collectorCtx)
+	return finalizeCollectorRun(c)
 }
 
 func handleCollectorMetaFlags(spec CollectorSpec) (int, bool) {
@@ -231,24 +252,54 @@ func handleCollectorMetaFlags(spec CollectorSpec) (int, bool) {
 }
 
 func buildCollectorContext(spec CollectorSpec) (*collectorContext, context.CancelFunc, int) {
-	timeout := spec.Timeout
-	if timeout == 0 {
-		timeout = 60 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithDeadline(context.Background(), collectorDeadline(spec, os.Getenv, time.Now()))
 	handleCollectorSignals(cancel)
+	name := os.Getenv("EPACK_COLLECTOR_NAME")
 	collectorCtx := &collectorContext{
 		ctx:       ctx,
-		name:      os.Getenv("EPACK_COLLECTOR_NAME"),
+		name:      name,
 		outputDir: os.Getenv("EPACK_COLLECTOR_OUTPUT_DIR"),
 		spec:      spec,
+		out:       os.Stdout,
+		errOut:    os.Stderr,
+		getenv:    os.Getenv,
+		progress:  &progressWriter{out: os.Stdout},
+		run:       newRun(spec, name, os.Getenv("EPACK_RUN_ID"), nil, uint64(time.Now().UnixNano())),
 	}
+	collectorCtx.run.schemas = compileSchemas(spec.Schemas, os.Stderr)
 	if err := loadCollectorConfig(collectorCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "error parsing config: %v\n", err)
+		collectorCtx.progress.writeFailure(CodeConfigInvalid, "", "error parsing config: "+err.Error())
 		cancel()
 		return nil, nil, componenttypes.ExitConfigError
 	}
 	return collectorCtx, cancel, 0
+}
+
+// collectorDeadline is the spec's timeout, shortened to stop ahead of a
+// deadline the runner passes in EPACK_DEADLINE.
+func collectorDeadline(spec CollectorSpec, getenv func(string) string, now time.Time) time.Time {
+	timeout := spec.Timeout
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+	deadline := now.Add(timeout)
+	raw := getenv("EPACK_DEADLINE")
+	if raw == "" {
+		return deadline
+	}
+	runnerDeadline, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return deadline
+	}
+	margin := runnerDeadline.Sub(now) / 10
+	if margin > 10*time.Second {
+		margin = 10 * time.Second
+	}
+	if early := runnerDeadline.Add(-margin); early.Before(deadline) {
+		return early
+	}
+	return deadline
 }
 
 func handleCollectorSignals(cancel context.CancelFunc) {
@@ -273,28 +324,42 @@ func loadCollectorConfig(ctx *collectorContext) error {
 	return nil
 }
 
-// mapCollectorError picks the exit code from the outermost typed error in
-// err's chain, so wrapping one with %w keeps its class. A deadline that no
-// typed error claimed is a network error: the collector ran out of time
-// waiting on its API.
-func mapCollectorError(err error) int {
-	fmt.Fprintf(os.Stderr, "error: %v\n", err)
+// exitCodeFor picks the exit code from the outermost typed error in err's
+// chain, so wrapping one with %w keeps its class. Without a typed error it
+// follows the error's code: a deadline or a 5xx is a network error, a 401
+// an auth error.
+func exitCodeFor(stderr io.Writer, err error) int {
+	_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 	var typed exitCoder
 	if errors.As(err, &typed) {
 		return typed.exitCode()
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return componenttypes.ExitNetworkError
+	if errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return 1
 	}
-	return 1
+	return classifyOrInternal(err).ExitCode()
 }
 
 func finalizeCollectorRun(ctx *collectorContext) int {
 	if ctx.emitted {
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "error: collector did not emit any data\n")
+	_, _ = fmt.Fprintf(ctx.stderr(), "error: collector did not emit any data\n")
+	ctx.progressOut().writeFailure(CodeInternal, "", "collector did not emit any data")
 	return 1
+}
+
+// maxFailureMessage bounds the text a failure record carries.
+const maxFailureMessage = 500
+
+// reportFailure prints err as a coded failure record. Its message is
+// redacted by the values the collector read through Secret and by pattern.
+func (c *collectorContext) reportFailure(err error) {
+	message := redact.SensitiveAlways(redact.Values(err.Error(), c.runState().secrets.list()...))
+	if len(message) > maxFailureMessage {
+		message = message[:maxFailureMessage] + "... [truncated]"
+	}
+	c.progressOut().writeFailure(classifyOrInternal(err), VendorCodeOf(err), message)
 }
 
 // collectorContext implements CollectorContext
@@ -305,6 +370,49 @@ type collectorContext struct {
 	config    map[string]any
 	spec      CollectorSpec
 	emitted   bool
+	out       io.Writer
+	errOut    io.Writer
+	getenv    func(string) string
+	progress  *progressWriter
+	run       *run
+}
+
+// The accessors below default whatever a context was built without, so a
+// zero-value context behaves like one RunCollector made.
+
+func (c *collectorContext) stdout() io.Writer {
+	if c.out != nil {
+		return c.out
+	}
+	return os.Stdout
+}
+
+func (c *collectorContext) stderr() io.Writer {
+	if c.errOut != nil {
+		return c.errOut
+	}
+	return os.Stderr
+}
+
+func (c *collectorContext) env(key string) string {
+	if c.getenv != nil {
+		return c.getenv(key)
+	}
+	return os.Getenv(key)
+}
+
+func (c *collectorContext) progressOut() *progressWriter {
+	if c.progress == nil {
+		c.progress = &progressWriter{out: c.stdout()}
+	}
+	return c.progress
+}
+
+func (c *collectorContext) runState() *run {
+	if c.run == nil {
+		c.run = newRun(c.spec, c.name, "", nil, uint64(time.Now().UnixNano()))
+	}
+	return c.run
 }
 
 var (
@@ -312,11 +420,17 @@ var (
 	_ StagingContext   = (*collectorContext)(nil)
 )
 
-func (c *collectorContext) Context() context.Context  { return c.ctx }
-func (c *collectorContext) Name() string              { return c.name }
-func (c *collectorContext) Config() map[string]any    { return c.config }
-func (c *collectorContext) Secret(name string) string { return os.Getenv(name) }
-func (c *collectorContext) OutputDir() string         { return c.outputDir }
+func (c *collectorContext) Context() context.Context { return c.ctx }
+func (c *collectorContext) Name() string             { return c.name }
+func (c *collectorContext) Config() map[string]any   { return c.config }
+func (c *collectorContext) OutputDir() string        { return c.outputDir }
+func (c *collectorContext) sdkRun() *run             { return c.runState() }
+
+func (c *collectorContext) Secret(name string) string {
+	value := c.env(name)
+	c.runState().secrets.add(value)
+	return value
+}
 
 func (c *collectorContext) WriteStagedFile(relPath string, data []byte) (string, error) {
 	if err := c.checkStagingPath(relPath); err != nil {
@@ -360,18 +474,18 @@ func (c *collectorContext) Level() Level {
 	}
 	lvl := Level(s)
 	if _, known := levelRank[lvl]; !known {
-		fmt.Fprintf(os.Stderr, "warning: unknown collection level %q in config; falling back to %q\n", s, LevelTrust)
+		_, _ = fmt.Fprintf(c.stderr(), "warning: unknown collection level %q in config; falling back to %q\n", s, LevelTrust)
 		return LevelTrust
 	}
 	return lvl
 }
 
 func (c *collectorContext) Status(message string) {
-	defaultProgressWriter.writeStatus(message)
+	c.progressOut().writeStatus(message)
 }
 
 func (c *collectorContext) Progress(current, total int64, message string) {
-	defaultProgressWriter.writeProgress(current, total, message)
+	c.progressOut().writeProgress(current, total, message)
 }
 
 func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
@@ -382,14 +496,19 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 		return fmt.Errorf("at least one artifact is required")
 	}
 	// Validate before marking emitted, so callers can retry after a rejected artifact.
-	artifactEntries := make([]map[string]any, len(artifacts))
+	artifactEntries := make([]map[string]any, 0, len(artifacts)+1)
 	for i, a := range artifacts {
 		entry, err := c.collectorArtifactEntry(a)
 		if err != nil {
 			return fmt.Errorf("artifact %d: %w", i, err)
 		}
-		artifactEntries[i] = entry
+		artifactEntries = append(artifactEntries, entry)
 	}
+	resultEntry, err := c.resultArtifactEntry(artifacts)
+	if err != nil {
+		return err
+	}
+	artifactEntries = append(artifactEntries, resultEntry)
 	c.emitted = true
 
 	envelope := map[string]any{
@@ -398,13 +517,41 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 		"artifacts":        artifactEntries,
 	}
 
-	enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(c.stdout())
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(envelope); err != nil {
 		return fmt.Errorf("encoding output: %w", err)
 	}
 
 	return nil
+}
+
+// resultArtifactEntry builds the run's result artifact from the recorder and
+// the call ledger.
+func (c *collectorContext) resultArtifactEntry(artifacts []CollectedArtifact) (map[string]any, error) {
+	result, err := buildResult(resultInput{
+		run:       c.runState(),
+		level:     c.Level(),
+		artifacts: artifacts,
+		getenv:    c.env,
+		finished:  c.runState().now(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	path := resultPath(c.runState().name)
+	for i, a := range artifacts {
+		if artifactPath(a, c.runState().name, i) == path {
+			return nil, fmt.Errorf("artifact %d uses %s, the path of the result artifact", i, path)
+		}
+	}
+	return c.collectorArtifactEntry(CollectedArtifact{
+		Data:        result,
+		Schema:      ResultSchema,
+		Path:        path,
+		DisplayName: "Collector result",
+		Description: "What the collector could not measure and why, the calls it made, and the identity it signed in as",
+	})
 }
 
 func (c *collectorContext) collectorArtifactEntry(a CollectedArtifact) (map[string]any, error) {

@@ -1,0 +1,10 @@
+// Package schema embeds the JSON Schema of the collector's artifact, which
+// the collector checks its output against when it emits.
+package schema
+
+import _ "embed"
+
+// Artifact is the schema in v1.0.0.json.
+//
+//go:embed v1.0.0.json
+var Artifact []byte

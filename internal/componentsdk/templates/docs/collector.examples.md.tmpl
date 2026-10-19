@@ -1,0 +1,49 @@
+## Basic Usage
+
+```yaml
+collectors:
+  {{.Name}}:
+    source: OWNER/{{.BinaryName}}@v1
+    config:
+      organization: your-org
+    secrets:
+      - {{.TokenEnv}}
+```
+
+## With the List of Users
+
+```yaml
+collectors:
+  {{.Name}}:
+    source: OWNER/{{.BinaryName}}@v1
+    config:
+      organization: your-org
+      level: internal
+    secrets:
+      - {{.TokenEnv}}
+```
+
+## Example Output
+
+At the `internal` level, `artifacts/{{.Name}}.json` holds:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "collected_at": "2026-01-01T00:00:00Z",
+  "collected_at_level": "internal",
+  "organization": {"id": "org-1", "name": "Example Org", "mfa_required": true},
+  "users": {
+    "total_count": 3,
+    "mfa_enabled_count": 2,
+    "mfa_enabled_pct": 66.7,
+    "inventory": [
+      {"id": "u1", "name": "Avery", "mfa_enabled": true},
+      {"id": "u2", "name": "Blake", "mfa_enabled": false},
+      {"id": "u3", "name": "Casey", "mfa_enabled": true}
+    ]
+  }
+}
+```
+
+A value the collector could not read is left out, and `artifacts/{{.Name}}.collector-result.json` records a gap for it with the reason.

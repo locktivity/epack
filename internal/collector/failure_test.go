@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -307,5 +308,70 @@ func TestRunAndBuild_ReturnsTheFailedCollectors(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "evidence.epack")); statErr == nil {
 		t.Error("no pack should be built when a collector fails")
+	}
+}
+
+func TestFailures_PreferTheCodeTheCollectorReported(t *testing.T) {
+	script := `echo '{"type":"epack_progress","protocol_version":1,"kind":"failure","message":"Defender returned 500","code":"vendor_error","owner":"vendor","vendor_code":"InternalError"}'
+echo 'request failed' >&2
+exit 4
+`
+	result := runScriptCollector(t, "microsoft-cloud", script, RunOptions{})
+	failures := Failures([]RunResult{result})
+	if len(failures) != 1 {
+		t.Fatalf("failures = %+v, want one", failures)
+	}
+	f := failures[0]
+	if f.Code != "vendor_error" || f.Exit != 4 || f.CodeSource != CodeFromCollector {
+		t.Errorf("failure = {%s %d %s}, want {vendor_error 4 collector}", f.Code, f.Exit, f.CodeSource)
+	}
+	if f.Message() != "exited with code 4: request failed" {
+		t.Errorf("message = %q, want the exit error's", f.Message())
+	}
+	var reported *ReportedFailure
+	if !errors.As(result.Error, &reported) || reported.VendorCode != "InternalError" || reported.Owner != "vendor" {
+		t.Errorf("reported = %+v", reported)
+	}
+}
+
+func TestFailures_IgnoreAReportedCodeOutsideTheList(t *testing.T) {
+	script := `echo '{"type":"epack_progress","protocol_version":1,"kind":"failure","message":"x","code":"made_up"}'
+exit 3
+`
+	result := runScriptCollector(t, "okta", script, RunOptions{})
+	failures := Failures([]RunResult{result})
+	if len(failures) != 1 || failures[0].Code != epackerrors.CollectorAuthFailed || failures[0].CodeSource != CodeFromExit {
+		t.Fatalf("failures = %+v, want the exit code's class", failures)
+	}
+}
+
+func TestRunOne_PassesTheRunIDAndDeadline(t *testing.T) {
+	script := `printf '{"type":"epack_result","protocol_version":1,"artifacts":[{"data":{"run":"%s","deadline":"%s"}}]}\n' "$EPACK_RUN_ID" "$EPACK_DEADLINE"
+`
+	before := time.Now()
+	result := runScriptCollector(t, "okta", script, RunOptions{RunID: "run-123", Secure: SecureRunOptions{Timeout: time.Minute}})
+	if !result.Success {
+		t.Fatalf("runOne() failed: %v", result.Error)
+	}
+	parsed, err := ParseCollectorOutput(result.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data struct {
+		Run      string `json:"run"`
+		Deadline string `json:"deadline"`
+	}
+	if err := json.Unmarshal(parsed.Artifacts[0].RawData, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Run != "run-123" {
+		t.Errorf("EPACK_RUN_ID = %q", data.Run)
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, data.Deadline)
+	if err != nil {
+		t.Fatalf("EPACK_DEADLINE = %q: %v", data.Deadline, err)
+	}
+	if deadline.Before(before.Add(59*time.Second)) || deadline.After(time.Now().Add(61*time.Second)) {
+		t.Errorf("EPACK_DEADLINE = %s, want about a minute from the start", deadline)
 	}
 }

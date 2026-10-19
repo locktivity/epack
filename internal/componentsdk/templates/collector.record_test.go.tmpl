@@ -1,0 +1,42 @@
+//go:build record
+
+package collector
+
+import (
+	"os"
+	"testing"
+
+	"github.com/locktivity/epack/componentsdk/collectortest"
+)
+
+// TestRecord runs the collector once against a real organization, such as a
+// sandbox whose settings are known, and writes what the API answered to
+// testdata/recordings/clean.json for collectortest.LoadScenario. Record
+// scrubs the token, emails, IP addresses, and GUIDs from the recording, and
+// Scrub.Literals replaces the organization's name. It fails rather than
+// write a recording that still holds a secret.
+//
+//	RECORD_ORGANIZATION=your-org {{.TokenEnv}}=... make record
+func TestRecord(t *testing.T) {
+	organization, token := os.Getenv("RECORD_ORGANIZATION"), os.Getenv(tokenEnv)
+	if organization == "" || token == "" {
+		t.Skip("set RECORD_ORGANIZATION and " + tokenEnv + " to record")
+	}
+	report, err := collectortest.Record(collectortest.RecordOptions{
+		Spec:    Spec("record", "collectortest"),
+		Run:     Run,
+		Config:  map[string]any{"organization": organization, "level": "internal"},
+		Secrets: map[string]string{tokenEnv: token},
+		Out:     "testdata/recordings/clean.json",
+		Scrub: collectortest.ScrubRules{
+			Literals: map[string]string{organization: kitOrganization},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ExitCode != 0 {
+		t.Errorf("the recorded run exited %d: %+v", report.ExitCode, report.Failure)
+	}
+	t.Logf("recorded %d responses", report.Responses)
+}

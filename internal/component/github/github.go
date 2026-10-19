@@ -140,10 +140,13 @@ func NewAnonymousClient(baseURL string) (*Client, error) {
 	return client, nil
 }
 
-// Release represents a GitHub release.
+// Release represents a GitHub release. GitHub lists drafts only to
+// accounts with push access to the repository.
 type Release struct {
 	TagName         string  `json:"tag_name"`
 	TargetCommitish string  `json:"target_commitish,omitempty"`
+	Draft           bool    `json:"draft"`
+	Prerelease      bool    `json:"prerelease"`
 	Assets          []Asset `json:"assets"`
 }
 

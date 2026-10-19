@@ -154,7 +154,7 @@ func TestCollectorArtifactEntry_CarriesDisplayFields(t *testing.T) {
 	}
 }
 
-func TestMapCollectorError(t *testing.T) {
+func TestExitCodeFor(t *testing.T) {
 	deadline := &url.Error{Op: "Get", URL: "https://graph.example.com/v1.0/users", Err: context.DeadlineExceeded}
 	cases := []struct {
 		name string
@@ -180,13 +180,13 @@ func TestMapCollectorError(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var got int
-			stderr := captureStderr(t, func() { got = mapCollectorError(tc.err) })
+			var stderr bytes.Buffer
+			got := exitCodeFor(&stderr, tc.err)
 			if got != tc.want {
-				t.Errorf("mapCollectorError() = %d, want %d", got, tc.want)
+				t.Errorf("exitCodeFor() = %d, want %d", got, tc.want)
 			}
-			if !strings.Contains(stderr, tc.err.Error()) {
-				t.Errorf("stderr = %q, want the error message", stderr)
+			if !strings.Contains(stderr.String(), tc.err.Error()) {
+				t.Errorf("stderr = %q, want the error message", stderr.String())
 			}
 		})
 	}

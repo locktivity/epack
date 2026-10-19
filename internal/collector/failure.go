@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/locktivity/epack/componentsdk"
 	epackerrors "github.com/locktivity/epack/errors"
 	collectorexec "github.com/locktivity/epack/internal/collector/exec"
 	"github.com/locktivity/epack/internal/componenttypes"
@@ -27,9 +28,9 @@ type Failure struct {
 	// epack gives that failure, such as 13 for a timeout.
 	Exit int
 
-	// CodeSource says where Code came from: CodeFromExit or CodeFromRunner.
-	// Both are the runner's best guess, which a code the collector reports
-	// itself should take precedence over.
+	// CodeSource says where Code came from: CodeFromCollector, CodeFromExit,
+	// or CodeFromRunner. The last two are the runner's best guess, used only
+	// when the collector reported no code itself.
 	CodeSource string
 
 	// Err is the error the run recorded for the collector.
@@ -38,6 +39,9 @@ type Failure struct {
 
 // Where a failure's code came from.
 const (
+	// CodeFromCollector is a code the collector reported in its failure
+	// record.
+	CodeFromCollector = "collector"
 	// CodeFromExit is a code the runner inferred from the collector's exit
 	// code.
 	CodeFromExit = "exit_code"
@@ -66,6 +70,10 @@ func Failures(results []RunResult) []Failure {
 
 func classifyFailure(err error) (epackerrors.Code, int, string) {
 	var exitErr *collectorexec.ExitError
+	var reported *ReportedFailure
+	if errors.As(err, &reported) && componentsdk.Code(reported.Code).Valid() && errors.As(err, &exitErr) {
+		return epackerrors.Code(reported.Code), exitErr.Code, CodeFromCollector
+	}
 	if errors.As(err, &exitErr) {
 		switch exitErr.Code {
 		case componenttypes.ExitConfigError:
@@ -84,6 +92,20 @@ func classifyFailure(err error) (epackerrors.Code, int, string) {
 	}
 	return epackerrors.CollectorError, exitcode.General, CodeFromRunner
 }
+
+// ReportedFailure is the coded record a failing collector printed before it
+// exited non-zero. It wraps the exit error, and its code takes precedence
+// over the runner's guess from the exit code.
+type ReportedFailure struct {
+	Code       string
+	Owner      string
+	VendorCode string
+	Message    string
+	Err        error
+}
+
+func (e *ReportedFailure) Error() string { return e.Err.Error() }
+func (e *ReportedFailure) Unwrap() error { return e.Err }
 
 // FailedError is the error a run returns when collectors failed. Its message
 // names them, and it unwraps to an epack error with code collect_failed. When

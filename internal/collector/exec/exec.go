@@ -34,10 +34,15 @@ const maxStderrLen = 500
 type ProgressMessage struct {
 	Type            string `json:"type"`
 	ProtocolVersion int    `json:"protocol_version"`
-	Kind            string `json:"kind"` // "status" or "progress"
+	Kind            string `json:"kind"` // "status", "progress", or "failure"
 	Message         string `json:"message"`
 	Current         int64  `json:"current,omitempty"`
 	Total           int64  `json:"total,omitempty"`
+
+	// For kind="failure": the failing collector's code and whose move it is.
+	Code       string `json:"code,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	VendorCode string `json:"vendor_code,omitempty"`
 }
 
 // EnvInput configures collector environment construction.
@@ -64,6 +69,13 @@ type EnvInput struct {
 
 	// InsecureInheritPath allows inheriting PATH from the environment.
 	InsecureInheritPath bool
+
+	// RunID is exposed as EPACK_RUN_ID when present.
+	RunID string
+
+	// Deadline is exposed as EPACK_DEADLINE when set: the time the runner
+	// will stop the collector. Run sets it from the timeout.
+	Deadline time.Time
 }
 
 // Invocation is a prepared collector execution request.
@@ -197,6 +209,9 @@ func Run(ctx context.Context, inv Invocation) RunResult {
 	}
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if inv.Env.Deadline.IsZero() {
+		inv.Env.Deadline, _ = execCtx.Deadline()
+	}
 
 	// Execute collector
 	// Use streaming writer for stdout to parse progress messages in real-time
@@ -267,6 +282,13 @@ func BuildEnv(input EnvInput) []string {
 
 	if input.OutputDir != "" {
 		env = append(env, "EPACK_COLLECTOR_OUTPUT_DIR="+input.OutputDir)
+	}
+
+	if input.RunID != "" {
+		env = append(env, "EPACK_RUN_ID="+input.RunID)
+	}
+	if !input.Deadline.IsZero() {
+		env = append(env, "EPACK_DEADLINE="+input.Deadline.UTC().Format(time.RFC3339Nano))
 	}
 
 	// Pass through EPACK_IDENTITY if set (for authenticated/CI contexts)

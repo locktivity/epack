@@ -153,6 +153,31 @@ func TestCollectorOutput_MissingCredentialsSkip(t *testing.T) {
 	}
 }
 
+// A collector that needs no config reaches its API in the config runs too,
+// with the --secret canaries, and exits as the API answers.
+func TestCollectorConfig_AnAPIFailureIsNoCrash(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		script string
+		status TestStatus
+	}{
+		{"the canary is rejected", "echo '401 Unauthorized' >&2\nexit 3\n", StatusPass},
+		{"the API is unreachable", "echo 'dial tcp: connection refused' >&2\nexit 4\n", StatusPass},
+		{"a collector-specific error", "exit 5\n", StatusFail},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := NewRunner(writeCollector(t, "no-config", tt.script), componenttypes.KindCollector)
+			runner.CollectorSecrets = []string{"API_TOKEN"}
+			results := runCollectorConformance(t, runner)
+			for _, id := range []string{"COL-020", "COL-021"} {
+				if got := results[id]; got.Status != tt.status {
+					t.Errorf("%s = %s (%s%s), want %s", id, got.Status, got.Message, got.Reason, tt.status)
+				}
+			}
+		})
+	}
+}
+
 // authCollector exits 2 without config. With one, it runs failure, unless it
 // was handed the real token, which the harness must replace with its canary.
 func authCollector(failure string) string {

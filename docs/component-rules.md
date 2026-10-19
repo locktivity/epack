@@ -93,6 +93,7 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-071 | MUST | File artifact paths be relative and stay within the staging directory (no traversal, no symlinks) |
 | COL-072 | MUST | File artifacts carry an explicit `path` and no `data` field |
 | COL-073 | MUST | Collectors requiring file artifacts exit with config error (exit 2) when `EPACK_COLLECTOR_OUTPUT_DIR` is not set |
+| COL-074 | MAY | Emit a collector result artifact (`evidencepack/collector-result@v1`) recording each value left out and the API calls made |
 
 **Protocol envelope format:**
 ```json
@@ -111,6 +112,8 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-012 | SHOULD | Read config file path from `EPACK_COLLECTOR_CONFIG` if present |
 | COL-013 | MAY | Read identity token from `EPACK_IDENTITY` if present |
 | COL-014 | MAY | Read the file artifact staging directory from `EPACK_COLLECTOR_OUTPUT_DIR` if present |
+| COL-015 | MAY | Read the run's ID from `EPACK_RUN_ID` if present |
+| COL-016 | MAY | Read the time the runner will stop it from `EPACK_DEADLINE` if present, and stop collecting early enough to emit |
 
 ### 2.4 Configuration
 
@@ -130,7 +133,8 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-031 | MUST | Handle SIGTERM gracefully (cleanup and exit) |
 | COL-032 | SHOULD | Output progress to stderr for long-running operations |
 | COL-033 | MUST NOT | Modify filesystem outside temp directories |
-| COL-034 | MUST | Exit with code 0 only when collection succeeds |
+| COL-034 | MUST | Exit with code 0 only when collection succeeds. A collection that leaves out values it could not read, and records each one, succeeds |
+| COL-035 | MUST NOT | Write a default, such as `0`, `false`, or an empty list, in place of a value it could not read |
 
 ### 2.6 Exit Codes
 
@@ -141,6 +145,7 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-042 | SHOULD | Exit 2 on configuration error |
 | COL-043 | SHOULD | Exit 3 on authentication error |
 | COL-044 | SHOULD | Exit 4 on network/API error |
+| COL-045 | MAY | Print an `epack_progress` line of kind `failure`, with one of the collection codes, before exiting non-zero |
 
 ### 2.7 Network
 
@@ -590,7 +595,22 @@ go build -o epack-remote-minimal ./minimal-remote.go
 
 ### 8.8 CI Integration
 
-Add conformance testing to your CI pipeline:
+A collector on GitHub Actions can call epack's shared collector workflow, which runs its tests with `-race`, golangci-lint, a build of each release target, conformance at the epack version in `go.mod`, and govulncheck:
+
+```yaml
+jobs:
+  collector:
+    uses: locktivity/epack/.github/workflows/collector-ci.yaml@<commit-sha>
+    with:
+      name: myname
+      conformance-secrets: MYNAME_API_TOKEN
+      checks: |
+        ./scripts/check-forbidden-data.sh
+```
+
+Pin it to the commit of the epack release in `go.mod`. `checks` runs the repository's own checks after lint, one command per line. `main-package`, `targets`, `conformance-level`, and `golangci-lint-version` override the defaults.
+
+To add conformance to another pipeline, run the same steps yourself:
 
 ```yaml
 # GitHub Actions example
@@ -632,6 +652,40 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 $(go env GOPATH)/bin/epack-conformance collector ./my-collector --level standard
 ```
 
+#### Evidence diff
+
+On pull requests, the `evidence-diff` job runs the repository's tests with `COLLECTORTEST_OUT` set (see [Testing](collect-protocol.md#testing)) at the pull request and at the newest release tag on the base branch. It then compares the two trees with `epack-collector-diff` at the epack version in `go.mod` and writes the result to the job summary: for each scenario, the artifacts added or removed and each JSON value that changed, such as a metric that became null. The job skips with a summary line saying why when the base branch has no release tag or the release has no collectortest suite.
+
+- `profile-url` names a profile to validate both sides against with `epack-tool-validate` at `validate-version`. The summary then also lists each requirement whose status or severity changed. Without it, the job compares evidence only.
+- `require-changelog: true` fails the job when the diff lists changes and the pull request changes neither `CHANGELOG.md` nor the file named by `changelog-file`.
+- `comment: true` posts the summary as a pull request comment and updates that comment on later runs. The calling job must grant `pull-requests: write`. Pull requests from forks get no comment.
+
+```yaml
+jobs:
+  collector:
+    uses: locktivity/epack/.github/workflows/collector-ci.yaml@<commit-sha>
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      name: myname
+      profile-url: https://example.com/profiles/baseline.yaml
+      require-changelog: true
+      comment: true
+```
+
+To run the same comparison locally against release `v1.2.3`:
+
+```bash
+COLLECTORTEST_OUT=/tmp/evidence/head go test -count=1 ./...
+git worktree add /tmp/release v1.2.3
+(cd /tmp/release && COLLECTORTEST_OUT=/tmp/evidence/base go test -count=1 ./...)
+go run github.com/locktivity/epack/cmd/epack-collector-diff@<epack-version> \
+  --base /tmp/evidence/base --head /tmp/evidence/head
+```
+
+`-count=1` keeps Go from reusing cached test results, which would write no scenarios. `epack-collector-diff` prints Markdown unless `--markdown` names a file, writes every change as JSON with `--json`, caps the table at `--max-rows` rows (default 50), and takes `--profile` with `--validate` for control outcomes. It exits 0 whether or not anything changed and 2 for bad input.
+
 ### 8.9 Skipped Tests
 
 Some tests are skipped by default because they require specific conditions:
@@ -650,6 +704,8 @@ Some tests are skipped by default because they require specific conditions:
 
 Every collector run gets its own `EPACK_COLLECTOR_OUTPUT_DIR`, as under `epack collect`. With `--secret`, C-031 fails when a canary value appears in anything a run wrote: its stdout, with the data artifacts and progress lines, its stderr, its staged file artifacts, and any other file it left in its working directory. C-032 fails when one appears in an error message: a failed run's stderr, or the warnings of a run that exited 0. The run that should collect (with `--config`, when the collector needs config) holds canary credentials, which a real API rejects. COL-043 passes when the collector exits 3, and fails when it exits with another code and its error or output says the credentials were rejected (status 401 or 403, "unauthorized", "invalid token", and similar). A collector that exits 0 and emits evidence after the rejection also fails COL-034: every metric the credential gates would read as zero. An error that says nothing about the credentials, such as a DNS failure, skips COL-043.
 
+The canaries go to every run, so a collector that needs no config reaches its API in COL-020's run with a test config and COL-021's run without one; both accept exit 3 or 4 there, as well as 0 to 2.
+
 Name variables that hold a credential, not a path to one: a canary path printed in a "file not found" error would fail C-031. A credential that must parse before it is used, such as a JSON key, fails parsing with a canary value; the collector exits 2 and COL-043 skips.
 
 COL-031 sends SIGTERM at the collector's first `epack_progress` line, when it is mid-collection, or 5 seconds after start for a collector that reports no progress. It fails when SIGTERM kills the collector, which means it installed no handler, and when the collector is still running 5 seconds after the signal. COL-030 fails when any run is stopped at `--timeout`.
@@ -664,9 +720,9 @@ To achieve full conformance, components must pass all testable requirements. Ski
 
 | Level | Count | IDs |
 |-------|-------|-----|
-| MUST | 22 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, COL-001, COL-005, COL-006, COL-010, COL-011, COL-020, COL-021, COL-023, COL-030, COL-031, COL-033, COL-034, COL-040, COL-052, COL-060, COL-061, COL-062 |
-| SHOULD | 14 | C-013, C-014, C-022, C-032, COL-002, COL-012, COL-022, COL-032, COL-041, COL-042, COL-043, COL-044, COL-050, COL-051, COL-053, COL-063 |
-| MAY | 3 | COL-003, COL-004, COL-013 |
+| MUST | 30 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, COL-001, COL-005, COL-006, COL-010, COL-011, COL-020, COL-021, COL-023, COL-030, COL-031, COL-033, COL-034, COL-035, COL-040, COL-052, COL-060, COL-061, COL-062, COL-071, COL-072, COL-073 |
+| SHOULD | 17 | C-013, C-014, C-022, C-032, COL-002, COL-012, COL-022, COL-024, COL-032, COL-041, COL-042, COL-043, COL-044, COL-050, COL-051, COL-053, COL-063 |
+| MAY | 9 | COL-003, COL-004, COL-013, COL-014, COL-015, COL-016, COL-045, COL-070, COL-074 |
 
 ### Tools
 

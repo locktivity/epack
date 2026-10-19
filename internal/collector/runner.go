@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	stdsync "sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/locktivity/epack/errors"
@@ -245,6 +248,9 @@ type RunOptions struct {
 	// Getenv reads the variables a collector lists under secrets:; nil
 	// means the process environment.
 	Getenv func(string) string
+	// RunID names the run to collectors, which put it in their result
+	// artifacts and User-Agent. Run generates one when it is empty.
+	RunID string
 }
 
 func (o RunOptions) getenv() func(string) string {
@@ -362,6 +368,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.JobConfig, opts RunOptions
 		return nil, err
 	}
 
+	if opts.RunID == "" {
+		opts.RunID = uuid.NewString()
+	}
 	collectors := r.selectCollectors(cfg, opts)
 	collectorNames := sortedCollectorNames(collectors)
 	aggregateBudget := maxAggregateBudget(opts)
@@ -719,6 +728,7 @@ func (r *Runner) runOne(ctx context.Context, jobCfg *config.JobConfig, run singl
 		OutputDir:      outputDir,
 		CollectorIndex: run.CollectorIndex,
 		CollectorTotal: run.CollectorTotal,
+		RunID:          opts.RunID,
 	}, opts)
 	if err != nil {
 		result.Error = err
@@ -828,30 +838,40 @@ func (r *Runner) executeCollector(ctx context.Context, req ExecutionRequest, opt
 		ManagedEnv:          req.ManagedEnv,
 		Getenv:              opts.getenv(),
 		InsecureInheritPath: opts.Unsafe.InheritPath,
+		RunID:               req.RunID,
 	}
 
-	// Create progress callback that forwards to the progress hooks
-	var onProgress func(collectorexec.ProgressMessage)
-	if opts.Progress.OnCollectorEvent != nil {
-		onProgress = func(msg collectorexec.ProgressMessage) {
-			evt := CollectorEvent{
-				Collector: req.Name,
-				Index:     req.CollectorIndex,
-				Total:     req.CollectorTotal,
-				Message:   msg.Message,
-			}
-			switch msg.Kind {
-			case "status":
-				evt.Type = CollectorEventStatus
-			case "progress":
-				evt.Type = CollectorEventProgress
-				evt.ProgressCurrent = msg.Current
-				evt.ProgressTotal = msg.Total
-			default:
-				return // Unknown kind, ignore
-			}
-			opts.Progress.OnCollectorEvent(evt)
+	// Forward status and progress to the hooks, and keep the coded record a
+	// failing collector prints before it exits.
+	var reportedMu stdsync.Mutex
+	var reported *ReportedFailure
+	onProgress := func(msg collectorexec.ProgressMessage) {
+		if msg.Kind == "failure" {
+			reportedMu.Lock()
+			reported = &ReportedFailure{Code: msg.Code, Owner: msg.Owner, VendorCode: msg.VendorCode, Message: msg.Message}
+			reportedMu.Unlock()
+			return
 		}
+		if opts.Progress.OnCollectorEvent == nil {
+			return
+		}
+		evt := CollectorEvent{
+			Collector: req.Name,
+			Index:     req.CollectorIndex,
+			Total:     req.CollectorTotal,
+			Message:   msg.Message,
+		}
+		switch msg.Kind {
+		case "status":
+			evt.Type = CollectorEventStatus
+		case "progress":
+			evt.Type = CollectorEventProgress
+			evt.ProgressCurrent = msg.Current
+			evt.ProgressTotal = msg.Total
+		default:
+			return // Unknown kind, ignore
+		}
+		opts.Progress.OnCollectorEvent(evt)
 	}
 
 	// Execute collector with timeout and output limits
@@ -863,6 +883,13 @@ func (r *Runner) executeCollector(ctx context.Context, req ExecutionRequest, opt
 	})
 
 	if result.Err != nil {
+		reportedMu.Lock()
+		defer reportedMu.Unlock()
+		var exitErr *collectorexec.ExitError
+		if reported != nil && stderrors.As(result.Err, &exitErr) {
+			reported.Err = result.Err
+			return nil, reported
+		}
 		return nil, result.Err
 	}
 
