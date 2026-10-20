@@ -645,8 +645,9 @@ func TestSigstoreVerifier_Offline_ReportsTheLogEntryAndCertificateClaims(t *test
 			if err != nil {
 				t.Fatalf("offline verification failed: %v", err)
 			}
-			if result.TransparencyLog == nil || result.TransparencyLog.LogIndex != 31821305 || result.TransparencyLog.LogID == "" {
-				t.Errorf("log entry = %+v, want index 31821305 with its log ID", result.TransparencyLog)
+			wantLog := TransparencyLogEntry{LogIndex: 31821305, LogID: "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d"}
+			if result.TransparencyLog == nil || *result.TransparencyLog != wantLog {
+				t.Errorf("log entry = %+v, want %+v", result.TransparencyLog, wantLog)
 			}
 			if result.Certificate == nil || *result.Certificate != want {
 				t.Errorf("certificate claims = %+v, want %+v", result.Certificate, want)

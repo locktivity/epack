@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -471,7 +472,7 @@ func extractTlogEntryFromBundle(b *bundle.Bundle) *TransparencyLogEntry {
 	entry := entries[0]
 	return &TransparencyLogEntry{
 		LogIndex: entry.LogIndex(),
-		LogID:    entry.LogKeyID(),
+		LogID:    hex.EncodeToString([]byte(entry.LogKeyID())),
 	}
 }
 

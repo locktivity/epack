@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-20
+
+### BUG FIXES
+
+- `epack verify --json` writes `log_id` as the log's hex-encoded key ID, such
+  as Rekor's `c0d23d6a...`, instead of raw bytes
+
 ## [0.9.0] - 2026-10-20
 
 ### NEW FEATURES

@@ -52,7 +52,8 @@ type TransparencyLogEntry struct {
 	// LogIndex is the index of the entry in the transparency log.
 	LogIndex int64
 
-	// LogID is the ID of the transparency log (e.g., Rekor log ID).
+	// LogID is the transparency log's key ID, hex-encoded. For Rekor it is
+	// the SHA-256 of the log's public key.
 	LogID string
 }
 
