@@ -5,7 +5,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.0.0"
+      "const": "1.0.0",
+      "description": "Version of this schema, always 1.0.0."
     },
     "collected_at": {
       "type": "string",
@@ -60,7 +61,8 @@
           "maximum": 100,
           "description": "Percentage of users whose passwords do not meet current password policy requirements"
         }
-      }
+      },
+      "description": "Percentages of the provider's users with MFA, with phishing-resistant MFA, inactive, locked out, and with weak or noncompliant passwords."
     },
     "app_security": {
       "type": ["object", "null"],
@@ -88,7 +90,8 @@
           "minimum": 0,
           "description": "Count of authorized third-party applications or OAuth integrations"
         }
-      }
+      },
+      "description": "How the provider's apps sign users in and provision them, and how many third-party apps users have authorized."
     },
     "privileged_access": {
       "type": ["object", "null"],
@@ -120,7 +123,8 @@
           "minimum": 0,
           "description": "Count of users with standing privileged access instead of just-in-time or eligible access"
         }
-      }
+      },
+      "description": "Counts of privileged users and the share of them with MFA and with phishing-resistant MFA."
     },
     "lifecycle": {
       "type": ["object", "null"],
@@ -137,7 +141,8 @@
           "maximum": 100,
           "description": "Percentage of accounts in archived, retained, or soft-deleted state"
         }
-      }
+      },
+      "description": "Percentages of users suspended and archived."
     },
     "policy": {
       "type": ["object", "null"],
@@ -170,7 +175,8 @@
           "type": ["boolean", "null"],
           "description": "Whether phishing-resistant authentication is required for privileged users"
         }
-      }
+      },
+      "description": "Sign-in policy settings: MFA requirements, session limits, and legacy authentication."
     },
     "device_access": {
       "type": ["object", "null"],
@@ -183,7 +189,8 @@
           "type": ["boolean", "null"],
           "description": "Whether privileged access requires a managed or compliant device"
         }
-      }
+      },
+      "description": "Whether sign-in policies require a managed device, for all users and for administrators."
     }
   }
 }

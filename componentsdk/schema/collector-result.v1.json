@@ -11,64 +11,136 @@
       "required": ["name"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "version": { "type": "string" },
-        "commit": { "type": "string" }
-      }
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The collector's name, as its spec declares it."
+        },
+        "version": {
+          "type": "string",
+          "description": "The collector's version, such as v0.3.0. Absent when the build set none."
+        },
+        "commit": {
+          "type": "string",
+          "description": "The source commit the collector was built from. Absent when the build set none."
+        }
+      },
+      "description": "The collector that produced the run."
     },
     "outcome": {
       "type": "object",
       "required": ["status"],
       "additionalProperties": false,
       "properties": {
-        "status": { "enum": ["collected", "partial"] },
-        "code": { "$ref": "#/$defs/code" },
-        "owner": { "$ref": "#/$defs/owner" }
-      }
+        "status": {
+          "enum": ["collected", "partial"],
+          "description": "collected when the run read every value its level collects, or partial when it left values out. gaps lists each one."
+        },
+        "code": {
+          "$ref": "#/$defs/code",
+          "description": "For a partial run, the code of the first gap, saying why its value was left out."
+        },
+        "owner": {
+          "$ref": "#/$defs/owner",
+          "description": "For a partial run, who can act on that code."
+        }
+      },
+      "description": "How the run ended."
     },
     "gaps": {
       "type": "array",
-      "items": { "$ref": "#/$defs/gap" }
+      "items": { "$ref": "#/$defs/gap" },
+      "description": "One entry per value the collector left out of an artifact, and why."
     },
     "checks": {
       "type": "array",
       "maxItems": 100,
-      "items": { "$ref": "#/$defs/check" }
+      "items": { "$ref": "#/$defs/check" },
+      "description": "The first 100 findings of the output checks the SDK runs on each artifact it writes. Absent when there are none."
     },
-    "checks_dropped": { "type": "integer", "minimum": 0 },
+    "checks_dropped": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of findings left out after the first 100."
+    },
     "calls": {
       "type": "object",
       "required": ["operations"],
       "additionalProperties": false,
       "properties": {
-        "operations": { "type": "array", "items": { "$ref": "#/$defs/operation" } },
-        "requests": { "type": "array", "items": { "$ref": "#/$defs/request" } },
-        "requests_dropped": { "type": "integer", "minimum": 0 }
-      }
+        "operations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/operation" },
+          "description": "One entry per kind of call, with its counts."
+        },
+        "requests": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/request" },
+          "description": "One row per request, at the audit and internal levels. Capped at 1000 rows."
+        },
+        "requests_dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of request rows left out after the first 1000."
+        }
+      },
+      "description": "The API calls the collector made."
     },
     "signed_in_as": {
       "type": "object",
       "required": ["provider", "kind"],
       "additionalProperties": false,
       "properties": {
-        "provider": { "type": "string" },
-        "kind": { "type": "string" },
-        "tenant_id": { "type": "string" },
-        "scopes": { "type": "array", "items": { "type": "string" } },
+        "provider": {
+          "type": "string",
+          "description": "The identity system, such as okta or microsoft-entra."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The kind of principal, such as service_app, service_principal, or user."
+        },
+        "tenant_id": {
+          "type": "string",
+          "description": "The tenant, account, or organization signed in to."
+        },
+        "scopes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The permissions the sign-in carried."
+        },
         "id": { "type": "string", "description": "Present at the audit and internal levels only." }
-      }
+      },
+      "description": "The identity the collector signed in as. Absent when the collector does not report one."
     },
     "run": {
       "type": "object",
       "required": ["started_at", "finished_at", "proxy", "custom_ca"],
       "additionalProperties": false,
       "properties": {
-        "run_id": { "type": "string" },
-        "started_at": { "type": "string", "format": "date-time" },
-        "finished_at": { "type": "string", "format": "date-time" },
-        "proxy": { "type": "boolean" },
-        "custom_ca": { "type": "boolean" }
-      }
+        "run_id": {
+          "type": "string",
+          "description": "The run ID the runner passed in EPACK_RUN_ID. Absent when it passed none."
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the run started, in RFC 3339 UTC."
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the run finished, in RFC 3339 UTC."
+        },
+        "proxy": {
+          "type": "boolean",
+          "description": "True when a proxy variable such as HTTPS_PROXY was set for the run."
+        },
+        "custom_ca": {
+          "type": "boolean",
+          "description": "True when SSL_CERT_FILE or SSL_CERT_DIR was set for the run."
+        }
+      },
+      "description": "When the run happened and how its network was set up."
     }
   },
   "$defs": {
@@ -83,14 +155,40 @@
       "required": ["pointer", "status", "code", "owner"],
       "additionalProperties": false,
       "properties": {
-        "schema": { "type": "string" },
-        "path": { "type": "string" },
-        "pointer": { "type": "string", "pattern": "^(/.*)?$" },
-        "status": { "enum": ["not_collected", "partial"] },
-        "code": { "$ref": "#/$defs/code" },
-        "owner": { "$ref": "#/$defs/owner" },
-        "vendor_code": { "type": "string" },
-        "unmeasured": { "type": "integer", "minimum": 0 },
+        "schema": {
+          "type": "string",
+          "description": "The schema of the artifact the value belongs in, when the run wrote no such artifact."
+        },
+        "path": {
+          "type": "string",
+          "description": "The artifact the value belongs in. Absent when the run wrote no such artifact, in which case schema names it."
+        },
+        "pointer": {
+          "type": "string",
+          "pattern": "^(/.*)?$",
+          "description": "JSON pointer to the value within the artifact. Items are addressed by array index."
+        },
+        "status": {
+          "enum": ["not_collected", "partial"],
+          "description": "not_collected when the collector could not read the value. partial when a rollup was left out because some of the items it covers could not be read, or when a list or object holds only the items that could be."
+        },
+        "code": {
+          "$ref": "#/$defs/code",
+          "description": "Why the value was left out: auth_failed, permission_denied, config_invalid, not_licensed, rate_limited, vendor_error, timeout, invalid_response, or internal."
+        },
+        "owner": {
+          "$ref": "#/$defs/owner",
+          "description": "Who can act on the code: customer, nobody for an expected gap such as a feature the plan lacks, vendor, vendor_or_runner, or publisher."
+        },
+        "vendor_code": {
+          "type": "string",
+          "description": "The vendor's own error code, when its response included one."
+        },
+        "unmeasured": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "For a partial gap, the number of items that could not be read."
+        },
         "detail": { "type": "string", "description": "Present at the audit and internal levels only." }
       }
     },
@@ -101,8 +199,15 @@
       "properties": {
         "check": { "type": "string", "description": "schema, schema_unusable, population, nulls, or rollups." },
         "path": { "type": "string", "description": "The artifact the finding is about. A schema_unusable finding has none." },
-        "pointer": { "type": "string", "pattern": "^(/.*)?$" },
-        "message": { "type": "string" }
+        "pointer": {
+          "type": "string",
+          "pattern": "^(/.*)?$",
+          "description": "JSON pointer to the value the finding is about."
+        },
+        "message": {
+          "type": "string",
+          "description": "What the check found."
+        }
       }
     },
     "operation": {
@@ -110,14 +215,43 @@
       "required": ["name", "calls", "attempts", "retries"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
-        "calls": { "type": "integer", "minimum": 0 },
-        "attempts": { "type": "integer", "minimum": 0 },
-        "retries": { "type": "integer", "minimum": 0 },
-        "statuses": { "type": "object", "additionalProperties": { "type": "integer" } },
-        "errors": { "type": "object", "additionalProperties": { "type": "integer" } },
-        "deprecation": { "type": "string" },
-        "sunset": { "type": "string" }
+        "name": {
+          "type": "string",
+          "description": "The operation's name, such as okta.users.list."
+        },
+        "calls": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of times the collector made the call, not counting retries."
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of requests sent, including retries."
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of requests that were retries."
+        },
+        "statuses": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" },
+          "description": "Number of responses per HTTP status code, or per DNS response code for a lookup."
+        },
+        "errors": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" },
+          "description": "Number of failed attempts per code."
+        },
+        "deprecation": {
+          "type": "string",
+          "description": "The Deprecation header from the vendor's most recent response that carried one."
+        },
+        "sunset": {
+          "type": "string",
+          "description": "The Sunset header from the vendor's most recent response that carried one."
+        }
       }
     },
     "request": {
@@ -125,17 +259,41 @@
       "required": ["operation", "method", "host", "attempt", "duration_ms"],
       "additionalProperties": false,
       "properties": {
-        "operation": { "type": "string" },
+        "operation": {
+          "type": "string",
+          "description": "The operation the request belongs to."
+        },
         "method": { "type": "string", "description": "The HTTP method, DNS and the record type looked up, such as DNS TXT, or DIAL." },
         "host": { "type": "string", "description": "The request's host, the name a DNS lookup queried, or the host dialed." },
         "route": { "type": "string", "description": "HTTP requests only." },
-        "query_keys": { "type": "array", "items": { "type": "string" } },
-        "attempt": { "type": "integer", "minimum": 1 },
-        "status": { "type": "integer" },
+        "query_keys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of the request's query parameters. Their values are not recorded."
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which attempt the request was: 1 for the first, higher for a retry."
+        },
+        "status": {
+          "type": "integer",
+          "description": "The response's HTTP status code. Absent when no response arrived."
+        },
         "rcode": { "enum": ["NOERROR", "NXDOMAIN", "SERVFAIL"], "description": "DNS lookups only: the response code. A lookup that got no response has none." },
-        "error": { "$ref": "#/$defs/code" },
-        "duration_ms": { "type": "integer", "minimum": 0 },
-        "request_id": { "type": "string" }
+        "error": {
+          "$ref": "#/$defs/code",
+          "description": "The code for a request that failed. Absent when it succeeded."
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How long the request took, in milliseconds."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "The vendor's request ID from the response headers, when it sent one."
+        }
       }
     }
   }
