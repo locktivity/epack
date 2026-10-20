@@ -130,12 +130,22 @@ func (s *Schema) item(v view, index int) view {
 // walking the schema alongside the instance, or nil when the pointer does
 // not resolve.
 func (s *Schema) viewAt(doc any, ptr string) view {
+	v, _, _ := s.levelAt(doc, ptr)
+	return v
+}
+
+// levelAt returns the view of the value at an RFC 6901 pointer in doc, as
+// viewAt does, with the rank of the highest level x-epack-level names on
+// the value or on any value that holds it. It reports false when the
+// pointer does not resolve.
+func (s *Schema) levelAt(doc any, ptr string) (view, int, bool) {
 	v := s.rootView()
+	rank := levelOf(v)
 	if ptr == "" {
-		return v
+		return v, rank, true
 	}
 	if !strings.HasPrefix(ptr, "/") {
-		return nil
+		return nil, 0, false
 	}
 	cur := doc
 	for _, token := range strings.Split(ptr[1:], "/") {
@@ -147,15 +157,16 @@ func (s *Schema) viewAt(doc any, ptr string) view {
 		case []any:
 			idx, err := strconv.Atoi(token)
 			if err != nil || idx < 0 || idx >= len(node) {
-				return nil
+				return nil, 0, false
 			}
 			cur = node[idx]
 			v = s.item(v, idx)
 		default:
-			return nil
+			return nil, 0, false
 		}
+		rank = max(rank, levelOf(v))
 	}
-	return v
+	return v, rank, true
 }
 
 func (v view) keyword(name string) (any, bool) {

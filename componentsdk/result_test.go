@@ -1,13 +1,18 @@
 package componentsdk
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
 )
 
 func TestResolveGaps(t *testing.T) {
@@ -99,8 +104,8 @@ func TestBuildResultGatesByLevel(t *testing.T) {
 	r.records.Partial(Location{Path: "artifacts/demo.json", Pointer: "/mfa/coverage_pct"}, 12,
 		&apiErr{status: 403, vendor: "E0000006"})
 	r.records.SignedInAs(Principal{Provider: "okta", Kind: "service_app", TenantID: "acme", ID: "0oa123", Scopes: []string{"okta.users.read", "okta.apps.read"}})
-	r.calls.add(Operation{Name: "users.list"}, mustRequest("https://acme.okta.com/api/v1/users"), 1,
-		&http.Response{StatusCode: 200, Header: http.Header{}}, nil, 20*time.Millisecond, defaultRequestIDHeaders)
+	r.calls.add(attemptRecord{call: callStart{op: Operation{Name: "users.list"}, number: 1}, attempt: 1, req: mustRequest("https://acme.okta.com/api/v1/users"),
+		resp: &http.Response{StatusCode: 200, Header: http.Header{}}, took: 20 * time.Millisecond}, defaultRequestIDHeaders, nil)
 	artifacts := []CollectedArtifact{{Data: map[string]any{"defender": map[string]any{}}, Path: "artifacts/demo.json"}}
 
 	trust, err := buildResult(resultInput{run: r, level: LevelTrust, artifacts: artifacts, getenv: func(string) string { return "" }, finished: time.Now()})
@@ -189,8 +194,11 @@ func TestRunInProcess(t *testing.T) {
 	if res.ExitCode != 0 || res.Failure != nil || res.Panic != "" {
 		t.Fatalf("exit = %d failure = %+v panic = %s stderr = %s", res.ExitCode, res.Failure, res.Panic, res.Stderr)
 	}
-	if len(res.Artifacts) != 2 || res.Artifacts[1].Path != "artifacts/demo-prod.collector-result.json" || res.Artifacts[1].Schema != ResultSchema {
+	if len(res.Artifacts) != 3 || res.Artifacts[2].Path != "artifacts/demo-prod.collector-result.json" || res.Artifacts[2].Schema != ResultSchema {
 		t.Fatalf("artifacts = %+v", res.Artifacts)
+	}
+	if res.Artifacts[1].Path != "artifacts/demo-prod.collector-build.json" || res.Build == nil || res.Build.Collector.Name != "demo" {
+		t.Fatalf("build file = %+v, want it before the result, named for the spec", res.Build)
 	}
 	if res.Result == nil || res.Result.Outcome.Status != OutcomePartial || len(res.Result.Gaps) != 1 || res.Result.Gaps[0].Code != CodeVendorError {
 		t.Fatalf("result = %+v", res.Result)
@@ -219,7 +227,7 @@ func TestRunInProcessGivesUnnamedArtifactsTheRunnersPaths(t *testing.T) {
 	for _, a := range res.Artifacts {
 		paths = append(paths, a.Path)
 	}
-	want := []string{"artifacts/demo-prod.json", "artifacts/demo-prod_1.json", "artifacts/demo-prod.collector-result.json"}
+	want := []string{"artifacts/demo-prod.json", "artifacts/demo-prod_1.json", "artifacts/demo-prod.collector-build.json", "artifacts/demo-prod.collector-result.json"}
 	if strings.Join(paths, " ") != strings.Join(want, " ") {
 		t.Errorf("paths = %q, want %q", paths, want)
 	}
@@ -311,5 +319,99 @@ func TestResultJSONShape(t *testing.T) {
 	}
 	if gaps, _ := generic["gaps"].([]any); gaps == nil {
 		t.Errorf("gaps should encode as [] when empty: %s", raw)
+	}
+}
+
+func validateResult(t *testing.T, raw []byte) []outputcheck.Finding {
+	t.Helper()
+	sch, err := outputcheck.Compile(ResultSchemaJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := outputcheck.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return outputcheck.Validate(sch, "result", doc)
+}
+
+func TestResultSchemaTakesEveryNewField(t *testing.T) {
+	base := newScript().
+		on("api.example.com/users", respond(429, `{"errorCode":"E0000047"}`, http.Header{"Retry-After": []string{"1"}}), respond(200, "[]", nil)).
+		on("api.example.com/logs", respond(403, `{"errorCode":"E0000006"}`, nil))
+	handler := func(ctx CollectorContext) error {
+		client := NewHTTPClient(ctx, HTTPOptions{VendorCode: func(_ *http.Response, body []byte) string {
+			var e struct {
+				ErrorCode string `json:"errorCode"`
+			}
+			_ = json.Unmarshal(body, &e)
+			return e.ErrorCode
+		}})
+		people, step := StartStep(ctx.Context(), "people", "People and sign-in methods")
+		req, _ := http.NewRequestWithContext(WithOperation(people, Operation{Name: "users.list"}), http.MethodGet, "https://api.example.com/users", nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		step.End()
+		logs, _ := StartStep(ctx.Context(), "system_log", "Activity log")
+		req, _ = http.NewRequestWithContext(WithOperation(logs, Operation{Name: "logs.list"}), http.MethodGet, "https://api.example.com/logs?since=x", nil)
+		resp, err = client.Do(req)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		Records(ctx).NotCollected(Location{Path: "artifacts/demo.json", Pointer: "/system_log"}, ResponseError(resp, &apiErr{status: resp.StatusCode}),
+			MissingPermission("okta.logs.read"), Warning("system log: access denied"))
+		Records(ctx).SignedInAs(Principal{Provider: "okta", Kind: "service_app", TenantID: "acme.okta.com", AuthMethod: AuthPrivateKeyJWT,
+			RequestedScopes: []string{"okta.logs.read", "okta.users.read"}, Scopes: []string{"okta.users.read"}, ReadOnly: true, ID: "0oa1"})
+		return ctx.Emit([]CollectedArtifact{{Data: map[string]any{"system_log": nil}, Path: "artifacts/demo.json"}})
+	}
+	res := RunInProcess(CollectorSpec{Name: "demo"}, handler, InProcessOptions{
+		Transport: base, Config: map[string]any{"level": "internal"},
+		Sleep: func(ctx context.Context, _ time.Duration) error { return ctx.Err() },
+	})
+	if res.ExitCode != 0 || res.Result == nil {
+		t.Fatalf("exit = %d failure = %+v stderr = %s", res.ExitCode, res.Failure, res.Stderr)
+	}
+	r := res.Result
+	if len(r.Steps) != 2 || r.Calls.Requests[1].WaitedMS == 0 || r.Calls.Requests[2].VendorCode != "E0000006" || r.Calls.ProblemRequestsDropped == nil {
+		t.Fatalf("result = %+v, want steps, a retry with its wait, and a refused row with its vendor code", r)
+	}
+	g := r.Gaps[0]
+	if g.Operation != "logs.list" || g.Call != 2 || g.Source == "" || g.MissingPermission != "okta.logs.read" || g.Warning == "" || g.VendorCode != "E0000006" {
+		t.Fatalf("gap = %+v", g)
+	}
+	for _, a := range res.Artifacts {
+		if a.Schema == ResultSchema {
+			if found := validateResult(t, a.Data); len(found) > 0 {
+				t.Errorf("the result does not match its schema: %+v", found)
+			}
+		}
+	}
+}
+
+func TestResultSchemaStillTakesAnOktaV030Result(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "okta-v0.3.0.collector-result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found := validateResult(t, raw); len(found) > 0 {
+		t.Errorf("the v0.3.0 Okta result no longer validates: %+v", found)
+	}
+	var old map[string]any
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	// Fault runs, which the kit does not export, hold v0.3.0's gaps.
+	old["outcome"] = map[string]any{"status": "partial", "code": "permission_denied", "owner": "customer"}
+	old["gaps"] = []any{map[string]any{
+		"path": "artifacts/okta.json", "pointer": "/system_log", "status": "not_collected", "code": "permission_denied",
+		"owner": "customer", "vendor_code": "E0000006", "detail": "API returned status 403",
+	}}
+	withGap, _ := json.Marshal(old)
+	if found := validateResult(t, withGap); len(found) > 0 {
+		t.Errorf("a v0.3.0 gap no longer validates: %+v", found)
 	}
 }

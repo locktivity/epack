@@ -5,8 +5,8 @@ import (
 	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
 )
 
-// valueChecksApply reports whether the population, nulls, and rollups checks
-// apply to a run. Sensitivity runs change responses on purpose, which makes
+// valueChecksApply reports whether the population, nulls, rollups, and
+// ratios checks apply to a run. Sensitivity runs change responses on purpose, which makes
 // rows and rollups disagree, and determinism runs repeat the clean scenario.
 func valueChecksApply(check string) bool {
 	switch check {
@@ -31,10 +31,10 @@ func (k *kit) violateFinding(check, name, finding, path, pointer, message string
 }
 
 // checkOutput reports the output check findings in a run's result, and runs
-// the same checks on artifacts whose schema only Suite.Schemas gives. When
-// the result dropped findings past its limit, the kit checks the SDK's
-// artifacts again, so none go unreported.
-func (k *kit) checkOutput(check, name string, res componentsdk.InProcessResult) {
+// the same checks on artifacts whose schema only Suite.Schemas gives, at the
+// level the run collected at. When the result dropped findings past its
+// limit, the kit checks the SDK's artifacts again, so none go unreported.
+func (k *kit) checkOutput(check, name string, res componentsdk.InProcessResult, level componentsdk.Level) {
 	if res.Result == nil {
 		return
 	}
@@ -47,7 +47,7 @@ func (k *kit) checkOutput(check, name string, res componentsdk.InProcessResult) 
 	}
 	recheck := res.Result.ChecksDropped > 0
 	for _, a := range res.Artifacts {
-		if a.File != "" || a.Schema == componentsdk.ResultSchema {
+		if a.File != "" || sdkArtifact(a) {
 			continue
 		}
 		sch, fromSDK := k.sdkSchema(a.Path, a.Schema)
@@ -69,7 +69,7 @@ func (k *kit) checkOutput(check, name string, res componentsdk.InProcessResult) 
 			findings = outputcheck.Validate(sch, a.Path, doc)
 		}
 		if valueChecksApply(check) {
-			findings = append(findings, outputcheck.Check(sch, a.Path, doc, gaps)...)
+			findings = append(findings, outputcheck.Check(sch, a.Path, doc, gaps, string(level))...)
 		}
 		for _, f := range findings {
 			k.violateFinding(check, name, f.Check, f.Path, f.Pointer, f.Message)
@@ -117,4 +117,11 @@ func (k *kit) levelSchema(path, schemaID string) *outputcheck.Schema {
 	}
 	sch, _ := k.sdkSchema(path, schemaID)
 	return sch
+}
+
+// sdkArtifact reports whether the SDK added an artifact itself: the result
+// artifact or the build file, which say how the run went and what built it
+// rather than holding evidence.
+func sdkArtifact(a componentsdk.EmittedArtifact) bool {
+	return a.Schema == componentsdk.ResultSchema || a.Schema == componentsdk.BuildSchema
 }

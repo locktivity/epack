@@ -53,6 +53,8 @@ type demo struct {
 	gitlabHeader bool // sends its token in PRIVATE-TOKEN rather than X-Demo-Token
 	linkPages    bool // follows the next page in the Link header rather than the body
 	broadHosts   bool // lists "*.com" among its CredentialHosts
+	callErrors   bool // builds its errors from responses with componentsdk.ResponseError, so their gaps name the call
+	normalized   bool // emits a normalized artifact whose score is copied from the detailed one with Mirror
 
 	// base is the transport the demo's real runs would send through.
 	base http.RoundTripper
@@ -122,6 +124,14 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 	rec := componentsdk.Records(ctx)
 
 	var link string
+	var last *http.Response
+	// fromResponse gives an error built from the last response its call.
+	fromResponse := func(err error) error {
+		if d.callErrors {
+			return componentsdk.ResponseError(last, err)
+		}
+		return err
+	}
 	get := func(op, url string, out any) error {
 		reqCtx := ctx.Context()
 		if !d.hookNames && (!d.unnamed || op != "demo.score.get") {
@@ -144,18 +154,19 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 			return err
 		}
 		defer func() { _ = resp.Body.Close() }()
+		last = resp
 		link = resp.Header.Get("Link")
 		if resp.StatusCode != http.StatusOK {
-			return componentsdk.CodeError(componentsdk.ClassifyResponse(resp), &demoAPIError{status: resp.StatusCode})
+			return fromResponse(componentsdk.CodeError(componentsdk.ClassifyResponse(resp), &demoAPIError{status: resp.StatusCode}))
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return err
+			return fromResponse(err)
 		}
 		if out == nil {
 			return nil
 		}
-		return json.Unmarshal(body, out)
+		return fromResponse(json.Unmarshal(body, out))
 	}
 
 	var me struct {
@@ -183,6 +194,7 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 		return componentsdk.Location{Path: "artifacts/demo.json", Pointer: pointer}
 	}
 	record := func(pointer string, err error) {
+		rec.Helper()
 		if d.wrongCode {
 			rec.NotCollectedCode(at(pointer), componentsdk.CodeVendorError, err.Error())
 			return
@@ -213,7 +225,7 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 		}
 		err := get("demo.users.list", next, &page)
 		if err == nil && page.Users == nil {
-			err = componentsdk.CodeError(componentsdk.CodeInvalidResponse, errors.New("users page has no users"))
+			err = fromResponse(componentsdk.CodeError(componentsdk.CodeInvalidResponse, errors.New("users page has no users")))
 		}
 		if err != nil {
 			failed++
@@ -288,7 +300,7 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 	case d.ignoreScore:
 		out["score"] = 50
 	case score.Value == nil:
-		record("/score", componentsdk.CodeError(componentsdk.CodeInvalidResponse, errors.New("score response has no value")))
+		record("/score", fromResponse(componentsdk.CodeError(componentsdk.CodeInvalidResponse, errors.New("score response has no value"))))
 	default:
 		out["score"] = *score.Value
 	}
@@ -298,8 +310,15 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 	if d.leakToken {
 		out["debug"] = token
 	}
-	return ctx.Emit([]componentsdk.CollectedArtifact{{Data: out, Path: "artifacts/demo.json"}})
+	artifacts := []componentsdk.CollectedArtifact{{Data: out, Path: "artifacts/demo.json"}}
+	if d.normalized {
+		rec.Mirror(at("/score"), componentsdk.Location{Path: demoNormalized, Pointer: "/security/score_pct"})
+		artifacts = append(artifacts, componentsdk.CollectedArtifact{Data: map[string]any{"security": map[string]any{"score_pct": out["score"]}}, Path: demoNormalized})
+	}
+	return ctx.Emit(artifacts)
 }
+
+const demoNormalized = "artifacts/demo.normalized.json"
 
 // nextPage returns the next page's URL from a Link header, or "".
 func nextPage(link string) string {
@@ -551,7 +570,7 @@ func TestTheKitReportsFindingsTheResultDropped(t *testing.T) {
 		t.Fatalf("result = %+v", res.Result)
 	}
 	k := &kit{suite: Suite{Spec: spec}, report: &Report{}, reported: map[Violation]bool{}}
-	k.checkOutput("scenario", "clean", res)
+	k.checkOutput("scenario", "clean", res, componentsdk.LevelTrust)
 	if got := len(violationsOf(k.report, "nulls")); got != 150 {
 		t.Errorf("nulls violations = %d, want all 150", got)
 	}

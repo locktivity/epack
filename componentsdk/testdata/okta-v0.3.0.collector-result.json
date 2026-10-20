@@ -1,0 +1,707 @@
+{
+        "collector": {
+          "name": "okta",
+          "version": "test",
+          "commit": "collectortest"
+        },
+        "outcome": {
+          "status": "collected"
+        },
+        "gaps": [],
+        "calls": {
+          "operations": [
+            {
+              "name": "okta.api_tokens.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.apps.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.authenticators.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.device_assurances.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.event_hooks.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.groups.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.groups.users.list",
+              "calls": 5,
+              "attempts": 5,
+              "retries": 0,
+              "statuses": {
+                "200": 5
+              }
+            },
+            {
+              "name": "okta.iam.assignees.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.iam.roles.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.iam.roles.permissions.list",
+              "calls": 2,
+              "attempts": 2,
+              "retries": 0,
+              "statuses": {
+                "200": 2
+              }
+            },
+            {
+              "name": "okta.idps.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.inline_hooks.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.logs.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.org.contacts.get",
+              "calls": 2,
+              "attempts": 2,
+              "retries": 0,
+              "statuses": {
+                "200": 2
+              }
+            },
+            {
+              "name": "okta.org.get",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.policies.list",
+              "calls": 3,
+              "attempts": 3,
+              "retries": 0,
+              "statuses": {
+                "200": 3
+              }
+            },
+            {
+              "name": "okta.policies.rules.list",
+              "calls": 3,
+              "attempts": 3,
+              "retries": 0,
+              "statuses": {
+                "200": 3
+              }
+            },
+            {
+              "name": "okta.users.factors.list",
+              "calls": 6,
+              "attempts": 6,
+              "retries": 0,
+              "statuses": {
+                "200": 6
+              }
+            },
+            {
+              "name": "okta.users.groups.list",
+              "calls": 6,
+              "attempts": 6,
+              "retries": 0,
+              "statuses": {
+                "200": 6
+              }
+            },
+            {
+              "name": "okta.users.list",
+              "calls": 2,
+              "attempts": 2,
+              "retries": 0,
+              "statuses": {
+                "200": 2
+              }
+            },
+            {
+              "name": "okta.users.me.get",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            },
+            {
+              "name": "okta.users.roles.list",
+              "calls": 3,
+              "attempts": 3,
+              "retries": 0,
+              "statuses": {
+                "200": 3
+              }
+            },
+            {
+              "name": "okta.zones.list",
+              "calls": 1,
+              "attempts": 1,
+              "retries": 0,
+              "statuses": {
+                "200": 1
+              }
+            }
+          ],
+          "requests": [
+            {
+              "operation": "okta.users.me.get",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/me",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users",
+              "query_keys": [
+                "after",
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.factors.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u1/factors",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.groups.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u1/groups",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.factors.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u2/factors",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.groups.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u2/groups",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.factors.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u3/factors",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.groups.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u3/groups",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.factors.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u4/factors",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.groups.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u4/groups",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.factors.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u5/factors",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.groups.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u5/groups",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.factors.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u6/factors",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.groups.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u6/groups",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.apps.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/apps",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.iam.assignees.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/iam/assignees/users",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.roles.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u1/roles",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.roles.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u2/roles",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.users.roles.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/users/u4/roles",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.iam.roles.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/iam/roles",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.iam.roles.permissions.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/iam/roles/cr1/permissions",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.iam.roles.permissions.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/iam/roles/cr2/permissions",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.policies.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/policies",
+              "query_keys": [
+                "type"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.policies.rules.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/policies/p1/rules",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.policies.rules.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/policies/p2/rules",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.policies.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/policies",
+              "query_keys": [
+                "type"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.policies.rules.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/policies/p3/rules",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.groups.users.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/groups/g1/users",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.groups.users.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/groups/g2/users",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.device_assurances.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/device-assurances",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.authenticators.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/authenticators",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.groups.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/groups",
+              "query_keys": [
+                "expand",
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.groups.users.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/groups/g3/users",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.groups.users.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/groups/g1/users",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.groups.users.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/groups/g2/users",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.zones.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/zones",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.idps.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/idps",
+              "query_keys": [
+                "limit"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.api_tokens.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/api-tokens",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.event_hooks.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/eventHooks",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.inline_hooks.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/inlineHooks",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.logs.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/logs",
+              "query_keys": [
+                "filter",
+                "limit",
+                "since",
+                "sortOrder"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.org.get",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/org",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.policies.list",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/policies",
+              "query_keys": [
+                "type"
+              ],
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.org.contacts.get",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/org/contacts/BILLING",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            },
+            {
+              "operation": "okta.org.contacts.get",
+              "method": "GET",
+              "host": "acme.okta.com",
+              "route": "/api/v1/org/contacts/TECHNICAL",
+              "attempt": 1,
+              "status": 200,
+              "duration_ms": 0
+            }
+          ]
+        },
+        "signed_in_as": {
+          "provider": "okta",
+          "kind": "api_token",
+          "tenant_id": "acme.okta.com",
+          "id": "u1"
+        },
+        "run": {
+          "run_id": "collectortest",
+          "started_at": "2026-01-01T00:00:00Z",
+          "finished_at": "2026-01-01T00:00:00Z",
+          "proxy": false,
+          "custom_ca": false
+        }
+      }

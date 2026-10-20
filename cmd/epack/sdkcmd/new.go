@@ -138,6 +138,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	out.Print("  ./%s --capabilities\n", result.BinaryName)
 	if kind == componenttypes.KindCollector {
 		out.Print("  go test ./...  %s\n", p.Dim("# runs the collectortest suite"))
+		out.Print("  make trace-map  %s\n", p.Dim("# rewrites docs/schema/trace-map.json after a change to the code"))
 	}
 	out.Print("\n")
 

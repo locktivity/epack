@@ -2,7 +2,6 @@ package collector
 
 import (
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/locktivity/epack/componentsdk"
@@ -35,10 +34,10 @@ type Organization struct {
 type Users struct {
 	TotalCount int `json:"total_count"`
 	// MFAEnabledCount and MFAEnabledPct are null, with a partial gap, when
-	// some user's factors could not be read. MFAEnabledPct is also null when
-	// there are no users.
-	MFAEnabledCount *int     `json:"mfa_enabled_count"`
-	MFAEnabledPct   *float64 `json:"mfa_enabled_pct"`
+	// some user's factors could not be read. MFAEnabledPct, rounded down so
+	// that 100 means every user, is also null when there are no users.
+	MFAEnabledCount *int `json:"mfa_enabled_count"`
+	MFAEnabledPct   *int `json:"mfa_enabled_pct"`
 	// Inventory lists every user at the internal level.
 	Inventory []User `json:"inventory,omitzero"`
 }
@@ -52,17 +51,19 @@ type User struct {
 	MFAEnabled *bool `json:"mfa_enabled"`
 }
 
-// collect signs in and reads the organization's users. It fails only when
-// the sign-in fails. A value it cannot read after that is left out of the
-// output with a gap, never written as zero or false.
+// collect signs in and reads the organization's users, each part in a step
+// of its own, which the collector result lists with its calls. It fails only
+// when the sign-in fails. A value it cannot read after that is left out of
+// the output with a gap, never written as zero or false.
 func collect(ctx componentsdk.CollectorContext, client *{{.VendorPackage}}.Client) (*Output, error) {
-	ctx.Status("Signing in")
-	org, err := client.GetOrganization(ctx.Context())
+	signIn, step := componentsdk.StartCollectorStep(ctx, "sign_in", "Signing in")
+	org, err := client.GetOrganization(signIn.Context())
+	step.End()
 	if err != nil {
 		return nil, fmt.Errorf("signing in: %w", err)
 	}
 	rec := componentsdk.Records(ctx)
-	rec.SignedInAs(componentsdk.Principal{Provider: "{{.Name}}", Kind: "api_token", TenantID: org.ID})
+	rec.SignedInAs(componentsdk.Principal{Provider: "{{.Name}}", Kind: "api_token", TenantID: org.ID, AuthMethod: componentsdk.AuthAPIToken})
 
 	out := &Output{
 		SchemaVersion:    SchemaVersion,
@@ -72,18 +73,20 @@ func collect(ctx componentsdk.CollectorContext, client *{{.VendorPackage}}.Clien
 	}
 	gaps := gapLog{rec: rec}
 
-	ctx.Status("Listing users")
-	users, err := client.ListUsers(ctx.Context())
+	people, step := componentsdk.StartCollectorStep(ctx, "users", "Reading users and their MFA factors")
+	defer step.End()
+	users, err := client.ListUsers(people.Context())
 	if err != nil {
-		gaps.notCollected(err, "/users")
+		gaps.notCollected(err, "/users", componentsdk.MissingPermission({{.VendorPackage}}.PermissionReadUsers))
 		return out, nil
 	}
-	out.Users = readUsers(ctx, client, gaps, users)
+	out.Users = readUsers(people, client, gaps, users)
 	return out, nil
 }
 
-// readUsers reads each user's factors. A user whose factors cannot be read
-// has mfa_enabled left out, and so do the rollups over every user.
+// readUsers reads each user's factors in the step ctx carries. A user whose
+// factors cannot be read has mfa_enabled left out, and so do the rollups
+// over every user.
 func readUsers(ctx componentsdk.CollectorContext, client *{{.VendorPackage}}.Client, gaps gapLog, users []{{.VendorPackage}}.User) *Users {
 	inventory := ctx.Level().AtLeast(componentsdk.LevelInternal)
 	rows := make([]User, len(users))
@@ -132,12 +135,13 @@ func hasActiveFactor(factors []{{.VendorPackage}}.Factor) bool {
 	return false
 }
 
-// percent is n of total as a percentage rounded to one decimal place, or nil
-// when total is 0.
-func percent(n, total int) *float64 {
+// percent is n of total as a whole percentage rounded down, so that 100
+// means all of them, or nil when total is 0. The schema says so with
+// x-epack-rounding, and the output checks hold the value to it.
+func percent(n, total int) *int {
 	if total == 0 {
 		return nil
 	}
-	p := math.Round(float64(n)*1000/float64(total)) / 10
+	p := n * 100 / total
 	return &p
 }

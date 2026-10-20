@@ -75,11 +75,17 @@ type InProcessOptions struct {
 type InProcessResult struct {
 	// ExitCode is the exit code RunCollector would have used.
 	ExitCode int
-	// Artifacts lists the emitted artifacts, the result artifact last. One
-	// emitted without a path carries the path the runner gives it.
+	// Artifacts lists the emitted artifacts, the build file and the result
+	// artifact last. One emitted without a path carries the path the runner
+	// gives it.
 	Artifacts []EmittedArtifact
 	// Result is the decoded result artifact, or nil when nothing was emitted.
 	Result *CollectorResult
+	// Build is the decoded build file, or nil when nothing was emitted.
+	Build *CollectorBuild
+	// Mirrors lists the run's Recorder.Mirror calls, each pair once, in the
+	// order first made.
+	Mirrors []Mirrored
 	// Failure is the failure record, or nil when the run did not fail.
 	Failure *ProgressMessage
 	// Progress lists the status and progress messages.
@@ -140,13 +146,12 @@ func RunInProcess(spec CollectorSpec, handler CollectorHandler, opts InProcessOp
 		errOut:    &stderr,
 		getenv:    getenv,
 		progress:  &progressWriter{out: &stdout},
-		run:       newRun(spec, name, opts.RunID, opts.Transport, opts.Seed),
 	}
+	c.attach(newRun(spec, name, opts.RunID, opts.Transport, opts.Seed))
 	c.run.sleep = opts.Sleep
 	c.run.resolver = opts.Resolver
 	c.run.dial = opts.Dial
 	c.run.rootCAs = opts.RootCAs
-	c.run.schemas = compileSchemas(spec.Schemas, &stderr)
 	if opts.Clock != nil {
 		c.run.clock = opts.Clock
 		c.run.started = opts.Clock()
@@ -164,6 +169,7 @@ func RunInProcess(spec CollectorSpec, handler CollectorHandler, opts InProcessOp
 		res.recordFiles(opts.OutputDir)
 		res.CredentialHosts = c.run.credentialHostLists()
 		res.UnlistedCredentials = c.run.unlistedCredentialOps()
+		res.Mirrors = c.run.records.mirrored()
 	}()
 	res.ExitCode = runCollectorWith(c, handler)
 	return res
@@ -186,6 +192,8 @@ func (res *InProcessResult) recordFiles(outputDir string) {
 	}
 }
 
+var progressType = []byte(`"epack_progress"`)
+
 // parseStdout splits stdout into progress messages and the result envelope,
 // as the runner does, and gives each artifact that names no path the
 // runner's default for the collector configured as name.
@@ -196,7 +204,9 @@ func (res *InProcessResult) parseStdout(out []byte, name string) {
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		var msg ProgressMessage
-		if len(line) > 0 && line[0] == '{' && json.Unmarshal(line, &msg) == nil && msg.Type == "epack_progress" {
+		// Only a progress message names its type, so the envelope, which
+		// holds every artifact, is not decoded twice.
+		if len(line) > 0 && line[0] == '{' && bytes.Contains(line, progressType) && json.Unmarshal(line, &msg) == nil && msg.Type == "epack_progress" {
 			switch msg.Kind {
 			case ProgressKindFailure:
 				m := msg
@@ -220,12 +230,17 @@ func (res *InProcessResult) parseStdout(out []byte, name string) {
 		if a.Path == "" {
 			res.Artifacts[i].Path = defaultArtifactPath(name, i)
 		}
-		if a.Schema != ResultSchema {
-			continue
-		}
-		var decoded CollectorResult
-		if json.Unmarshal(a.Data, &decoded) == nil {
-			res.Result = &decoded
+		switch a.Schema {
+		case ResultSchema:
+			var decoded CollectorResult
+			if json.Unmarshal(a.Data, &decoded) == nil {
+				res.Result = &decoded
+			}
+		case BuildSchema:
+			var decoded CollectorBuild
+			if json.Unmarshal(a.Data, &decoded) == nil {
+				res.Build = &decoded
+			}
 		}
 	}
 }

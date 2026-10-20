@@ -8,21 +8,24 @@ import (
 
 // gapLog records each value the collector leaves out of its artifact in the
 // run's recorder. The SDK writes the gaps into the collector result, with
-// the code componentsdk.Classify gives each error.
+// the code componentsdk.Classify gives each error and the call it came from.
+// Its methods mark themselves with Recorder.Helper, so each gap's source
+// names the line that called them.
 type gapLog struct {
 	rec *componentsdk.Recorder
 }
 
-// notCollected records the values at pointers as left out because of err.
-func (l gapLog) notCollected(err error, pointers ...string) {
-	for _, pointer := range pointers {
-		l.rec.NotCollected(location(pointer), err)
-	}
+// notCollected records the value at pointer as left out because of err.
+// opts add details, such as the permission a permission_denied gap lacks.
+func (l gapLog) notCollected(err error, pointer string, opts ...componentsdk.GapOption) {
+	l.rec.Helper()
+	l.rec.NotCollected(location(pointer), err, opts...)
 }
 
 // partial records the rollups at pointers as left out because unmeasured of
-// the items they cover could not be read, err being one of the failures.
+// the items they cover could not be read, err being the first failure.
 func (l gapLog) partial(unmeasured int, err error, pointers ...string) {
+	l.rec.Helper()
 	for _, pointer := range pointers {
 		l.rec.Partial(location(pointer), unmeasured, err)
 	}

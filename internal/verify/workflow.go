@@ -85,6 +85,32 @@ type AttestationDetail struct {
 	// the signature was made with a key the caller provided; Subject is then
 	// the key's fingerprint.
 	Method string `json:"method,omitempty"`
+
+	// LogIndex and LogID name the signature's entry in the transparency
+	// log, when it was recorded in one.
+	LogIndex *int64 `json:"log_index,omitempty"`
+	LogID    string `json:"log_id,omitempty"`
+
+	// Certificate is what a keyless signature's certificate says about the
+	// CI run that signed. A signature made with a key has none.
+	Certificate *CertificateDetail `json:"certificate,omitempty"`
+}
+
+// CertificateDetail is the CI run and source a keyless signature's
+// certificate records, verify.CertificateClaims with JSON names. All of it
+// comes from the signature file, so offline verification reports it too.
+type CertificateDetail struct {
+	// RunInvocationURI is the CI run that signed, such as a GitHub Actions
+	// run attempt.
+	RunInvocationURI string `json:"run_invocation_uri,omitempty"`
+	// SourceRepositoryURI, SourceRepositoryDigest, and SourceRepositoryRef
+	// are the repository whose workflow signed, with its commit and ref.
+	SourceRepositoryURI    string `json:"source_repository_uri,omitempty"`
+	SourceRepositoryDigest string `json:"source_repository_digest,omitempty"`
+	SourceRepositoryRef    string `json:"source_repository_ref,omitempty"`
+	// RunnerEnvironment says whether the runner was hosted by the CI
+	// platform or by its user.
+	RunnerEnvironment string `json:"runner_environment,omitempty"`
 }
 
 // HasErrors returns true if any verification step failed.
@@ -302,20 +328,33 @@ func verifyAttestationsWorkflow(ctx context.Context, p *pack.Pack, manifest *pac
 			continue
 		}
 
-		// Capture attestation details from successful verification
-		detail := AttestationDetail{Path: attPath}
-		if result.Identity != nil {
-			detail.Issuer = result.Identity.Issuer
-			detail.Subject = result.Identity.Subject
-			detail.Method = result.Identity.Method
-		}
-		if len(result.Timestamps) > 0 {
-			detail.SignedAt = result.Timestamps[0].UTC().Format("2006-01-02T15:04:05Z")
-		}
-		details = append(details, detail)
+		details = append(details, attestationDetail(attPath, result))
 	}
 
 	return details, errors
+}
+
+// attestationDetail captures what a verified attestation says about who
+// signed it, when, its entry in the transparency log, and its certificate.
+func attestationDetail(path string, result *verify.Result) AttestationDetail {
+	detail := AttestationDetail{Path: path}
+	if result.Identity != nil {
+		detail.Issuer = result.Identity.Issuer
+		detail.Subject = result.Identity.Subject
+		detail.Method = result.Identity.Method
+	}
+	if len(result.Timestamps) > 0 {
+		detail.SignedAt = result.Timestamps[0].UTC().Format("2006-01-02T15:04:05Z")
+	}
+	if tl := result.TransparencyLog; tl != nil {
+		index := tl.LogIndex
+		detail.LogIndex, detail.LogID = &index, tl.LogID
+	}
+	if c := result.Certificate; c != nil {
+		cert := CertificateDetail(*c)
+		detail.Certificate = &cert
+	}
+	return detail
 }
 
 // verifyEmbeddedAttestationsWorkflow verifies embedded attestations in merged pack provenance.

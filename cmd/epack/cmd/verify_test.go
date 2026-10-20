@@ -512,3 +512,51 @@ func TestVerify_GoldenJSON(t *testing.T) {
 
 	assertGolden(t, goldenPath("verify_json"), normalized)
 }
+
+func TestVerifyOutputNamesTheLogEntryRunAndSourceCommit(t *testing.T) {
+	var buf, errBuf bytes.Buffer
+	w := output.New(&buf, &errBuf, output.Options{NoColor: true})
+	index := int64(3291447186)
+	err := printVerifyResults(w, "acme-okta.epack", &iverify.PackResult{
+		Verified: true, Stream: "acme-analytics/okta", PackDigest: "sha256:4c1e", ArtifactCount: 4, AttestationCount: 1,
+		Attestations: []iverify.AttestationDetail{{
+			Subject:  "https://github.com/acme-analytics/evidence/.github/workflows/collect.yml@refs/heads/main",
+			Issuer:   "https://token.actions.githubusercontent.com",
+			SignedAt: "2026-10-20T06:03:52Z",
+			Method:   "certificate",
+			LogIndex: &index,
+			Certificate: &iverify.CertificateDetail{
+				RunInvocationURI:       "https://github.com/acme-analytics/evidence/actions/runs/18224519/attempts/1",
+				SourceRepositoryURI:    "https://github.com/acme-analytics/evidence",
+				SourceRepositoryDigest: "5d0c1e7f2a9b4c3d8e6f1a0b2c4d6e8f0a1b3c5d",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"    Signed: 2026-10-20T06:03:52Z\n    Log entry: 3291447186\n",
+		"    Run: https://github.com/acme-analytics/evidence/actions/runs/18224519/attempts/1\n",
+		"    Source commit: acme-analytics/evidence@5d0c1e7f2a9b4c3d8e6f1a0b2c4d6e8f0a1b3c5d\n",
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, buf.String())
+		}
+	}
+}
+
+func TestSourceCommit(t *testing.T) {
+	for _, tc := range []struct {
+		uri, digest, want string
+	}{
+		{"https://github.com/acme/evidence", "5d0c", "acme/evidence@5d0c"},
+		{"https://gitlab.com/group/sub/project", "9a1b", "gitlab.com/group/sub/project@9a1b"},
+		{"", "9a1b", "9a1b"},
+		{"https://github.com/acme/evidence", "", ""},
+	} {
+		if got := sourceCommit(&iverify.CertificateDetail{SourceRepositoryURI: tc.uri, SourceRepositoryDigest: tc.digest}); got != tc.want {
+			t.Errorf("sourceCommit(%q, %q) = %q, want %q", tc.uri, tc.digest, got, tc.want)
+		}
+	}
+}

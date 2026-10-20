@@ -27,6 +27,7 @@ func Spec(version, commit string) componentsdk.CollectorSpec {
 		Description: "TODO: Describe what this collector gathers",
 		Timeout:     5 * time.Minute,
 		Schemas:     map[string][]byte{artifactPath: schema.Artifact},
+		TraceMap:    schema.TraceMap,
 	}
 }
 
@@ -45,6 +46,7 @@ func Run(ctx componentsdk.CollectorContext) error {
 
 	httpClient := componentsdk.NewHTTPClient(ctx, componentsdk.HTTPOptions{
 		CredentialHosts: []string{ {{- .VendorPackage}}.Host},
+		VendorCode:      {{.VendorPackage}}.VendorCode,
 	})
 	output, err := collect(ctx, {{.VendorPackage}}.NewClient(httpClient, cfg.Organization, token))
 	if err != nil {

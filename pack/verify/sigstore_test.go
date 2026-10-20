@@ -611,3 +611,55 @@ func findString(s, substr string) bool {
 	}
 	return false
 }
+
+// The log entry and certificate claims come from the signature file, so an
+// offline verification reports them, with an identity policy or, as
+// Locktivity verifies packs, with the identity check skipped.
+func TestSigstoreVerifier_Offline_ReportsTheLogEntryAndCertificateClaims(t *testing.T) {
+	t.Parallel()
+
+	bundleJSON, err := os.ReadFile("testdata/sigstore-js-provenance.sigstore.json")
+	if err != nil {
+		t.Fatalf("failed to read bundle fixture: %v", err)
+	}
+	want := CertificateClaims{
+		RunInvocationURI:       "https://github.com/sigstore/sigstore-js/actions/runs/5904696764/attempts/1",
+		SourceRepositoryURI:    "https://github.com/sigstore/sigstore-js",
+		SourceRepositoryDigest: "f0b49a04e5a62250e0f60fb128004a73110fe311",
+		SourceRepositoryRef:    "refs/heads/main",
+		RunnerEnvironment:      "github-hosted",
+	}
+	for name, identity := range map[string][]Option{
+		"identity policy": {
+			WithIssuer("https://token.actions.githubusercontent.com"),
+			WithSubject("https://github.com/sigstore/sigstore-js/.github/workflows/release.yml@refs/heads/main"),
+		},
+		"identity check skipped": {WithInsecureSkipIdentityCheck()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			verifier, err := NewSigstoreVerifier(append([]Option{WithOffline(), WithTrustedRoot(mustLoadTestTrustedRoot(t))}, identity...)...)
+			if err != nil {
+				t.Fatalf("failed to create verifier: %v", err)
+			}
+			result, err := verifier.Verify(context.Background(), bundleJSON)
+			if err != nil {
+				t.Fatalf("offline verification failed: %v", err)
+			}
+			if result.TransparencyLog == nil || result.TransparencyLog.LogIndex != 31821305 || result.TransparencyLog.LogID == "" {
+				t.Errorf("log entry = %+v, want index 31821305 with its log ID", result.TransparencyLog)
+			}
+			if result.Certificate == nil || *result.Certificate != want {
+				t.Errorf("certificate claims = %+v, want %+v", result.Certificate, want)
+			}
+		})
+	}
+}
+
+func TestExtractCertificateClaimsFromBundle_None(t *testing.T) {
+	if got := extractCertificateClaimsFromBundle(nil); got != nil {
+		t.Errorf("claims from no bundle = %+v", got)
+	}
+	if got := extractCertificateClaimsFromBundle(&bundle.Bundle{}); got != nil {
+		t.Errorf("claims from an empty bundle = %+v", got)
+	}
+}

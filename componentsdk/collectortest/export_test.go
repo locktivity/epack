@@ -54,10 +54,11 @@ func TestScenarioRunsWriteTheirOutputUnderCollectortestOut(t *testing.T) {
 	}
 	index := readIndex(t, filepath.Join(out, "demo", "scenarios.json"))
 	raw, _ := json.Marshal(index)
+	sdk := `{"path":"artifacts/demo.collector-build.json","schema":"evidencepack/collector-build@v1"},{"path":"artifacts/demo.collector-result.json","schema":"evidencepack/collector-result@v1"}`
 	want := `{"suite":"demo","scenarios":[` +
-		`{"name":"clean","dir":"clean","exit_code":0,"artifacts":[{"path":"artifacts/demo.json","schema":""},{"path":"artifacts/demo.collector-result.json","schema":"evidencepack/collector-result@v1"}]},` +
-		`{"name":"no users","dir":"no-users","exit_code":0,"artifacts":[{"path":"artifacts/demo.json","schema":""},{"path":"artifacts/demo.collector-result.json","schema":"evidencepack/collector-result@v1"}]},` +
-		`{"name":"lagged total","dir":"lagged-total","exit_code":0,"artifacts":[{"path":"artifacts/demo.json","schema":""},{"path":"artifacts/demo.collector-result.json","schema":"evidencepack/collector-result@v1"}]},` +
+		`{"name":"clean","dir":"clean","exit_code":0,"artifacts":[{"path":"artifacts/demo.json","schema":""},` + sdk + `]},` +
+		`{"name":"no users","dir":"no-users","exit_code":0,"artifacts":[{"path":"artifacts/demo.json","schema":""},` + sdk + `]},` +
+		`{"name":"lagged total","dir":"lagged-total","exit_code":0,"artifacts":[{"path":"artifacts/demo.json","schema":""},` + sdk + `]},` +
 		`{"name":"Token rejected!","dir":"token-rejected","exit_code":3,"failure":{"code":"auth_failed","message":"signing in: demo API returned 401"},"artifacts":[]}]}`
 	if string(raw) != want {
 		t.Errorf("index = %s\nwant    %s", raw, want)
@@ -88,7 +89,7 @@ func TestScenarioOutputCopiesFileArtifacts(t *testing.T) {
 		t.Errorf("the staged file was copied as %q (%v)", data, err)
 	}
 	index := readIndex(t, filepath.Join(out, "stager", "scenarios.json"))
-	if got := index.Scenarios[0].Artifacts; len(got) != 3 || got[1] != (exportArtifact{Path: stagerFile, File: true}) {
+	if got := index.Scenarios[0].Artifacts; len(got) != 4 || got[1] != (exportArtifact{Path: stagerFile, File: true}) {
 		t.Errorf("artifacts = %+v, want the file artifact marked as a file", got)
 	}
 }
@@ -111,7 +112,7 @@ func TestSuiteNamesKeepScenarioOutputApart(t *testing.T) {
 			t.Errorf("%s holds %s, want a directory for each scenario, the second numbered, and nothing left from before", dir, got)
 		}
 		index := readIndex(t, filepath.Join(out, dir, "scenarios.json"))
-		if index.Suite != suite || index.Scenarios[1].Dir != "clean-2" || index.Scenarios[1].Artifacts[1].Path != "artifacts/"+suite+".collector-result.json" {
+		if index.Suite != suite || index.Scenarios[1].Dir != "clean-2" || index.Scenarios[1].Artifacts[2].Path != "artifacts/"+suite+".collector-result.json" {
 			t.Errorf("%s index = %+v", dir, index)
 		}
 	}

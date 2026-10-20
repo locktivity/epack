@@ -46,6 +46,12 @@ type CollectorSpec struct {
 	// lists what it finds in the result artifact's checks. Each schema must be
 	// self-contained: refs to other files or URLs are not loaded.
 	Schemas map[string][]byte
+
+	// TraceMap is the collector's trace map, which links each field of its
+	// artifacts to the calls and the code behind it. `epack sdk map` writes
+	// it, and the collector commits it beside its schemas and embeds it with
+	// go:embed. Emit writes it, with Schemas, into the build file.
+	TraceMap []byte
 }
 
 // CollectorHandler is the function signature for collector implementations.
@@ -87,7 +93,8 @@ type CollectorContext interface {
 
 	// Emit outputs collected artifacts wrapped in the protocol envelope.
 	// Each artifact contains data and optional schema/path metadata. The SDK
-	// adds the run's result artifact (schema ResultSchema) after them.
+	// adds the build file (schema BuildSchema) and the run's result artifact
+	// (schema ResultSchema) after them.
 	Emit(artifacts []CollectedArtifact) error
 }
 
@@ -139,6 +146,17 @@ var levelRank = map[Level]int{
 // trust < audit < internal ordering.
 func (l Level) AtLeast(other Level) bool {
 	return levelRank[l] >= levelRank[other]
+}
+
+// LevelOf returns the collection level a collector's config asks for in its
+// "level" key, as the SDK reads it for CollectorContext.Level. An absent,
+// empty, non-string, or unrecognized value is LevelTrust.
+func LevelOf(config map[string]any) Level {
+	s, _ := config["level"].(string)
+	if _, known := levelRank[Level(s)]; !known {
+		return LevelTrust
+	}
+	return Level(s)
 }
 
 // CollectedArtifact represents a single output artifact from a collector.
@@ -264,9 +282,8 @@ func buildCollectorContext(spec CollectorSpec) (*collectorContext, context.Cance
 		errOut:    os.Stderr,
 		getenv:    os.Getenv,
 		progress:  &progressWriter{out: os.Stdout},
-		run:       newRun(spec, name, os.Getenv("EPACK_RUN_ID"), nil, uint64(time.Now().UnixNano())),
 	}
-	collectorCtx.run.schemas = compileSchemas(spec.Schemas, os.Stderr)
+	collectorCtx.attach(newRun(spec, name, os.Getenv("EPACK_RUN_ID"), nil, uint64(time.Now().UnixNano())))
 	if err := loadCollectorConfig(collectorCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "error parsing config: %v\n", err)
 		collectorCtx.progress.writeFailure(CodeConfigInvalid, "", "error parsing config: "+err.Error())
@@ -408,6 +425,16 @@ func (c *collectorContext) progressOut() *progressWriter {
 	return c.progress
 }
 
+// attach makes r c's run: c's context carries r, so StartStep can reach it
+// from contexts derived from it, and r prints status lines through c and
+// checks artifacts against c's schemas.
+func (c *collectorContext) attach(r *run) {
+	c.run = r
+	c.ctx = withRun(c.ctx, r)
+	r.status = c.Status
+	r.schemas = compileSchemas(c.spec.Schemas, c.stderr())
+}
+
 func (c *collectorContext) runState() *run {
 	if c.run == nil {
 		c.run = newRun(c.spec, c.name, "", nil, uint64(time.Now().UnixNano()))
@@ -464,18 +491,9 @@ func (c *collectorContext) checkStagingPath(relPath string) error {
 // collection level. Absent, empty, non-string, or unrecognized values produce
 // LevelTrust; unrecognized values also emit a one-line warning to stderr.
 func (c *collectorContext) Level() Level {
-	raw, ok := c.config["level"]
-	if !ok {
-		return LevelTrust
-	}
-	s, ok := raw.(string)
-	if !ok || s == "" {
-		return LevelTrust
-	}
-	lvl := Level(s)
-	if _, known := levelRank[lvl]; !known {
+	lvl := LevelOf(c.config)
+	if s, _ := c.config["level"].(string); s != "" && Level(s) != lvl {
 		_, _ = fmt.Fprintf(c.stderr(), "warning: unknown collection level %q in config; falling back to %q\n", s, LevelTrust)
-		return LevelTrust
 	}
 	return lvl
 }
@@ -504,11 +522,15 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 		}
 		artifactEntries = append(artifactEntries, entry)
 	}
+	buildEntry, err := c.buildArtifactEntry(artifacts)
+	if err != nil {
+		return err
+	}
 	resultEntry, err := c.resultArtifactEntry(artifacts)
 	if err != nil {
 		return err
 	}
-	artifactEntries = append(artifactEntries, resultEntry)
+	artifactEntries = append(artifactEntries, buildEntry, resultEntry)
 	c.emitted = true
 
 	envelope := map[string]any{
@@ -524,6 +546,23 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 	}
 
 	return nil
+}
+
+// buildArtifactEntry builds the build file from the spec.
+func (c *collectorContext) buildArtifactEntry(artifacts []CollectedArtifact) (map[string]any, error) {
+	path := buildPath(c.runState().name)
+	for i, a := range artifacts {
+		if artifactPath(a, c.runState().name, i) == path {
+			return nil, fmt.Errorf("artifact %d uses %s, the path of the build file", i, path)
+		}
+	}
+	return c.collectorArtifactEntry(CollectedArtifact{
+		Data:        newBuild(c.spec, c.stderr()),
+		Schema:      BuildSchema,
+		Path:        path,
+		DisplayName: "Collector build",
+		Description: "The schemas the collector checks its artifacts against and its trace map, the same for every run of this build",
+	})
 }
 
 // resultArtifactEntry builds the run's result artifact from the recorder and

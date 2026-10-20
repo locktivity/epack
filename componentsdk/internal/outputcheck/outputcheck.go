@@ -28,6 +28,7 @@ const (
 	CheckPopulation     = "population"
 	CheckNulls          = "nulls"
 	CheckRollups        = "rollups"
+	CheckRatios         = "ratios"
 	CheckLevels         = "levels"
 )
 

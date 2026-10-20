@@ -119,7 +119,7 @@ func TestTransportRetriesSafeRequests(t *testing.T) {
 		if ops[0].Statuses["503"] != 1 || ops[0].Statuses["200"] != 1 {
 			t.Errorf("statuses = %v", ops[0].Statuses)
 		}
-		rows, _ := c.run.calls.requests()
+		rows, _, _ := c.run.calls.requests()
 		if rows[1].RequestID != "req-2" || rows[1].Attempt != 2 {
 			t.Errorf("second row = %+v", rows[1])
 		}
@@ -501,7 +501,7 @@ func TestTransportRecordsCalls(t *testing.T) {
 		if ops[0].Deprecation != "@1688169599" || ops[0].Sunset == "" {
 			t.Errorf("deprecation headers = %q / %q", ops[0].Deprecation, ops[0].Sunset)
 		}
-		rows, _ := c.run.calls.requests()
+		rows, _, _ := c.run.calls.requests()
 		if rows[0].Route != "/subscriptions/{id}/assessments" {
 			t.Errorf("route = %q, want the subscription templated", rows[0].Route)
 		}
@@ -538,7 +538,7 @@ func TestTransportUsesTheCollectorsRouteTemplate(t *testing.T) {
 			t.Fatal("a credential to another host should be refused")
 		}
 
-		rows, _ := c.run.calls.requests()
+		rows, _, _ := c.run.calls.requests()
 		want := "/subscriptions/{id}/resourceGroups/{name}/providers/Microsoft.Sql/servers/{name}"
 		if len(rows) != 2 || rows[0].Route != want || rows[1].Route != want {
 			t.Fatalf("rows = %+v, want both routes templated as %s", rows, want)
@@ -1122,4 +1122,248 @@ func TestUnescapeJSONLoosely(t *testing.T) {
 			t.Errorf("unescapeJSONLoosely(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+func TestTransportNumbersCallsAndTimesEachAttempt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		script := newScript().
+			on("api.example.com/users",
+				respond(429, `{"errorCode":"E0000047"}`, http.Header{"Retry-After": []string{"2"}}),
+				respond(200, "[]", nil)).
+			on("api.example.com/apps", respond(200, "[]", nil))
+		c := testContext(script)
+		client := NewHTTPClient(c, HTTPOptions{})
+		time.Sleep(3 * time.Second)
+		for _, path := range []string{"/users", "/apps"} {
+			resp, err := get(t, client, WithOperation(context.Background(), Operation{Name: "list" + path}), "https://api.example.com"+path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+		}
+		rows, _, _ := c.run.calls.requests()
+		if len(rows) != 3 {
+			t.Fatalf("rows = %+v", rows)
+		}
+		first, retry, apps := rows[0], rows[1], rows[2]
+		if first.Call != 1 || retry.Call != 1 || apps.Call != 2 {
+			t.Errorf("calls = %d, %d, %d; want both attempts of the first call numbered 1 and the next call 2", first.Call, retry.Call, apps.Call)
+		}
+		if first.StartMS != 3000 || first.WaitedMS != 0 {
+			t.Errorf("first attempt started at %dms and waited %dms, want 3000ms after the run started and no wait", first.StartMS, first.WaitedMS)
+		}
+		if retry.WaitedMS < 2000 || retry.WaitedMS > 2201 || retry.StartMS != first.StartMS+retry.WaitedMS {
+			t.Errorf("retry waited %dms and started at %dms, want the Retry-After with its jitter, sent after the wait", retry.WaitedMS, retry.StartMS)
+		}
+		if apps.StartMS != retry.StartMS || apps.WaitedMS != 0 {
+			t.Errorf("next call started at %dms and waited %dms", apps.StartMS, apps.WaitedMS)
+		}
+		if first.VendorCode != "" {
+			t.Errorf("vendor code %q without a VendorCode hook", first.VendorCode)
+		}
+	})
+}
+
+func TestVendorCodeHookReadsFailedResponses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		okta := `{"errorCode":"E0000006","errorSummary":"You do not have permission to perform the requested action for user 00u1abc"}`
+		script := newScript().
+			on("api.example.com/logs", respond(403, okta, nil)).
+			on("api.example.com/users", respond(200, `{"errorCode":"E0000001"}`, nil)).
+			on("api.example.com/chatty", respond(400, `{"errorCode":"bad request for jane@example.com"}`, nil)).
+			on("api.example.com/leaky", respond(400, `{"errorCode":"tok-abcdef123"}`, nil))
+		c := testContext(script)
+		c.run.secrets.add("tok-abcdef123")
+		var asked []int
+		client := NewHTTPClient(c, HTTPOptions{VendorCode: func(resp *http.Response, body []byte) string {
+			asked = append(asked, resp.StatusCode)
+			var e struct {
+				ErrorCode string `json:"errorCode"`
+			}
+			_ = json.Unmarshal(body, &e)
+			return e.ErrorCode
+		}})
+		for _, path := range []string{"/logs", "/users", "/chatty", "/leaky"} {
+			resp, err := get(t, client, context.Background(), "https://api.example.com"+path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if path == "/logs" && string(body) != okta {
+				t.Errorf("the caller read %q, want the whole body after the hook read it", body)
+			}
+		}
+		if !reflect.DeepEqual(asked, []int{403, 400, 400}) {
+			t.Errorf("the hook was asked about statuses %v, want only the failed responses", asked)
+		}
+		rows, _, _ := c.run.calls.requests()
+		var codes []string
+		for _, r := range rows {
+			codes = append(codes, r.VendorCode)
+		}
+		if want := []string{"E0000006", "", "", ""}; !reflect.DeepEqual(codes, want) {
+			t.Errorf("vendor codes = %q, want %q: a message or a secret is never a code", codes, want)
+		}
+		raw, _ := json.Marshal(rows)
+		if strings.Contains(string(raw), "permission") || strings.Contains(string(raw), "jane") {
+			t.Errorf("rows hold the vendor's message: %s", raw)
+		}
+	})
+}
+
+func TestVendorCodeHookReadsAFailureInsideA200(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		script := newScript().on("api.example.com/rpc",
+			respond(200, `{"error":{"code":"RATE_LIMIT"}}`, nil),
+			respond(200, `{"result":{}}`, nil))
+		c := testContext(script)
+		client := NewHTTPClient(c, HTTPOptions{
+			ClassifySuccess: true,
+			ClassifyResponse: func(_ *http.Response, body []byte) (Code, bool) {
+				return CodeRateLimited, strings.Contains(string(body), "RATE_LIMIT")
+			},
+			VendorCode: func(*http.Response, []byte) string { return "RATE_LIMIT" },
+		})
+		resp, err := get(t, client, context.Background(), "https://api.example.com/rpc")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		rows, _, _ := c.run.calls.requests()
+		if len(rows) != 2 || rows[0].VendorCode != "RATE_LIMIT" || rows[1].VendorCode != "" {
+			t.Errorf("rows = %+v, want the code on the throttled 200 and none on its retry", rows)
+		}
+	})
+}
+
+func TestLedgerKeepsProblemRowsPastTheLimit(t *testing.T) {
+	l := newLedger()
+	req := mustRequest("https://api.example.com/users")
+	add := func(n, status, attempt int) {
+		for range n {
+			l.add(attemptRecord{call: callStart{op: Operation{Name: "users.list"}, number: l.startCall()}, attempt: attempt, req: req, resp: &http.Response{StatusCode: status, Header: http.Header{}}}, nil, nil)
+		}
+	}
+	add(maxCallRows, 200, 1)
+	add(5, 200, 1)
+	add(maxProblemRows-1, 403, 1)
+	add(1, 200, 2)
+	add(7, 429, 1)
+	rows, dropped, problemsDropped := l.requests()
+	if len(rows) != maxCallRows+maxProblemRows {
+		t.Errorf("kept %d rows, want the first %d and %d problem rows after them", len(rows), maxCallRows, maxProblemRows)
+	}
+	if rows[maxCallRows].Status != 403 || rows[len(rows)-1].Attempt != 2 {
+		t.Errorf("rows past the limit = %+v ... %+v, want the failures and the retry", rows[maxCallRows], rows[len(rows)-1])
+	}
+	if dropped != 12 || problemsDropped != 7 {
+		t.Errorf("dropped = %d, problems dropped = %d; want 12 and 7", dropped, problemsDropped)
+	}
+	if ops := l.operations(); ops[0].Attempts != maxCallRows+5+maxProblemRows+7 || ops[0].Statuses["429"] != 7 {
+		t.Errorf("operation counts leave out dropped rows: %+v", ops[0])
+	}
+}
+
+func TestLedgerKeepsALateDialFailurePastTheLimit(t *testing.T) {
+	l := newLedger()
+	op := Operation{Name: "dial"}
+	for range maxCallRows {
+		l.addCall(callStart{op: op, number: l.startCall()}, "DIAL", "a.example.com", "", "", 0)
+	}
+	late := l.addCall(callStart{op: op, number: l.startCall()}, "DIAL", "b.example.com", "", "", 0)
+	if rows, dropped, _ := l.requests(); len(rows) != maxCallRows || dropped != 1 {
+		t.Fatalf("rows = %d, dropped = %d; want the successful dial left out", len(rows), dropped)
+	}
+	l.failCall(op, late, CodeVendorError)
+	rows, dropped, problemsDropped := l.requests()
+	if len(rows) != maxCallRows+1 || rows[maxCallRows].Host != "b.example.com" || rows[maxCallRows].Error != CodeVendorError {
+		t.Errorf("rows end with %+v, want the dial kept once its connection reset", rows[len(rows)-1])
+	}
+	if dropped != 0 || problemsDropped != 0 {
+		t.Errorf("dropped = %d, problems dropped = %d; want neither", dropped, problemsDropped)
+	}
+}
+
+func TestTransportErrorsCarryTheirCall(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		hang := func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}
+		script := newScript().on("api.example.com/me", respond(200, "{}", nil)).on("api.example.com/logs", hang)
+		c := testContext(script)
+		client := NewHTTPClient(c, HTTPOptions{AttemptTimeout: time.Second, MaxAttempts: 2, CredentialHosts: []string{"api.example.com"}})
+		resp, err := get(t, client, WithOperation(context.Background(), Operation{Name: "me.get"}), "https://api.example.com/me")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		_, err = get(t, client, WithOperation(context.Background(), Operation{Name: "logs.list"}), "https://api.example.com/logs")
+		var urlErr *url.Error
+		if !errors.As(err, &urlErr) || !urlErr.Timeout() || Classify(err) != CodeTimeout {
+			t.Fatalf("err = %v, want a *url.Error that still reports its timeout", err)
+		}
+		req, _ := http.NewRequestWithContext(WithOperation(context.Background(), Operation{Name: "leak"}), http.MethodGet, "https://elsewhere.example.org/x", nil)
+		req.Header.Set("Authorization", "Bearer x")
+		_, refused := client.Do(req)
+
+		rec := c.run.records
+		rec.NotCollected(Location{Path: "a.json", Pointer: "/logs"}, err)
+		rec.NotCollected(Location{Path: "a.json", Pointer: "/leak"}, refused)
+		gaps := rec.Gaps()
+		if gaps[0].Operation != "logs.list" || gaps[0].Call != 2 || gaps[0].Code != CodeTimeout {
+			t.Errorf("gap = %+v, want the timed-out call, the second of the run", gaps[0])
+		}
+		if gaps[1].Operation != "leak" || gaps[1].Call != 3 {
+			t.Errorf("gap = %+v, want the refused call", gaps[1])
+		}
+		rows, _, _ := c.run.calls.requests()
+		if rows[len(rows)-1].Call != 3 || rows[len(rows)-1].Error != CodeInvalidResponse {
+			t.Errorf("the refused call's row = %+v", rows[len(rows)-1])
+		}
+	})
+}
+
+func TestResponseErrorGivesAGapTheResponsesCall(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		script := newScript().
+			on("api.example.com/me", respond(200, "{}", nil)).
+			on("api.example.com/users", respond(200, `{"users": [`, nil)).
+			on("api.example.com/logs", respond(403, `{"errorCode":"E0000006"}`, nil))
+		c := testContext(script)
+		client := NewHTTPClient(c, HTTPOptions{VendorCode: func(*http.Response, []byte) string { return "E0000006" }})
+		call := func(op, path string) *http.Response {
+			resp, err := get(t, client, WithOperation(context.Background(), Operation{Name: op}), "https://api.example.com"+path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return resp
+		}
+		_ = call("me.get", "/me").Body.Close()
+		users := call("users.list", "/users")
+		var decoded struct{ Users []string }
+		decodeErr := ResponseError(users, json.NewDecoder(users.Body).Decode(&decoded))
+		_ = users.Body.Close()
+		logs := call("logs.list", "/logs")
+		_ = logs.Body.Close()
+		denied := ResponseError(logs, &apiErr{status: logs.StatusCode})
+
+		rec := c.run.records
+		rec.NotCollected(Location{Path: "a.json", Pointer: "/users"}, decodeErr)
+		rec.NotCollected(Location{Path: "a.json", Pointer: "/logs"}, denied, MissingPermission("logs.read"))
+		gaps := rec.Gaps()
+		if gaps[0].Operation != "users.list" || gaps[0].Call != 2 || gaps[0].Code != CodeInvalidResponse {
+			t.Errorf("decode gap = %+v, want the users call and invalid_response", gaps[0])
+		}
+		if gaps[1].Operation != "logs.list" || gaps[1].Call != 3 || gaps[1].VendorCode != "E0000006" || gaps[1].MissingPermission != "logs.read" || gaps[1].Code != CodePermissionDenied {
+			t.Errorf("denied gap = %+v, want the logs call with its vendor code and the permission to grant", gaps[1])
+		}
+
+		foreign := &http.Response{StatusCode: 500, Request: mustRequest("https://api.example.com/x")}
+		plain := errors.New("bad")
+		if ResponseError(foreign, plain) != plain || ResponseError(nil, plain) != plain || ResponseError(users, nil) != nil {
+			t.Error("ResponseError should leave an error about a response the SDK did not send alone, and nil as nil")
+		}
+	})
 }

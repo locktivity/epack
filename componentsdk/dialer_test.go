@@ -70,7 +70,7 @@ func TestDialerNamesAndCountsEachDial(t *testing.T) {
 	if probes := ops[1]; probes.Calls != 2 || probes.Attempts != 2 || probes.Errors[CodeVendorError] != 1 || probes.Errors[CodeTimeout] != 1 {
 		t.Errorf("tls.probe = %+v, want a refused dial and a timeout", probes)
 	}
-	rows, _ := c.run.calls.requests()
+	rows, _, _ := c.run.calls.requests()
 	if len(rows) != 3 || rows[0].Method != "DIAL" || rows[0].Host != "api.example.com" || rows[0].Route != "" || rows[0].Error != "" {
 		t.Fatalf("rows = %+v", rows)
 	}
@@ -150,7 +150,7 @@ func TestDialerCountsAFailureOnTheConnection(t *testing.T) {
 			t.Errorf("%s = %+v, want one call with errors %v", op.Name, op, want[op.Name])
 		}
 	}
-	rows, _ := c.run.calls.requests()
+	rows, _, _ := c.run.calls.requests()
 	for _, row := range rows {
 		if got := row.Error; (got == "") != (want[row.Operation] == nil) {
 			t.Errorf("row for %s has error %q, want the connection's failure", row.Operation, got)

@@ -77,6 +77,7 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		"internal/demo/client.go",
 		"docs/schema/v1.0.0.json",
 		"docs/schema/embed.go",
+		"docs/schema/trace-map.json",
 		"testdata/conformance.json",
 		"Makefile",
 	} {
@@ -100,7 +101,9 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		`tokenEnv = "DEMO_API_TOKEN"`,
 		"Timeout:     5 * time.Minute,",
 		"Schemas:     map[string][]byte{artifactPath: schema.Artifact},",
+		"TraceMap:    schema.TraceMap,",
 		"CredentialHosts: []string{demo.Host},",
+		"VendorCode:      demo.VendorCode,",
 	} {
 		if !strings.Contains(handler, want) {
 			t.Errorf("handler.go lacks %q", want)
@@ -110,18 +113,37 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 	if !strings.Contains(client, "package demo\n") || !strings.Contains(client, "componentsdk.WithOperation(ctx, componentsdk.Operation{Name: op})") {
 		t.Error("client.go should name each call it makes")
 	}
+	if !strings.Contains(client, "componentsdk.ResponseError(resp, &APIError{") || !strings.Contains(client, "func VendorCode(_ *http.Response, body []byte) string {") {
+		t.Error("client.go should give its errors their call and read the vendor's error code")
+	}
+	collector := readFile(t, dir, "internal/collector/collector.go")
+	if strings.Count(collector, "componentsdk.StartCollectorStep(ctx, ") != 2 || !strings.Contains(collector, "AuthMethod: componentsdk.AuthAPIToken") {
+		t.Error("collector.go should run its parts in steps and record how it signed in")
+	}
 	for _, op := range []string{`"demo.organization.get"`, `"demo.users.list"`, `"demo.users.factors.list"`} {
 		if !strings.Contains(client, op) {
 			t.Errorf("client.go lacks the operation %s", op)
 		}
 	}
 	gaps := readFile(t, dir, "internal/collector/gaps.go")
-	if !strings.Contains(gaps, "l.rec.NotCollected(") || !strings.Contains(gaps, "l.rec.Partial(") {
-		t.Error("gaps.go should record values left out as not collected or partial")
+	if !strings.Contains(gaps, "l.rec.NotCollected(") || !strings.Contains(gaps, "l.rec.Partial(") || strings.Count(gaps, "l.rec.Helper()") != 2 {
+		t.Error("gaps.go should record values left out as not collected or partial, as a helper")
 	}
 	kit := readFile(t, dir, "internal/collector/collectortest_test.go")
-	if !strings.Contains(kit, "collectortest.Run(t, collectortest.Suite{") || !strings.Contains(kit, "Operations: []string{") {
-		t.Error("collectortest_test.go should run a kit suite that lists every operation")
+	if !strings.Contains(kit, "collectortest.Run(t, collectortest.Suite{") || !strings.Contains(kit, "Operations: []string{") || !strings.Contains(kit, "GapOperations: true,") {
+		t.Error("collectortest_test.go should run a kit suite that lists every operation and checks each gap names its call")
+	}
+	var traceMap struct {
+		Artifacts map[string]map[string]struct {
+			Operations []string `json:"operations"`
+		} `json:"artifacts"`
+		Lines map[string]string `json:"lines"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t, dir, "docs/schema/trace-map.json")), &traceMap); err != nil {
+		t.Fatal(err)
+	}
+	if ops := traceMap.Artifacts["artifacts/demo.json"]["/users/mfa_enabled_pct"].Operations; strings.Join(ops, ",") != "demo.users.factors.list,demo.users.list" || len(traceMap.Lines) == 0 {
+		t.Errorf("the trace map should name the scaffold's calls behind each field, got %v with %d lines", ops, len(traceMap.Lines))
 	}
 	record := readFile(t, dir, "internal/collector/record_test.go")
 	if !strings.HasPrefix(record, "//go:build record\n") || !strings.Contains(record, "collectortest.Record(") {
@@ -135,7 +157,7 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 	if schema["$id"] != "epack-collector-demo/v1.0.0.json" {
 		t.Errorf("$id = %v", schema["$id"])
 	}
-	for _, keyword := range []string{"x-epack-level", "x-epack-denominator", "x-epack-rollup"} {
+	for _, keyword := range []string{"x-epack-level", "x-epack-denominator", "x-epack-numerator", "x-epack-rounding", "x-epack-rollup"} {
 		if !schemaHasKeyword(schema, keyword) {
 			t.Errorf("schema has no %s annotation", keyword)
 		}
@@ -151,6 +173,7 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		"$(foreach s,$(CONFORMANCE_SECRETS),--secret $(s))",
 		"CONFORMANCE_SECRETS := DEMO_API_TOKEN\n",
 		"\tgo test -tags record -run TestRecord -count=1 -v ./internal/collector/\n",
+		"\tgo run -tags components github.com/locktivity/epack/cmd/epack@$(EPACK_VERSION) sdk map\n",
 	} {
 		if !strings.Contains(makefile, want) {
 			t.Errorf("Makefile lacks %q", want)

@@ -43,7 +43,7 @@ func (k *kit) checkLevels() {
 
 func (k *kit) checkLevelAnnotations(level componentsdk.Level, res componentsdk.InProcessResult) {
 	for _, a := range res.Artifacts {
-		if a.File != "" || a.Schema == componentsdk.ResultSchema {
+		if a.File != "" || sdkArtifact(a) {
 			continue
 		}
 		sch := k.levelSchema(a.Path, a.Schema)
@@ -70,7 +70,7 @@ func levelLosses(lower, higher componentsdk.Level, low, high componentsdk.InProc
 		emitted[a.Path] = true
 	}
 	for _, a := range low.Artifacts {
-		if a.Schema != componentsdk.ResultSchema && !emitted[a.Path] {
+		if !sdkArtifact(a) && !emitted[a.Path] {
 			problems = append(problems, fmt.Sprintf("%s: emitted at %s but missing at %s", a.Path, lower, higher))
 		}
 	}

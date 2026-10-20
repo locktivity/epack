@@ -8,6 +8,7 @@ import (
 
 	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/tracemap"
 )
 
 // ScaffoldOptions configures the component scaffolding.
@@ -52,6 +53,9 @@ type scaffoldFile struct {
 	template string
 	goos     string
 	goarch   string
+	// traceMap marks a trace map, written in the order epack sdk map
+	// writes it once its names are filled in.
+	traceMap bool
 }
 
 // Scaffold creates a component project in the target directory.
@@ -59,10 +63,10 @@ type scaffoldFile struct {
 //
 // A collector gets the layout the epack collectors share: the entrypoint in
 // cmd/<binary>, its spec, handler, and gap records in internal/collector, a
-// vendor client in internal/<vendor package>, its artifact's schema in
-// docs/schema, a collectortest suite with a hand-written scenario and a
-// test that records one, and CI that calls epack's shared collector
-// workflow. Other kinds keep main.go at the project root.
+// vendor client in internal/<vendor package>, its artifact's schema and
+// trace map in docs/schema, a collectortest suite with a hand-written
+// scenario and a test that records one, and CI that calls epack's shared
+// collector workflow. Other kinds keep main.go at the project root.
 func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 	binaryName := fmt.Sprintf("epack-%s-%s", opts.Kind, opts.Name)
 	modulePath := opts.ModulePath
@@ -84,6 +88,13 @@ func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 		content, err := renderTemplate(file.template, fileData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate %s: %w", file.path, err)
+		}
+		if file.traceMap {
+			canonical, err := tracemap.Canonical([]byte(content))
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate %s: %w", file.path, err)
+			}
+			content = string(canonical)
 		}
 		if err := safefile.WriteFile(opts.TargetDir, filepath.FromSlash(file.path), []byte(content)); err != nil {
 			return nil, fmt.Errorf("failed to create %s: %w", file.path, err)
@@ -110,6 +121,7 @@ func scaffoldFiles(kind componenttypes.ComponentKind, binaryName, vendorPackage 
 			scaffoldFile{path: "internal/" + vendorPackage + "/client.go", template: "collector.client.go.tmpl"},
 			scaffoldFile{path: "docs/schema/v1.0.0.json", template: "collector.schema.json.tmpl"},
 			scaffoldFile{path: "docs/schema/embed.go", template: "collector.schema.embed.go.tmpl"},
+			scaffoldFile{path: "docs/schema/trace-map.json", template: "collector.trace-map.json.tmpl", traceMap: true},
 			scaffoldFile{path: "testdata/conformance.json", template: "collector.conformance.json.tmpl"},
 			scaffoldFile{path: "Makefile", template: "collector.makefile.tmpl"},
 		)

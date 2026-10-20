@@ -1,4 +1,4 @@
-.PHONY: build build-all test lint clean conformance record sdk-test sdk-run
+.PHONY: build build-all test lint clean conformance record trace-map sdk-test sdk-run
 
 BINARY_NAME := {{.BinaryName}}
 MAIN := {{.MainPackage}}
@@ -41,6 +41,11 @@ clean:
 conformance: build
 	go run -tags conformance github.com/locktivity/epack/cmd/epack-conformance@$(EPACK_VERSION) collector ./$(BINARY_NAME) --level standard \
 		$(if $(wildcard testdata/conformance.json),--config testdata/conformance.json) $(foreach s,$(CONFORMANCE_SECRETS),--secret $(s))
+
+# Rewrites docs/schema/trace-map.json from the collectortest suites and the
+# source, at the epack version go.mod pins, as CI checks it. Commit the result.
+trace-map:
+	go run -tags components github.com/locktivity/epack/cmd/epack@$(EPACK_VERSION) sdk map
 
 # Records the clean scenario from the organization RECORD_ORGANIZATION names,
 # with the token in {{.TokenEnv}}. See internal/collector/record_test.go.

@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -79,6 +80,18 @@ type HTTPOptions struct {
 	// then reads the first 64 KiB of every successful response before the
 	// caller does.
 	ClassifySuccess bool
+
+	// VendorCode reads the vendor's own error code from a failed response,
+	// such as Okta's errorCode E0000047 or an OAuth error such as
+	// invalid_client. The code goes on the response's row in the collector
+	// result, and on a gap recorded from an error built with ResponseError.
+	// The transport calls it for each response with status 400 or higher,
+	// and for a 2xx response that ClassifyResponse gave a code, passing up to
+	// the first 64 KiB of the body; the caller still reads the whole body.
+	// Return the code alone, never the vendor's message, which can name a
+	// resource. A value that is not a code of up to 64 letters, digits, and
+	// . _ : / - is dropped.
+	VendorCode func(resp *http.Response, body []byte) string
 
 	// Base is the transport requests go out through, such as one whose
 	// dialer refuses private addresses. It defaults to a clone of
@@ -190,6 +203,7 @@ func NewTransport(ctx CollectorContext, opts HTTPOptions) http.RoundTripper {
 		templateRoute:    opts.TemplateRoute,
 		classifyResponse: opts.ClassifyResponse,
 		classifySuccess:  opts.ClassifySuccess,
+		vendorCode:       opts.VendorCode,
 		credentialHost:   newHostSet(opts.CredentialHosts),
 		credentialHdrs:   append(append([]string{}, defaultCredentialHeaders...), opts.CredentialHeaders...),
 		requestIDHdrs:    append(append([]string{}, defaultRequestIDHeaders...), opts.RequestIDHeaders...),
@@ -234,6 +248,7 @@ type transport struct {
 	templateRoute    func(string) string
 	classifyResponse func(*http.Response, []byte) (Code, bool)
 	classifySuccess  bool
+	vendorCode       func(*http.Response, []byte) string
 	credentialHost   hostSet
 	credentialHdrs   []string
 	requestIDHdrs    []string
@@ -241,44 +256,59 @@ type transport struct {
 
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	op := t.operation(req)
+	call := t.run.beginCall(req.Context(), op)
+	failed := func(err error) error {
+		if err == nil {
+			return nil
+		}
+		return &callError{err: err, operation: op.Name, call: call.number}
+	}
 	checked, err := t.checkCredentials(req, op)
 	if err != nil {
-		t.run.calls.addRefused(op, req, t.templateRoute)
-		return nil, err
+		t.run.calls.addRefused(call, req, t.templateRoute)
+		return nil, failed(err)
 	}
 	req = checked
 	if op.Safe && req.GetBody == nil && req.Body != nil && req.Body != http.NoBody {
 		var err error
 		if req, err = replayable(req); err != nil {
-			return nil, err
+			return nil, failed(err)
 		}
 	}
 	attempts := 1
 	if (op.Safe || safeMethod(req.Method)) && (req.Body == nil || req.Body == http.NoBody || req.GetBody != nil) {
 		attempts = t.maxAttempts
 	}
-	call := callIDs.Add(1)
+	processCall := callIDs.Add(1)
+	var waited time.Duration
 	for attempt := 1; ; attempt++ {
 		areq, err := t.attemptRequest(req, op, attempt)
 		if err != nil {
-			return nil, err
+			return nil, failed(err)
 		}
 		started := t.run.now()
-		resp, err := t.attempt(areq, attemptMark{call: call, attempt: attempt})
+		resp, err := t.attempt(areq, attemptMark{call: processCall, attempt: attempt})
 		took := t.run.now().Sub(started)
-		code := t.classify(areq, resp)
-		t.run.calls.addRouted(op, req, attempt, resp, err, code, took, t.requestIDHdrs, t.templateRoute)
+		code, vendorCode := t.inspect(resp)
+		if resp != nil {
+			markResponse(resp, areq, code, responseCall{operation: op.Name, call: call.number, vendorCode: vendorCode})
+		}
+		t.run.calls.add(attemptRecord{
+			call: call, attempt: attempt, req: req, resp: resp, err: err,
+			code: code, vendorCode: vendorCode, startMS: t.run.sinceStart(started), waited: waited, took: took,
+		}, t.requestIDHdrs, t.templateRoute)
 		if attempt >= attempts || !retryable(req.Context(), resp, err, code) {
-			return resp, err
+			return resp, failed(err)
 		}
 		delay := t.delay(resp, code, attempt)
 		if !fitsDeadline(req.Context(), delay) {
-			return resp, err
+			return resp, failed(err)
 		}
 		drain(resp)
 		if err := t.run.wait(req.Context(), delay); err != nil {
-			return nil, err
+			return nil, failed(err)
 		}
+		waited = delay
 	}
 }
 
@@ -556,19 +586,72 @@ func (t *transport) attempt(req *http.Request, mark attemptMark) (*http.Response
 	return resp, nil
 }
 
-type responseCodeKey struct{}
+type (
+	responseCodeKey struct{}
+	responseCallKey struct{}
+)
 
-// classify asks the ClassifyResponse hook about a failed response, or with
-// ClassifySuccess a successful one, and returns the code it answers with,
-// or "". The hook reads the first classifyLimit bytes of the body, and the
-// caller reads them again before the rest.
-func (t *transport) classify(sent *http.Request, resp *http.Response) Code {
-	if t.classifyResponse == nil || resp == nil {
+// responseCall is the call a response answered, as markResponse records it
+// on the response's request.
+type responseCall struct {
+	operation  string
+	call       int
+	vendorCode string
+}
+
+// inspect reads the start of a response's body for the ClassifyResponse and
+// VendorCode hooks, when either asks about the response. It returns the code
+// ClassifyResponse gave the response and the vendor code VendorCode read,
+// each "" when there is none. The hooks read the first classifyLimit bytes
+// of the body, and the caller reads them again before the rest.
+func (t *transport) inspect(resp *http.Response) (Code, string) {
+	if resp == nil || (!t.classifies(resp) && !t.readsVendorCode(resp, "")) {
+		return "", ""
+	}
+	head := peek(resp)
+	code := t.classify(resp, head)
+	return code, t.readVendorCode(resp, head, code)
+}
+
+// classifies reports whether ClassifyResponse is asked about resp: a failed
+// response, or with ClassifySuccess a successful one.
+func (t *transport) classifies(resp *http.Response) bool {
+	success := resp.StatusCode >= 200 && resp.StatusCode <= 299
+	return t.classifyResponse != nil && (resp.StatusCode >= 400 || (t.classifySuccess && success))
+}
+
+// classify returns the code ClassifyResponse gives resp, whose body starts
+// with head, or "".
+func (t *transport) classify(resp *http.Response, head []byte) Code {
+	if !t.classifies(resp) {
 		return ""
 	}
-	success := resp.StatusCode >= 200 && resp.StatusCode <= 299
-	if asked := resp.StatusCode >= 400 || (t.classifySuccess && success); !asked {
+	if c, ok := t.classifyResponse(resp, head); ok && c.Valid() {
+		return c
+	}
+	return ""
+}
+
+// readsVendorCode reports whether VendorCode reads resp: a failed response,
+// or one ClassifyResponse gave a code.
+func (t *transport) readsVendorCode(resp *http.Response, code Code) bool {
+	return t.vendorCode != nil && (resp.StatusCode >= 400 || code != "")
+}
+
+// readVendorCode returns the vendor code VendorCode reads from resp, whose
+// body starts with head, or "".
+func (t *transport) readVendorCode(resp *http.Response, head []byte, code Code) string {
+	if !t.readsVendorCode(resp, code) {
 		return ""
+	}
+	return cleanVendorCode(t.vendorCode(resp, head), t.run.secrets.list())
+}
+
+// peek returns up to the first classifyLimit bytes of resp's body, leaving
+// the body to read them again before the rest.
+func peek(resp *http.Response) []byte {
+	if resp.Body == nil {
+		return nil
 	}
 	head, err := io.ReadAll(io.LimitReader(resp.Body, classifyLimit))
 	var rest io.Reader = resp.Body
@@ -576,20 +659,99 @@ func (t *transport) classify(sent *http.Request, resp *http.Response) Code {
 		rest = failedRead{err}
 	}
 	resp.Body = &peekedBody{Reader: io.MultiReader(bytes.NewReader(head), rest), body: resp.Body}
-	code, ok := t.classifyResponse(resp, head)
-	if !ok || !code.Valid() {
-		return ""
-	}
-	// The code rides on the response's request, not its body: clients and
-	// vendor SDKs wrap or replace a response's body but keep its request.
+	return head
+}
+
+// markResponse records on resp the call it answered and the code
+// ClassifyResponse gave it, which ClassifyResponse and ResponseError read
+// back. They ride on the response's request, not its body: clients and vendor
+// SDKs wrap or replace a response's body but keep its request.
+func markResponse(resp *http.Response, sent *http.Request, code Code, info responseCall) {
 	if resp.Request != nil {
 		sent = resp.Request
 	}
-	resp.Request = sent.WithContext(context.WithValue(sent.Context(), responseCodeKey{}, code))
+	ctx := context.WithValue(sent.Context(), responseCallKey{}, info)
+	if code != "" {
+		ctx = context.WithValue(ctx, responseCodeKey{}, code)
+	}
+	resp.Request = sent.WithContext(ctx)
+}
+
+// vendorCodePattern matches a vendor's error code, such as E0000047,
+// invalid_client, or Authorization_RequestDenied. Anything else, such as a
+// sentence, is not recorded, so a row never holds a vendor's message.
+var vendorCodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$`)
+
+func cleanVendorCode(code string, secrets []string) string {
+	code = strings.TrimSpace(code)
+	if !vendorCodePattern.MatchString(code) || carriesSecret(code, secrets) {
+		return ""
+	}
 	return code
 }
 
-// peekedBody reads the bytes classify read, then the rest of the body.
+// callError is an error from one of the run's calls: one the SDK's transport
+// returned, or one a collector built from the call's response with
+// ResponseError. A gap recorded from it names the call.
+type callError struct {
+	err        error
+	operation  string
+	call       int
+	vendorCode string
+}
+
+func (e *callError) Error() string { return e.err.Error() }
+func (e *callError) Unwrap() error { return e.err }
+
+// Timeout and Temporary answer as the error inside does, as net/url's Error
+// does, since url.Error asks the error it wraps directly.
+func (e *callError) Timeout() bool {
+	t, ok := e.err.(interface{ Timeout() bool })
+	return ok && t.Timeout()
+}
+
+func (e *callError) Temporary() bool {
+	t, ok := e.err.(interface{ Temporary() bool })
+	return ok && t.Temporary()
+}
+
+// VendorCode is the code HTTPOptions.VendorCode read from the call's
+// response, or else the one the error inside carries.
+func (e *callError) VendorCode() string {
+	if e.vendorCode != "" {
+		return e.vendorCode
+	}
+	return VendorCodeOf(e.err)
+}
+
+// callOf returns the call err is from, if it carries one.
+func callOf(err error) (*callError, bool) {
+	var ce *callError
+	if errors.As(err, &ce) && ce.call > 0 {
+		return ce, true
+	}
+	return nil, false
+}
+
+// ResponseError returns err as an error about resp, a response the SDK's
+// client received, so a gap recorded from it names the call resp answered
+// and carries the vendor code HTTPOptions.VendorCode read from it. Errors
+// the client itself returns name their call already; use ResponseError for
+// one the collector builds from a response, such as an unexpected status or
+// a body it cannot decode. It returns err unchanged when resp did not come
+// through the SDK's client, and nil when err is nil.
+func ResponseError(resp *http.Response, err error) error {
+	if err == nil || resp == nil || resp.Request == nil {
+		return err
+	}
+	info, ok := resp.Request.Context().Value(responseCallKey{}).(responseCall)
+	if !ok {
+		return err
+	}
+	return &callError{err: err, operation: info.operation, call: info.call, vendorCode: info.vendorCode}
+}
+
+// peekedBody reads the bytes peek read, then the rest of the body.
 type peekedBody struct {
 	io.Reader
 	body io.Closer
@@ -597,8 +759,8 @@ type peekedBody struct {
 
 func (b *peekedBody) Close() error { return b.body.Close() }
 
-// failedRead returns the error that cut short classify's read, where the
-// caller would have met it.
+// failedRead returns the error that cut short peek's read, where the caller
+// would have met it.
 type failedRead struct{ err error }
 
 func (f failedRead) Read([]byte) (int, error) { return 0, f.err }

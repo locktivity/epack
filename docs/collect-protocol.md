@@ -465,31 +465,111 @@ SDK collectors add one artifact when they emit, at `artifacts/{collector}.collec
   "gaps": [
     {
       "path": "artifacts/example.json",
-      "pointer": "/mfa_coverage_pct",
+      "pointer": "/system_log",
       "status": "not_collected",
       "code": "permission_denied",
       "owner": "customer",
-      "vendor_code": "Authorization_RequestDenied"
+      "vendor_code": "E0000006",
+      "operation": "logs.list",
+      "call": 3,
+      "source": "internal/collector/system_log.go:155",
+      "missing_permission": "logs.read",
+      "warning": "system log: access denied; grant logs.read"
     }
+  ],
+  "steps": [
+    {"name": "people", "title": "People and sign-in methods", "start_ms": 300, "end_ms": 2100,
+     "requests": 3, "calls": 2, "retries": 1, "failed": 1, "operations": [{"name": "users.list", "calls": 2}]},
+    {"name": "system_log", "title": "Activity log", "start_ms": 2100, "end_ms": 2200,
+     "requests": 1, "calls": 1, "retries": 0, "failed": 1, "operations": [{"name": "logs.list", "calls": 1}]}
   ],
   "calls": {
     "operations": [
-      {"name": "users.list", "calls": 3, "attempts": 4, "retries": 1, "statuses": {"200": 3, "429": 1}}
-    ]
+      {"name": "logs.list", "calls": 1, "attempts": 1, "retries": 0, "statuses": {"403": 1}},
+      {"name": "users.list", "calls": 2, "attempts": 3, "retries": 1, "statuses": {"200": 2, "429": 1}}
+    ],
+    "requests": [
+      {"call": 1, "operation": "users.list", "step": "people", "method": "GET", "host": "api.example.com", "route": "/users",
+       "attempt": 1, "start_ms": 300, "status": 429, "vendor_code": "E0000047", "duration_ms": 61},
+      {"call": 1, "operation": "users.list", "step": "people", "method": "GET", "host": "api.example.com", "route": "/users",
+       "attempt": 2, "start_ms": 1361, "waited_ms": 1000, "status": 200, "duration_ms": 58, "request_id": "Zx9mT5"}
+    ],
+    "problem_requests_dropped": 0
   },
-  "signed_in_as": {"provider": "example", "kind": "service_principal", "tenant_id": "contoso"},
+  "signed_in_as": {"provider": "example", "kind": "service_app", "tenant_id": "contoso", "auth_method": "private_key_jwt",
+                   "requested_scopes": ["logs.read", "users.read"], "scopes": ["users.read"], "read_only": true},
   "run": {"run_id": "6f1c...", "started_at": "2026-10-17T14:30:00Z", "finished_at": "2026-10-17T14:30:41Z", "proxy": false, "custom_ca": false}
 }
 ```
 
 - `outcome.status` is `collected`, or `partial` when there is a gap, with the first gap's code and owner.
-- Each gap names a value by a JSON pointer into the artifact at `path`. Its `status` is `not_collected` for a value that could not be read, or `partial` for a rollup over items read in part, or a list or object that holds only the items that were read, with `unmeasured` counting the items left out. At the `audit` and `internal` levels a gap also has a redacted `detail`.
-- `calls.operations` counts each named operation's calls, attempts, retries, statuses, and error codes, with any `Deprecation` or `Sunset` header the vendor sent. A response that `HTTPOptions.ClassifyResponse` gave a code counts under its status and under that code. At the `audit` and `internal` levels, `calls.requests` adds a row per request: its route with IDs replaced by `{id}`, its query keys without values, its status, and the vendor's request ID. Rows stop at 1,000, and `requests_dropped` counts the rest. DNS lookups and dials count the same way (see DNS Lookups and Connections).
-- `signed_in_as` is the principal the collector signed in as. Its `id` is included at the `audit` and `internal` levels.
+- Each gap names a value by a JSON pointer into the artifact at `path`. Its `status` is `not_collected` for a value that could not be read, or `partial` for a rollup over items read in part, or a list or object that holds only the items that were read, with `unmeasured` counting the items left out. A gap recorded from an error the SDK's client returned, or from one built with `componentsdk.ResponseError`, names the `operation` whose failed call left the value out and the call's number in `call`, matching the call on its rows; a partial gap names the first failed call it counts. `source` is the line of the collector's own code that recorded the gap, relative to its module root (see `Recorder.Helper`), and `missing_permission`, on a `permission_denied` gap, is the permission to grant in the vendor's own terms. At the `audit` and `internal` levels a gap also has a redacted `detail`, the error's text, and a redacted `warning`, the collector's message to the operator. A gap `Mirror` copies keeps all of these.
+- `steps` lists the run's steps (see Calling APIs and Recording Gaps), in the order they started, at every level: each one's `name` and `title`, its `start_ms` and `end_ms` after the run's `started_at`, the `requests` sent in it, the `calls` they belong to, the `retries` among them, and the attempts that `failed`, counting rows left out of `calls.requests`, and the calls of each operation, in the order first called.
+- `calls.operations` counts each named operation's calls, attempts, retries, statuses, and error codes, with any `Deprecation` or `Sunset` header the vendor sent. A response that `HTTPOptions.ClassifyResponse` gave a code counts under its status and under that code.
+- At the `audit` and `internal` levels, `calls.requests` adds a row per request: the number of its `call`, from 1 in the order calls start and the same for each attempt of one call; its operation and `step`; its route with IDs replaced by `{id}` and its query keys without values; its `attempt`; `start_ms`, when it was sent after the run's `started_at`; on a retry, `waited_ms`, how long the SDK waited for a `Retry-After`, a rate limit reset, or its own backoff; its status and error code; the vendor's own error code, as `HTTPOptions.VendorCode` reads it, and never the vendor's message, which can name a resource; its duration; and the vendor's request ID. The first 1,000 rows are kept, and after them up to 1,000 more whose attempt failed, with an error code or a status of 400 or more, or was a retry. `requests_dropped` counts every row left out and `problem_requests_dropped` the failed and retried rows among them, so a 0 there means every problem in the run has a row. DNS lookups and dials count the same way, with a call, start, and step of their own (see DNS Lookups and Connections). Times come from the run's clock and waits from its jitter, which the test kit fixes and seeds, so two kit runs of one scenario match byte for byte.
+- `signed_in_as` is the principal the collector signed in as. `auth_method` says how it proved its identity, `requested_scopes` lists the scopes it asked for, of which one missing from `scopes` was not granted, and `read_only` is true when the collector can show that its credential could only read. Its `id` is included at the `audit` and `internal` levels.
 - `run.proxy` and `run.custom_ca` say whether a proxy or a custom CA bundle was configured.
 - `checks` lists what the output checks found in the collector's artifacts (see Output Checks). It is left out when they found nothing.
 
-`Emit` fails when an artifact still has a value at a gap's pointer, so no field carries both a value and a gap. The one exception is a list or object under a `partial` gap. The schema is published as `componentsdk.ResultSchemaJSON()`.
+Collectors name their sign-in methods with these `auth_method` values, which `componentsdk` has as constants. A sign-in that fits none names its own in the same form.
+
+| `auth_method` | Constant | Sign-in |
+|---------------|----------|---------|
+| `api_token` | `AuthAPIToken` | A static token or key the vendor issued |
+| `client_secret` | `AuthClientSecret` | OAuth 2.0 client credentials with a shared secret |
+| `private_key_jwt` | `AuthPrivateKeyJWT` | OAuth 2.0 client credentials with a key assertion the collector signs, as RFC 7523 describes |
+| `workload_identity` | `AuthWorkloadIdentity` | A token from the runner's own identity provider, such as a CI job's OIDC token, exchanged for the vendor's |
+| `access_key` | `AuthAccessKey` | A cloud provider's access key pair, such as AWS's |
+
+`Emit` fails when an artifact still has a value at a gap's pointer, so no field carries both a value and a gap. The one exception is a list or object under a `partial` gap. The schema is published as `componentsdk.ResultSchemaJSON()`. Every field this section names after the ones the first SDK result held is optional, so a result from an older SDK still matches it.
+
+### Build File
+
+SDK collectors also add a build file when they emit, at `artifacts/{collector}.collector-build.json` with schema `evidencepack/collector-build@v1`. It describes the build rather than the run: the collector's name as its spec declares it, its version and commit, the schemas in `CollectorSpec.Schemas`, keyed by artifact path or schema ID as the spec keys them, and the trace map in `CollectorSpec.TraceMap`. Every run of one build writes the same bytes at every level, so a reader can store it once per build. A collector without a trace map writes its schemas alone. An artifact of a normalized type with no schema there was checked against the SDK's own, which `componentsdk.NormalizedSchemaJSON` returns. `componentsdk.BuildSchemaJSON()` returns the build file's schema, which holds the trace map's under `$defs`.
+
+```json
+{
+  "collector": {"name": "example", "version": "v0.4.0", "commit": "5d0c1e7f2a9b4c3d8e6f1a0b2c4d6e8f0a1b3c5d"},
+  "schemas": {"artifacts/example.json": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object"}},
+  "trace_map": {
+    "artifacts": {
+      "artifacts/example.json": {
+        "/users/mfa_coverage": {
+          "operations": ["example.users.factors.list", "example.users.list"],
+          "code": [
+            {"role": "assign", "line": "internal/collector/users.go:132"},
+            {"role": "helper", "line": "internal/collector/collector.go:238", "end": 244},
+            {"role": "input", "line": "internal/collector/users.go:288"},
+            {"role": "condition", "line": "internal/collector/users.go:287"}
+          ],
+          "gaps": ["internal/collector/users.go:127"]
+        }
+      }
+    },
+    "lines": {"internal/collector/users.go:132": "\t\tp.Posture.MFACoverage = percent(m.mfaEnrolledCount, total)"}
+  }
+}
+```
+
+#### Trace map
+
+The trace map links each field of the collector's artifacts, by artifact path and then by JSON pointer with each array index written as `*`, to:
+
+- `operations`: the operations whose failure leaves the field out or changes it, from the test kit's fault matrix over each suite's clean scenario. Each one was tested, since those runs prove that each failure leaves a gap. A `Required` operation's faults fail the whole run, so the matrix cannot say which fields it feeds.
+- `code`: lines that static analysis of the collector's own packages finds. `assign` is a line that assigns the field. `input` is a line that changes a value the assignment is computed from, followed through variables and fields. `condition` is the test of an if, loop, switch, or case one of those lines sits under, or a check before it that returns or skips the rest of a loop. `helper` is a function of the module that the assignment calls, such as a rounding function, from its first line to its `end`. Analysis can miss a line, so these are a guide for reading the source, not a proof.
+- `gaps`: the lines that record a gap covering the field, from the gap sources the kit's runs record.
+- `copies`: for a normalized field, the detailed field it copies, from the collector's `Mirror` calls.
+
+`lines` holds the text of each line the fields name, keyed by the file, relative to the module root, and the line number. A reader can show the code without fetching the source, and the pack's signature covers what it shows. A gap's `source` is a key in it. A field's steps come from its operations and the steps in the collector result, so the map does not repeat them.
+
+The SLSA builder builds a release straight from its tag, with no step that generates files, so the map is committed beside the schema and embedded in the binary:
+
+```go
+//go:embed trace-map.json
+var TraceMap []byte
+```
+
+`CollectorSpec.TraceMap` takes it. `epack sdk map` writes it to `docs/schema/trace-map.json`, or the path `--out` names relative to the module root. It runs the module's tests with `COLLECTORTEST_MAP` set, so each collectortest suite writes what its fault matrix found, merges the suites, such as one per sign-in method, and adds what static analysis finds. It fails when the tests fail, and when an operation a suite lists in `Operations` feeds no field in any suite's runs, unless a suite lists it in `Insensitive` or `Required`. `epack sdk map --check` writes nothing, and fails when the committed map differs from the one the code gives, naming the command to run; collector CI runs it (see Collector CI in [Component Rules](component-rules.md)). Between runs of the command, each suite checks the committed map against its own runs and fails when they find a field or an operation the map lacks.
 
 ## Lockfile Schema
 
@@ -808,10 +888,35 @@ if err != nil {
 - `rec.NotCollected(at, err)` records a value left out, with the code `componentsdk.Classify` gives `err`.
 - `rec.NotCollectedCode(at, code, detail)` records one with a code the collector chose, such as `not_licensed`.
 - `rec.Partial(at, unmeasured, err)` records a rollup left out because `unmeasured` items could not be read. At a list or object it records that the value holds only the items that were read, and the value may stay in the artifact.
-- `rec.Mirror(from, to)` records at `to` the gap that covers `from`, at `from` itself or the nearest value that contains it, such as for a normalized value copied from a detailed one. It records nothing when no gap covers `from`.
-- `rec.SignedInAs(principal)` records the identity the collector signed in as.
+- `rec.Mirror(from, to)` records at `to` the gap that covers `from`, at `from` itself or the nearest value that contains it, such as for a normalized value copied from a detailed one. It records nothing when no gap covers `from`. Call it for every value copied, gap or not: the kit reads the calls for the trace map's copies.
+- `rec.SignedInAs(principal)` records the identity the collector signed in as, with its `AuthMethod`, `RequestedScopes`, and `ReadOnly`.
+
+Each of the three record calls takes options. `componentsdk.MissingPermission(name)` names the permission a `permission_denied` gap's credential lacks, in the vendor's own terms, such as `okta.logs.read`; on a gap with another code it is dropped. `componentsdk.Warning(text)` gives a gap the collector's message to the operator about it, such as the role to grant, which is redacted and kept at the `audit` and `internal` levels only.
+
+```go
+rec.NotCollected(at, err, componentsdk.MissingPermission("logs.read"), componentsdk.Warning("system log: grant logs.read"))
+```
+
+A gap names the call it came from when its error carries one. Errors the SDK's client returns do, and `componentsdk.ResponseError(resp, err)` gives one an error the collector builds from a response, such as a status it does not expect or a body it cannot decode, along with the vendor code `HTTPOptions.VendorCode` read from the response. A gap's `source` is the first line on the stack in the collector's own module. A collector that records its gaps through a helper of its own calls `rec.Helper()` in it, as a test helper calls `testing.T.Helper`, so the source names the line that called the helper:
+
+```go
+func (l gapLog) notCollected(err error, pointer string, opts ...componentsdk.GapOption) {
+    l.rec.Helper()
+    l.rec.NotCollected(componentsdk.Location{Path: artifactPath, Pointer: pointer}, err, opts...)
+}
+```
+
+A collector opens a named step around each part of its run with `componentsdk.StartCollectorStep(ctx, name, title)`, which prints the title as a status line and returns a copy of the collector's context whose `Context()` carries the step, so the calls made with it belong to the step. A helper that records gaps or reports progress and makes the step's calls takes that one context. `componentsdk.StartStep(ctx.Context(), name, title)` does the same for a plain `context.Context`. Step names are part of the collector's contract, like operation names. A step still open when the collector emits ends then. Steps can overlap when a collector works on several things at once, and they do not nest: a call belongs to the step its context carries, or to none.
+
+```go
+people, step := componentsdk.StartCollectorStep(ctx, "people", "People and sign-in methods")
+users, err := client.ListUsers(people.Context())
+step.End()
+```
 
 An API error type can implement `HTTPStatus() int`, `HTTPHeader() http.Header`, and `VendorCode() string` so `Classify` reads its status, throttle headers, and vendor code. `componentsdk.CodeError(code, err)` gives an error a code outright. Token endpoints send most OAuth 2.0 errors with a 400, which alone reads as `invalid_response`, so `componentsdk.OAuthErrorCode(name)` returns the code for the error's name: `invalid_client`, `invalid_grant`, `unauthorized_client`, `invalid_dpop_proof`, and `expired_token` are `auth_failed`; `invalid_scope` and `access_denied` are `permission_denied`; `invalid_request` and `unsupported_grant_type` are `config_invalid`; `temporarily_unavailable` and `server_error` are `vendor_error`; `slow_down` is `rate_limited`.
+
+`HTTPOptions.VendorCode` reads the vendor's own error code from a failed response for its row in the collector result, such as Okta's `errorCode` or an OAuth `error` like `invalid_client`. The client calls it with up to the first 64 KiB of the body of each response with status 400 or higher, and of a 2xx response that `ClassifyResponse` gave a code; the caller still reads the whole body. It returns the code alone. A value that is not a code of up to 64 letters, digits, and `. _ : / -`, or that holds a secret's value, is dropped, so a row never holds the vendor's message.
 
 Some vendors fail under a status that misleads: AWS throttles some calls with a 400 whose body names the error code. `HTTPOptions.ClassifyResponse` reads such a response. The client calls it for each response with status 400 or higher, with up to the first 64 KiB of the body, and the caller still reads the whole body. When it answers with a code, that code decides whether a safe request is retried (`rate_limited`, `vendor_error`, and `timeout` are) and is the error code the collector result counts for the call. `componentsdk.ClassifyResponse(resp)` returns it as well, so an error built with `componentsdk.CodeError(componentsdk.ClassifyResponse(resp), err)` carries it to the gap. JSON-RPC and GraphQL APIs report errors inside a 200: set `HTTPOptions.ClassifySuccess` as well, and the client passes 2xx responses to the hook too, so a throttle in a 200 is retried like a 429.
 
@@ -929,6 +1034,8 @@ A collector that polls, such as one waiting for a report the vendor builds in th
 
 `collectortest.NewReplay(scenario)` returns the replay the kit answers requests with, for a focused test of one run: pass it as `componentsdk.InProcessOptions.Transport`, and `Unmatched()` lists the requests no canned response matched.
 
+`GapOperations: true` turns on a check that every gap a fault leaves names the faulted operation, which a gap recorded from an error the SDK's client returned, or from one built with `componentsdk.ResponseError`, does. Faults a `Semantics` entry declares are exempt. With `CollectorSpec.TraceMap` set, the kit also checks the committed map against the suite's runs: a field the runs emitted, or an operation the fault matrix found changing a field, that the map lacks is a `tracemap` violation, which says to run `epack sdk map`. With `COLLECTORTEST_MAP` naming a directory, as `epack sdk map` sets it, the kit writes the suite's findings there instead of checking the map. The build file is checked against `componentsdk.BuildSchemaJSON`, as the collector result is against its schema.
+
 Lookups get their own faults: `servfail` and `refused`, each with code `vendor_error`, and `timeout`. So do dials: `refused`, `reset`, a connection that fails on its first read, both `vendor_error`, and `timeout`. A timeout returns at once, as an error whose `Timeout()` is true. They hit calls at the same positions as the HTTP faults, and a name in `SkipFaults` skips the fault of that name for every kind of call. The credentials and sensitivity checks apply to HTTP operations only, so a collector whose calls are all lookups or dials skips them.
 
 #### Recordings
@@ -1000,7 +1107,7 @@ Then the scrub check reads the result. `Record` writes nothing and fails, naming
 
 #### Scenario output
 
-When `COLLECTORTEST_OUT` names a directory, each scenario run writes what it emitted under `$COLLECTORTEST_OUT/<suite>/<scenario>/`: each artifact at its path in a pack, file artifacts copied from staging, and the collector result. Fault runs and the other checks' runs write nothing. `<suite>` comes from `Suite.Name`, which defaults to `Spec.Name`, so two suites in one package give each its own name. `<scenario>` is the scenario's name in lower case, each run of characters other than letters and digits turned into a hyphen, with a number added when two scenarios share one. Each run of the suite first clears its directory, then writes `<suite>/scenarios.json`, which lists each scenario's directory, exit code, failure, and artifacts, each with its schema ID, empty for none:
+When `COLLECTORTEST_OUT` names a directory, each scenario run writes what it emitted under `$COLLECTORTEST_OUT/<suite>/<scenario>/`: each artifact at its path in a pack, file artifacts copied from staging, the build file, and the collector result. `epack-collector-diff` leaves the build file out of its comparison, since its trace map moves with every edit to the code. Fault runs and the other checks' runs write nothing. `<suite>` comes from `Suite.Name`, which defaults to `Spec.Name`, so two suites in one package give each its own name. `<scenario>` is the scenario's name in lower case, each run of characters other than letters and digits turned into a hyphen, with a number added when two scenarios share one. Each run of the suite first clears its directory, then writes `<suite>/scenarios.json`, which lists each scenario's directory, exit code, failure, and artifacts, each with its schema ID, empty for none:
 
 ```json
 {
@@ -1035,6 +1142,8 @@ A collector's JSON Schemas can say what a value means with `x-epack-*` keywords 
 |---------|---------|
 | `x-epack-level` | `trust`, `audit`, or `internal`: the lowest level whose output includes the field. Fields under it inherit it unless they name a higher level. |
 | `x-epack-denominator` | The count the value is a percentage or ratio of. |
+| `x-epack-numerator` | The count a percentage is taken of, as a reference in the same form as `x-epack-denominator`. On a boolean it is the count of "all of them": the boolean is true exactly when the numerator equals the denominator. |
+| `x-epack-rounding` | How a whole-number percentage was rounded: `floor`, `ceil`, or `nearest`, which rounds halves up. |
 | `x-epack-null` | When null is a real answer, such as `"No session policy sets a lifetime"`. |
 | `x-epack-rollup` | `{"rows": ref, "where": "/pointer/in/row", "equals": value, "as": "count" or "pct", "truncated": ref}`. A count is the number of rows, or with `where`, of rows whose value there equals `equals` (`true` by default). A percentage is those rows out of all rows. `truncated`, when given, names a boolean that is true when the rows were cut short, such as at a cap on how many the collector lists. |
 | `x-epack-as-of` | A timestamp field. When it is set, the rollup came from a report taken at another time, so it is not recomputed. |
@@ -1049,9 +1158,10 @@ When the collector emits, the SDK checks each data artifact that has a schema an
 - `schema_unusable`: a schema in `Schemas` does not compile, so its artifacts went unchecked. The SDK also prints a warning.
 - `population`: a value is set although its denominator is 0. It must be null or absent.
 - `nulls`: a number or boolean is null with no gap covering it, no `x-epack-null`, and no denominator of 0.
-- `rollups`: a count differs from its rows, or a percentage is off by more than 1. Rows cut short are not recomputed: those the rollup's `truncated` boolean marks, and those as many as their schema's `maxItems`.
+- `rollups`: a count differs from its rows, or a percentage is off by more than 1. Rows cut short are not recomputed: those the rollup's `truncated` boolean marks, and those as many as their schema's `maxItems`. Nor is a rollup whose rows or `where` field the schema places above the level the collector ran at, where the rows exist without the field, such as per-person MFA flags kept for the `internal` level.
+- `ratios`: where a value, its `x-epack-numerator`, and its `x-epack-denominator` are all present and the denominator is not 0, a percentage that is not 100 × numerator ÷ denominator rounded as its `x-epack-rounding` says, or within 1 of it when the schema states no rounding; a numerator larger than its denominator; a boolean that disagrees with its numerator; and a rounding that is not one of the three. A numerator works at every level, including for counts the collector takes from calls rather than rows, which a rollup cannot recompute.
 
-`collectortest` reports each finding as a violation and runs the same checks itself on artifacts whose schema only `Suite.Schemas` gives. Sensitivity runs skip `population`, `nulls`, and `rollups`, since their changed responses make rows and rollups disagree. The `levels` check runs the clean scenario at each level: what one level emits, every higher level must emit too, and a field marked with a level must be absent, not even null, below it. `SkipChecks` turns off `levels`, `population`, `nulls`, or `rollups` by name.
+`collectortest` reports each finding as a violation and runs the same checks itself on artifacts whose schema only `Suite.Schemas` gives. Sensitivity runs skip `population`, `nulls`, `rollups`, and `ratios`, since their changed responses make rows and rollups disagree. The `levels` check runs the clean scenario at each level: what one level emits, every higher level must emit too, and a field marked with a level must be absent, not even null, below it. `SkipChecks` turns off `levels`, `population`, `nulls`, `rollups`, `ratios`, or `tracemap` by name.
 
 ### Manual Implementation
 

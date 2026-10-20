@@ -84,14 +84,15 @@ func (r *Resolver) LookupNS(ctx context.Context, name string) ([]*net.NS, error)
 // ledger counts.
 func lookup[T any](ctx context.Context, r *Resolver, defaultOp, qtype, name string, fn func(context.Context, string) (T, error)) (T, error) {
 	op := operationOr(ctx, defaultOp)
-	started := r.run.now()
+	call := r.run.beginCall(ctx, op)
 	answer, err := fn(WithOperation(ctx, op), name)
 	rcode := rcodeOf(err)
 	var code Code
 	if rcode != rcodeNXDomain {
 		code = Classify(err)
 	}
-	r.run.calls.addCall(op, "DNS "+qtype, strings.TrimSuffix(strings.ToLower(name), "."), rcode, code, r.run.now().Sub(started))
+	host := strings.TrimSuffix(strings.ToLower(name), ".")
+	r.run.calls.addCall(call, "DNS "+qtype, host, rcode, code, r.run.now().Sub(call.started))
 	return answer, err
 }
 

@@ -36,9 +36,12 @@ type CollectorResult struct {
 	// ChecksDropped counts the rest.
 	Checks        []CheckFinding `json:"checks,omitempty"`
 	ChecksDropped int            `json:"checks_dropped,omitempty"`
-	Calls         ResultCalls    `json:"calls"`
-	SignedInAs    *Principal     `json:"signed_in_as,omitempty"`
-	Run           ResultRun      `json:"run"`
+	// Steps lists the run's steps in the order they started, at every
+	// level. See StartStep.
+	Steps      []ResultStep `json:"steps,omitempty"`
+	Calls      ResultCalls  `json:"calls"`
+	SignedInAs *Principal   `json:"signed_in_as,omitempty"`
+	Run        ResultRun    `json:"run"`
 }
 
 // ResultCollector identifies the collector build.
@@ -57,11 +60,16 @@ type ResultOutcome struct {
 }
 
 // ResultCalls holds the call ledger. Per-request rows appear at the audit and
-// internal levels only.
+// internal levels only. They keep the first 1,000 requests and, after those,
+// up to 1,000 more whose attempt failed or was a retry. RequestsDropped
+// counts every row left out, and ProblemRequestsDropped the failed and
+// retried rows among them, so 0 there means every problem has a row. It is
+// set wherever the rows are.
 type ResultCalls struct {
-	Operations      []OperationCalls `json:"operations"`
-	Requests        []CallRow        `json:"requests,omitempty"`
-	RequestsDropped int              `json:"requests_dropped,omitempty"`
+	Operations             []OperationCalls `json:"operations"`
+	Requests               []CallRow        `json:"requests,omitempty"`
+	RequestsDropped        int              `json:"requests_dropped,omitempty"`
+	ProblemRequestsDropped *int             `json:"problem_requests_dropped,omitempty"`
 }
 
 // ResultRun records when the collector ran and whether a proxy or a custom
@@ -95,12 +103,13 @@ func buildResult(in resultInput) (CollectorResult, error) {
 	}
 	audit := in.level.AtLeast(LevelAudit)
 	secrets := r.secrets.list()
-	checks, checksDropped := outputChecks(set, r.schemas, gaps, secrets)
+	checks, checksDropped := outputChecks(set, r.schemas, gaps, secrets, in.level)
 	for i := range gaps {
 		if audit {
 			gaps[i].Detail = redactDetail(gaps[i].Detail, secrets)
+			gaps[i].Warning = redactDetail(gaps[i].Warning, secrets)
 		} else {
-			gaps[i].Detail = ""
+			gaps[i].Detail, gaps[i].Warning = "", ""
 		}
 	}
 	sort.SliceStable(gaps, func(i, j int) bool {
@@ -110,12 +119,14 @@ func buildResult(in resultInput) (CollectorResult, error) {
 		return gaps[i].Pointer < gaps[j].Pointer
 	})
 
+	r.calls.endOpenSteps(r.sinceStart(in.finished))
 	result := CollectorResult{
 		Collector:     ResultCollector{Name: r.name, Version: r.version, Commit: r.commit},
 		Outcome:       ResultOutcome{Status: OutcomeCollected},
 		Gaps:          gaps,
 		Checks:        checks,
 		ChecksDropped: checksDropped,
+		Steps:         r.calls.resultSteps(),
 		Calls:         ResultCalls{Operations: r.calls.operations()},
 		Run: ResultRun{
 			RunID:      r.runID,
@@ -129,7 +140,9 @@ func buildResult(in resultInput) (CollectorResult, error) {
 		result.Outcome = ResultOutcome{Status: OutcomePartial, Code: gaps[0].Code, Owner: gaps[0].Owner}
 	}
 	if audit {
-		result.Calls.Requests, result.Calls.RequestsDropped = r.calls.requests()
+		var problemsDropped int
+		result.Calls.Requests, result.Calls.RequestsDropped, problemsDropped = r.calls.requests()
+		result.Calls.ProblemRequestsDropped = &problemsDropped
 	}
 	if p := r.records.signedIn(); p != nil {
 		if !audit {

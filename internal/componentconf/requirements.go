@@ -43,6 +43,12 @@ var Requirements = []Requirement{
 	{ID: "COL-043", Level: LevelShould, Description: "Exit 3 on authentication error", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-044", Level: LevelShould, Description: "Exit 4 on network/API error", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-052", Level: LevelMust, Description: "Use HTTPS for external API calls", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-075", Level: LevelMust, Description: "A collector result artifact matches evidencepack/collector-result@v1", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-076", Level: LevelShould, Description: "Request rows that carry call numbers agree: one call's attempts share its operation and step and number up in order, and only retries wait", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-077", Level: LevelShould, Description: "Run steps are each named once, listed in start order, end after they start, and count their calls consistently", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-078", Level: LevelShould, Description: "A gap's operation is one the result counts, its call has rows, and a missing permission is only on a permission_denied gap", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-079", Level: LevelMust, Description: "A build file matches evidencepack/collector-build@v1 and names the collector result's version and commit", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-080", Level: LevelMust, Description: "At the trust level, the collector result holds no request rows, gap warnings or error text, or principal ID", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 
 	// Tool requirements
 	{ID: "TOOL-001", Level: LevelMust, Description: "Implement --capabilities flag returning JSON metadata", Types: []componenttypes.ComponentKind{componenttypes.KindTool}},

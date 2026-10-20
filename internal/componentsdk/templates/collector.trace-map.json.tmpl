@@ -1,0 +1,399 @@
+{
+  "artifacts": {
+    "artifacts/{{.Name}}.json": {
+      "/collected_at": {
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:62"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:70"
+          }
+        ]
+      },
+      "/collected_at_level": {
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:62"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:71"
+          }
+        ]
+      },
+      "/organization/id": {
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:62"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:72"
+          }
+        ]
+      },
+      "/organization/mfa_required": {
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:62"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:72"
+          }
+        ]
+      },
+      "/organization/name": {
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:62"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:72"
+          }
+        ]
+      },
+      "/schema_version": {
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:62"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:69"
+          }
+        ]
+      },
+      "/users": {
+        "operations": [
+          "{{.Name}}.users.list"
+        ],
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:62"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:65"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:74"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:76"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:78"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:79"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:83"
+          },
+          {
+            "role": "helper",
+            "line": "internal/collector/collector.go:90",
+            "end": 127
+          }
+        ],
+        "gaps": [
+          "internal/collector/collector.go:80"
+        ]
+      },
+      "/users/inventory": {
+        "code": [
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:91"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:92"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:95"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:97"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:123"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:124"
+          }
+        ]
+      },
+      "/users/inventory/*/id": {
+        "operations": [
+          "{{.Name}}.users.list"
+        ],
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:95"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:97"
+          }
+        ],
+        "gaps": [
+          "internal/collector/collector.go:80"
+        ]
+      },
+      "/users/inventory/*/mfa_enabled": {
+        "operations": [
+          "{{.Name}}.users.factors.list",
+          "{{.Name}}.users.list"
+        ],
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:95"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:98"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:99"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:109"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:110"
+          }
+        ],
+        "gaps": [
+          "internal/collector/collector.go:80",
+          "internal/collector/collector.go:105"
+        ]
+      },
+      "/users/inventory/*/name": {
+        "operations": [
+          "{{.Name}}.users.list"
+        ],
+        "code": [
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:95"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:97"
+          }
+        ],
+        "gaps": [
+          "internal/collector/collector.go:80"
+        ]
+      },
+      "/users/mfa_enabled_count": {
+        "operations": [
+          "{{.Name}}.users.factors.list",
+          "{{.Name}}.users.list"
+        ],
+        "code": [
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:93"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:95"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:98"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:99"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:100"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:109"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:111"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:112"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:117"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:120"
+          }
+        ],
+        "gaps": [
+          "internal/collector/collector.go:80",
+          "internal/collector/collector.go:118"
+        ]
+      },
+      "/users/mfa_enabled_pct": {
+        "operations": [
+          "{{.Name}}.users.factors.list",
+          "{{.Name}}.users.list"
+        ],
+        "code": [
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:93"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:95"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:98"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:99"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:100"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:109"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:111"
+          },
+          {
+            "role": "input",
+            "line": "internal/collector/collector.go:112"
+          },
+          {
+            "role": "condition",
+            "line": "internal/collector/collector.go:117"
+          },
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:121"
+          },
+          {
+            "role": "helper",
+            "line": "internal/collector/collector.go:141",
+            "end": 147
+          }
+        ],
+        "gaps": [
+          "internal/collector/collector.go:80",
+          "internal/collector/collector.go:118"
+        ]
+      },
+      "/users/total_count": {
+        "operations": [
+          "{{.Name}}.users.list"
+        ],
+        "code": [
+          {
+            "role": "assign",
+            "line": "internal/collector/collector.go:116"
+          }
+        ],
+        "gaps": [
+          "internal/collector/collector.go:80"
+        ]
+      }
+    }
+  },
+  "lines": {
+    "internal/collector/collector.go:62": "\tif err != nil {",
+    "internal/collector/collector.go:65": "\trec := componentsdk.Records(ctx)",
+    "internal/collector/collector.go:69": "\t\tSchemaVersion:    SchemaVersion,",
+    "internal/collector/collector.go:70": "\t\tCollectedAt:      componentsdk.Now(ctx).UTC().Format(time.RFC3339),",
+    "internal/collector/collector.go:71": "\t\tCollectedAtLevel: string(ctx.Level()),",
+    "internal/collector/collector.go:72": "\t\tOrganization:     Organization{ID: org.ID, Name: org.Name, MFARequired: *org.MFARequired},",
+    "internal/collector/collector.go:74": "\tgaps := gapLog{rec: rec}",
+    "internal/collector/collector.go:76": "\tpeople, step := componentsdk.StartCollectorStep(ctx, \"users\", \"Reading users and their MFA factors\")",
+    "internal/collector/collector.go:78": "\tusers, err := client.ListUsers(people.Context())",
+    "internal/collector/collector.go:79": "\tif err != nil {",
+    "internal/collector/collector.go:80": "\t\tgaps.notCollected(err, \"/users\", componentsdk.MissingPermission({{.VendorPackage}}.PermissionReadUsers))",
+    "internal/collector/collector.go:83": "\tout.Users = readUsers(people, client, gaps, users)",
+    "internal/collector/collector.go:90": "func readUsers(ctx componentsdk.CollectorContext, client *{{.VendorPackage}}.Client, gaps gapLog, users []{{.VendorPackage}}.User) *Users {",
+    "internal/collector/collector.go:91": "\tinventory := ctx.Level().AtLeast(componentsdk.LevelInternal)",
+    "internal/collector/collector.go:92": "\trows := make([]User, len(users))",
+    "internal/collector/collector.go:93": "\tenabled, unmeasured := 0, 0",
+    "internal/collector/collector.go:94": "\tvar firstErr error",
+    "internal/collector/collector.go:95": "\tfor i, u := range users {",
+    "internal/collector/collector.go:96": "\t\tctx.Progress(int64(i+1), int64(len(users)), \"Reading MFA factors\")",
+    "internal/collector/collector.go:97": "\t\trows[i] = User{ID: u.ID, Name: u.Name}",
+    "internal/collector/collector.go:98": "\t\tfactors, err := client.ListFactors(ctx.Context(), u.ID)",
+    "internal/collector/collector.go:99": "\t\tif err != nil {",
+    "internal/collector/collector.go:100": "\t\t\tunmeasured++",
+    "internal/collector/collector.go:101": "\t\t\tif firstErr == nil {",
+    "internal/collector/collector.go:102": "\t\t\t\tfirstErr = err",
+    "internal/collector/collector.go:103": "\t\t\t}",
+    "internal/collector/collector.go:104": "\t\t\tif inventory {",
+    "internal/collector/collector.go:105": "\t\t\t\tgaps.notCollected(err, rowPointer(\"/users/inventory\", i, \"mfa_enabled\"))",
+    "internal/collector/collector.go:106": "\t\t\t}",
+    "internal/collector/collector.go:107": "\t\t\tcontinue",
+    "internal/collector/collector.go:108": "\t\t}",
+    "internal/collector/collector.go:109": "\t\ton := hasActiveFactor(factors)",
+    "internal/collector/collector.go:110": "\t\trows[i].MFAEnabled = \u0026on",
+    "internal/collector/collector.go:111": "\t\tif on {",
+    "internal/collector/collector.go:112": "\t\t\tenabled++",
+    "internal/collector/collector.go:113": "\t\t}",
+    "internal/collector/collector.go:114": "\t}",
+    "internal/collector/collector.go:115": "",
+    "internal/collector/collector.go:116": "\tout := \u0026Users{TotalCount: len(users)}",
+    "internal/collector/collector.go:117": "\tif unmeasured \u003e 0 {",
+    "internal/collector/collector.go:118": "\t\tgaps.partial(unmeasured, firstErr, \"/users/mfa_enabled_count\", \"/users/mfa_enabled_pct\")",
+    "internal/collector/collector.go:119": "\t} else {",
+    "internal/collector/collector.go:120": "\t\tout.MFAEnabledCount = \u0026enabled",
+    "internal/collector/collector.go:121": "\t\tout.MFAEnabledPct = percent(enabled, len(users))",
+    "internal/collector/collector.go:122": "\t}",
+    "internal/collector/collector.go:123": "\tif inventory {",
+    "internal/collector/collector.go:124": "\t\tout.Inventory = rows",
+    "internal/collector/collector.go:125": "\t}",
+    "internal/collector/collector.go:126": "\treturn out",
+    "internal/collector/collector.go:127": "}",
+    "internal/collector/collector.go:141": "func percent(n, total int) *int {",
+    "internal/collector/collector.go:142": "\tif total == 0 {",
+    "internal/collector/collector.go:143": "\t\treturn nil",
+    "internal/collector/collector.go:144": "\t}",
+    "internal/collector/collector.go:145": "\tp := n * 100 / total",
+    "internal/collector/collector.go:146": "\treturn \u0026p",
+    "internal/collector/collector.go:147": "}"
+  }
+}

@@ -87,6 +87,9 @@ func (r *Runner) testCollectorOutput(ctx context.Context) {
 		for _, id := range []string{"COL-001", "COL-002", "COL-006", "COL-005", "C-020", "COL-040", "COL-034", "C-010", "COL-010", "COL-011"} {
 			r.skip(id, reason)
 		}
+		for _, id := range resultIDs {
+			r.skip(id, reason)
+		}
 		return
 	}
 
@@ -102,6 +105,9 @@ func (r *Runner) testCollectorOutput(ctx context.Context) {
 		// Skip dependent tests
 		r.skip("COL-002", "depends on COL-001")
 		r.skip("COL-006", "depends on COL-001")
+		for _, id := range resultIDs {
+			r.skip(id, "depends on COL-001")
+		}
 		return
 	}
 
@@ -162,6 +168,8 @@ func (r *Runner) testCollectorOutput(ctx context.Context) {
 		r.pass("COL-040")
 		r.pass("COL-034")
 	}
+
+	r.testCollectorResult(resultOutput)
 }
 
 func (r *Runner) testCollectorConfig(ctx context.Context) {

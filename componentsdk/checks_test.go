@@ -266,3 +266,48 @@ func TestNormalizedSchemas(t *testing.T) {
 		})
 	}
 }
+
+const mfaSchema = `{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"total_count": {"type": "integer"},
+		"mfa_enrolled_count": {"type": ["integer", "null"], "x-epack-rollup": {"rows": "people", "where": "/has_active_mfa"}},
+		"mfa_coverage": {"type": ["integer", "null"], "x-epack-denominator": "total_count", "x-epack-numerator": "mfa_enrolled_count", "x-epack-rounding": "floor",
+			"x-epack-rollup": {"rows": "people", "where": "/has_active_mfa", "as": "pct"}},
+		"people": {
+			"type": "array",
+			"x-epack-level": "audit",
+			"items": {"type": "object", "properties": {"login": {"type": "string"}, "has_active_mfa": {"type": ["boolean", "null"], "x-epack-level": "internal"}}}
+		}
+	}
+}`
+
+func TestEmitChecksRatiosAndLevelAwareRollups(t *testing.T) {
+	spec := CollectorSpec{Name: "demo", Schemas: map[string][]byte{"artifacts/demo.json": []byte(mfaSchema)}}
+	emitAt := func(level Level, coverage int) InProcessResult {
+		return RunInProcess(spec, func(ctx CollectorContext) error {
+			people := []any{map[string]any{"login": "a"}, map[string]any{"login": "b"}, map[string]any{"login": "c"}}
+			if ctx.Level().AtLeast(LevelInternal) {
+				people = []any{
+					map[string]any{"login": "a", "has_active_mfa": true},
+					map[string]any{"login": "b", "has_active_mfa": true},
+					map[string]any{"login": "c", "has_active_mfa": false},
+				}
+			}
+			data := map[string]any{"total_count": 3, "mfa_enrolled_count": 2, "mfa_coverage": coverage}
+			if ctx.Level().AtLeast(LevelAudit) {
+				data["people"] = people
+			}
+			return ctx.Emit([]CollectedArtifact{{Data: data, Path: "artifacts/demo.json"}})
+		}, InProcessOptions{Config: map[string]any{"level": string(level)}})
+	}
+	for _, level := range []Level{LevelTrust, LevelAudit, LevelInternal} {
+		if got := checksOf(emitAt(level, 66)); len(got) != 0 {
+			t.Errorf("%s: checks = %v, want none: 66 is 2 of 3 rounded down, and the MFA rollups need internal rows", level, got)
+		}
+	}
+	if got := checksOf(emitAt(LevelAudit, 67)); strings.Join(got, ",") != "ratios artifacts/demo.json /mfa_coverage" {
+		t.Errorf("checks = %v, want a ratios finding for 67", got)
+	}
+}

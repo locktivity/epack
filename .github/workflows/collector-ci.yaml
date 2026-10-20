@@ -77,6 +77,11 @@ on:
         required: false
         type: boolean
         default: false
+      trace-map:
+        description: The collector's committed trace map, relative to the repository root. The trace-map job rebuilds it with epack sdk map --check and fails when it is stale. A collector without one passes.
+        required: false
+        type: string
+        default: docs/schema/trace-map.json
 
 jobs:
   test:
@@ -198,6 +203,34 @@ jobs:
             set -- "$@" --config testdata/conformance.json
           fi
           epack-conformance collector ./epack-collector-"$NAME" "$@"
+
+  # Rebuilds the trace map from the collectortest suites and the source, and
+  # fails when the committed one differs, so a release cannot ship a stale
+  # map in its build file.
+  trace-map:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # The map command at the epack version go.mod pins, as with conformance.
+      - name: Check the trace map
+        env:
+          TRACE_MAP: ${{ inputs.trace-map }}
+        run: |
+          if [ ! -f "$TRACE_MAP" ]; then
+            echo "There is no trace map at $TRACE_MAP, so there is nothing to check. Run epack sdk map to write one."
+            exit 0
+          fi
+          EPACK_VERSION="$(go list -m -f '{{.Version}}' github.com/locktivity/epack)"
+          go run -tags components github.com/locktivity/epack/cmd/epack@"${EPACK_VERSION}" sdk map --check --out "$TRACE_MAP"
 
   govulncheck:
     runs-on: ubuntu-latest

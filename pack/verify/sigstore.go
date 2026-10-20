@@ -339,6 +339,7 @@ func (v *SigstoreVerifier) toResult(sr *verify.VerificationResult, b *bundle.Bun
 	if tlogEntry := extractTlogEntryFromBundle(b); tlogEntry != nil {
 		result.TransparencyLog = tlogEntry
 	}
+	result.Certificate = extractCertificateClaimsFromBundle(b)
 
 	// Parse in-toto statement from verification result or bundle
 	if sr.Statement != nil {
@@ -472,6 +473,38 @@ func extractTlogEntryFromBundle(b *bundle.Bundle) *TransparencyLogEntry {
 		LogIndex: entry.LogIndex(),
 		LogID:    entry.LogKeyID(),
 	}
+}
+
+// extractCertificateClaimsFromBundle returns what the bundle's certificate
+// says about the build that signed, or nil for a bundle signed with a key or
+// a certificate that records none of it.
+func extractCertificateClaimsFromBundle(b *bundle.Bundle) *CertificateClaims {
+	if b == nil || b.Bundle == nil {
+		return nil
+	}
+	vc, err := b.VerificationContent()
+	if err != nil {
+		return nil
+	}
+	cert := vc.Certificate()
+	if cert == nil {
+		return nil
+	}
+	summary, err := certificate.SummarizeCertificate(cert)
+	if err != nil {
+		return nil
+	}
+	claims := &CertificateClaims{
+		RunInvocationURI:       summary.RunInvocationURI,
+		SourceRepositoryURI:    summary.SourceRepositoryURI,
+		SourceRepositoryDigest: summary.SourceRepositoryDigest,
+		SourceRepositoryRef:    summary.SourceRepositoryRef,
+		RunnerEnvironment:      summary.RunnerEnvironment,
+	}
+	if *claims == (CertificateClaims{}) {
+		return nil
+	}
+	return claims
 }
 
 // extractIdentityFromBundle extracts the signer identity from a bundle's certificate.

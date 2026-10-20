@@ -70,7 +70,7 @@ func epackReleaseCommit(v, commit string) string {
 // takenPackageNames are the packages a collector scaffold's files name
 // alongside its vendor client, and Go's predeclared identifiers, which an
 // import of the same name would shadow.
-var takenPackageNames = strings.Fields(`collector main schema componentsdk collectortest fmt math testing time
+var takenPackageNames = strings.Fields(`collector main schema componentsdk collectortest context fmt math testing time
 	any append bool byte cap clear close comparable complex complex64 complex128 copy delete
 	error false float32 float64 imag int int8 int16 int32 int64 iota len make max min new nil
 	panic print println real recover rune string true uint uint8 uint16 uint32 uint64 uintptr`)

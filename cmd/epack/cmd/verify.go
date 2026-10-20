@@ -3,6 +3,8 @@ package cmd
 import (
 	"crypto"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/locktivity/epack/errors"
 	"github.com/locktivity/epack/internal/cli/output"
@@ -255,11 +257,38 @@ func printVerifyResults(out *output.Writer, packPath string, result *verify.Pack
 			if att.SignedAt != "" {
 				out.Print("    Signed: %s\n", att.SignedAt)
 			}
+			if att.LogIndex != nil {
+				out.Print("    Log entry: %d\n", *att.LogIndex)
+			}
+			if c := att.Certificate; c != nil {
+				if c.RunInvocationURI != "" {
+					out.Print("    Run: %s\n", c.RunInvocationURI)
+				}
+				if commit := sourceCommit(c); commit != "" {
+					out.Print("    Source commit: %s\n", commit)
+				}
+			}
 		}
 	}
 
 	out.Println()
 	return nil
+}
+
+// sourceCommit names the commit a certificate's workflow ran at, as
+// owner/repo@sha for a GitHub repository and host/path@sha for another.
+func sourceCommit(c *verify.CertificateDetail) string {
+	if c.SourceRepositoryDigest == "" {
+		return ""
+	}
+	repo := c.SourceRepositoryURI
+	if u, err := url.Parse(repo); err == nil && u.Host != "" {
+		repo = strings.TrimPrefix(u.Host+u.Path, "github.com/")
+	}
+	if repo == "" {
+		return c.SourceRepositoryDigest
+	}
+	return repo + "@" + c.SourceRepositoryDigest
 }
 
 func printVerifyFailure(out *output.Writer, palette *output.Palette, packPath string, result *verify.PackResult) error {

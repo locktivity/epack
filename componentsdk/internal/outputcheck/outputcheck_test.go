@@ -264,7 +264,7 @@ const metricsSchema = `{
 
 func findingsOf(t *testing.T, schema, doc string, gaps ...Gap) []Finding {
 	t.Helper()
-	return Check(mustCompile(t, schema), "a.json", mustDecode(t, doc), gaps)
+	return Check(mustCompile(t, schema), "a.json", mustDecode(t, doc), gaps, "internal")
 }
 
 func pointersOf(findings []Finding, check string) []string {
@@ -480,5 +480,114 @@ func TestAboveLevel(t *testing.T) {
 	whole := mustCompile(t, `{"x-epack-level": "audit"}`)
 	if got := AboveLevel(whole, "a.json", mustDecode(t, `{}`), "trust"); len(got) != 1 || got[0].Pointer != "" || got[0].Message != "present at trust, but its schema marks it audit" {
 		t.Errorf("an artifact marked audit at trust: %+v", got)
+	}
+}
+
+const ratioSchema = `{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"total": {"type": ["integer", "null"]},
+		"enrolled": {"type": ["integer", "null"]},
+		"floor_pct": {"type": ["integer", "null"], "x-epack-denominator": "total", "x-epack-numerator": "enrolled", "x-epack-rounding": "floor"},
+		"ceil_pct": {"type": ["integer", "null"], "x-epack-denominator": "total", "x-epack-numerator": "enrolled", "x-epack-rounding": "ceil"},
+		"nearest_pct": {"type": ["integer", "null"], "x-epack-denominator": "total", "x-epack-numerator": "enrolled", "x-epack-rounding": "nearest"},
+		"loose_pct": {"type": ["number", "null"], "x-epack-denominator": "total", "x-epack-numerator": "enrolled"},
+		"odd_pct": {"type": ["integer", "null"], "x-epack-denominator": "total", "x-epack-numerator": "enrolled", "x-epack-rounding": "banker"},
+		"all_enrolled": {"type": ["boolean", "null"], "x-epack-denominator": "total", "x-epack-numerator": "enrolled"},
+		"no_denominator_pct": {"type": "integer", "x-epack-numerator": "enrolled"}
+	}
+}`
+
+func TestRatios(t *testing.T) {
+	good := findingsOf(t, ratioSchema, `{
+		"total": 1192, "enrolled": 1121,
+		"floor_pct": 94, "ceil_pct": 95, "nearest_pct": 94, "loose_pct": 93.5, "all_enrolled": false,
+		"no_denominator_pct": 12
+	}`)
+	if len(good) != 0 {
+		t.Errorf("matching ratios got %+v", good)
+	}
+	if got := findingsOf(t, ratioSchema, `{"total": 8, "enrolled": 1, "nearest_pct": 13}`); len(got) != 0 {
+		t.Errorf("nearest rounds 12.5 up to 13, got %+v", got)
+	}
+	bad := findingsOf(t, ratioSchema, `{
+		"total": 1192, "enrolled": 1121,
+		"floor_pct": 95, "ceil_pct": 94, "nearest_pct": 95, "loose_pct": 92.9, "odd_pct": 94, "all_enrolled": true
+	}`)
+	if strings.Join(pointersOf(bad, CheckRatios), ",") != "/all_enrolled,/ceil_pct,/floor_pct,/loose_pct,/nearest_pct,/odd_pct" {
+		t.Fatalf("ratios findings = %+v", bad)
+	}
+	messages := map[string]string{}
+	for _, f := range bad {
+		messages[f.Pointer] = f.Message
+	}
+	if want := "value 95, but 100 * 1121 / 1192 is 94.04, rounded down to 94 (numerator /enrolled, denominator /total)"; messages["/floor_pct"] != want {
+		t.Errorf("floor message = %q, want %q", messages["/floor_pct"], want)
+	}
+	if want := "value true, but numerator 1121 at /enrolled is not denominator 1192 at /total"; messages["/all_enrolled"] != want {
+		t.Errorf("boolean message = %q, want %q", messages["/all_enrolled"], want)
+	}
+	if !strings.Contains(messages["/odd_pct"], `"banker" is not floor, ceil, or nearest`) {
+		t.Errorf("unknown rounding message = %q", messages["/odd_pct"])
+	}
+	if got := findingsOf(t, ratioSchema, `{"total": 3, "enrolled": 3, "all_enrolled": false, "floor_pct": 100}`); strings.Join(pointersOf(got, CheckRatios), ",") != "/all_enrolled" {
+		t.Errorf("a false boolean with every item counted should be a finding, got %+v", got)
+	}
+	over := findingsOf(t, ratioSchema, `{"total": 3, "enrolled": 4, "floor_pct": 133}`)
+	if len(over) != 1 || !strings.Contains(over[0].Message, "numerator 4 at /enrolled is larger than denominator 3 at /total") {
+		t.Errorf("a numerator over its denominator should be a finding, got %+v", over)
+	}
+	quiet := []string{
+		`{"total": 0, "enrolled": 0, "floor_pct": null}`,
+		`{"total": 4, "enrolled": null, "floor_pct": 50}`,
+		`{"total": 4, "floor_pct": 50}`,
+		`{"enrolled": 2, "floor_pct": 50}`,
+		`{"total": 4, "enrolled": 2, "floor_pct": null}`,
+	}
+	for _, doc := range quiet {
+		if got := pointersOf(findingsOf(t, ratioSchema, doc), CheckRatios); len(got) != 0 {
+			t.Errorf("%s: ratios findings %v, want none where a value is missing or the denominator is 0", doc, got)
+		}
+	}
+}
+
+const leveledRollupSchema = `{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"people": {
+			"type": "array",
+			"x-epack-level": "audit",
+			"items": {
+				"type": "object",
+				"properties": {
+					"status": {"type": "string"},
+					"has_active_mfa": {"type": ["boolean", "null"], "x-epack-level": "internal"}
+				}
+			}
+		},
+		"suspended_count": {"type": "integer", "x-epack-rollup": {"rows": "people", "where": "/status", "equals": "SUSPENDED"}},
+		"mfa_count": {"type": "integer", "x-epack-rollup": {"rows": "people", "where": "/has_active_mfa"}}
+	}
+}`
+
+func TestRollupsSkipFieldsAboveTheLevel(t *testing.T) {
+	check := func(doc, level string) []string {
+		return pointersOf(Check(mustCompile(t, leveledRollupSchema), "a.json", mustDecode(t, doc), nil, level), CheckRollups)
+	}
+	audit := `{"people": [{"status": "ACTIVE"}, {"status": "SUSPENDED"}], "suspended_count": 1, "mfa_count": 2}`
+	if got := check(audit, "audit"); len(got) != 0 {
+		t.Errorf("at audit, a rollup over an internal-level field should be skipped, got %v", got)
+	}
+	if got := check(`{"people": [{"status": "ACTIVE"}], "suspended_count": 1, "mfa_count": 0}`, "audit"); strings.Join(got, ",") != "/suspended_count" {
+		t.Errorf("at audit, a rollup over an audit-level field still runs, got %v", got)
+	}
+	internal := `{"people": [{"status": "ACTIVE", "has_active_mfa": true}, {"status": "SUSPENDED", "has_active_mfa": false}], "suspended_count": 1, "mfa_count": 2}`
+	if got := check(internal, "internal"); strings.Join(got, ",") != "/mfa_count" {
+		t.Errorf("at internal, the MFA rollup runs, got %v", got)
+	}
+	if got := check(audit, ""); len(got) != 0 {
+		t.Errorf("an unknown level counts as trust, below the rows, got %v", got)
 	}
 }

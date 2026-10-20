@@ -10,17 +10,18 @@ import (
 	"strings"
 )
 
-// Check runs the population, nulls, and rollups checks on doc, the artifact
-// at path, with gaps saying which values were left out on purpose.
-func Check(s *Schema, path string, doc any, gaps []Gap) []Finding {
-	w := &walker{schema: s, path: path, doc: doc}
+// Check runs the population, nulls, rollups, and ratios checks on doc, the
+// artifact at path as emitted at level, with gaps saying which values were
+// left out on purpose. An unknown level counts as trust.
+func Check(s *Schema, path string, doc any, gaps []Gap, level string) []Finding {
+	w := &walker{schema: s, path: path, doc: doc, level: levelRank[level]}
 	for _, g := range gaps {
 		if g.Path == path {
 			w.gaps = append(w.gaps, g.Pointer)
 		}
 	}
 	w.walk(doc, s.rootView(), nil)
-	rank := map[string]int{CheckPopulation: 0, CheckNulls: 1, CheckRollups: 2}
+	rank := map[string]int{CheckPopulation: 0, CheckNulls: 1, CheckRollups: 2, CheckRatios: 3}
 	sort.SliceStable(w.findings, func(i, j int) bool {
 		return rank[w.findings[i].Check] < rank[w.findings[j].Check]
 	})
@@ -31,6 +32,7 @@ type walker struct {
 	schema   *Schema
 	path     string
 	doc      any
+	level    int
 	gaps     []string
 	findings []Finding
 }
@@ -73,12 +75,95 @@ func (w *walker) visit(value any, v view, tokens []string) {
 	if got, ok := number(value); ok {
 		w.rollup(v, tokens, at, got, value)
 	}
+	if num, ok := w.reference(v, "x-epack-numerator", tokens); ok && hasDen {
+		w.ratio(v, at, value, num, den)
+	}
+}
+
+// Roundings x-epack-rounding names. Nearest rounds halves up.
+const (
+	roundFloor   = "floor"
+	roundCeil    = "ceil"
+	roundNearest = "nearest"
+)
+
+// ratio checks a value against its numerator and denominator, where all
+// three are present and the denominator is above 0. A percentage must be
+// 100 * numerator / denominator, rounded as x-epack-rounding says, or within
+// 1 of it when the schema states no rounding. A boolean must be true exactly
+// when the numerator equals the denominator, its count of "all of them".
+// A numerator above its denominator is a finding either way.
+func (w *walker) ratio(v view, at string, value any, num, den resolved) {
+	n, okN := number(num.value)
+	d, okD := number(den.value)
+	if !num.found || !den.found || !okN || !okD || d <= 0 {
+		return
+	}
+	if n > d {
+		w.add(CheckRatios, at, fmt.Sprintf("numerator %s at %s is larger than denominator %s at %s", show(num.value), num.pointer, show(den.value), den.pointer))
+		return
+	}
+	if all, ok := value.(bool); ok {
+		if all != (n == d) {
+			relation := "is not"
+			if n == d {
+				relation = "equals"
+			}
+			w.add(CheckRatios, at, fmt.Sprintf("value %t, but numerator %s at %s %s denominator %s at %s", all, show(num.value), num.pointer, relation, show(den.value), den.pointer))
+		}
+		return
+	}
+	got, ok := number(value)
+	if !ok {
+		return
+	}
+	exact := 100 * n / d
+	rounding := v.text("x-epack-rounding")
+	want, ok := expectedPercent(exact, rounding)
+	if !ok {
+		w.add(CheckRatios, at, fmt.Sprintf("x-epack-rounding %q is not floor, ceil, or nearest", rounding))
+		return
+	}
+	if math.Abs(got-want.value) <= want.tolerance {
+		return
+	}
+	message := fmt.Sprintf("value %s, but 100 * %s / %s is %s", show(value), show(num.value), show(den.value), strconv.FormatFloat(math.Round(exact*100)/100, 'f', -1, 64))
+	if want.rule != "" {
+		message += fmt.Sprintf(", %s to %s", want.rule, strconv.FormatFloat(want.value, 'f', -1, 64))
+	}
+	w.add(CheckRatios, at, message+fmt.Sprintf(" (numerator %s, denominator %s)", num.pointer, den.pointer))
+}
+
+// percent is the percentage a ratio check expects: a value, how far from it
+// a percentage may sit, and the name of the rounding that gave it, if any.
+type percent struct {
+	value, tolerance float64
+	rule             string
+}
+
+// expectedPercent returns the percentage x-epack-rounding asks for from the
+// exact one: exact itself within 1 when there is no rounding, and exactly
+// the rounded value otherwise. It reports false for a rounding it does not
+// know.
+func expectedPercent(exact float64, rounding string) (percent, bool) {
+	switch rounding {
+	case "":
+		return percent{value: exact, tolerance: 1}, true
+	case roundFloor:
+		return percent{value: math.Floor(exact), rule: "rounded down"}, true
+	case roundCeil:
+		return percent{value: math.Ceil(exact), rule: "rounded up"}, true
+	case roundNearest:
+		return percent{value: math.Floor(exact + 0.5), rule: "rounded to nearest"}, true
+	}
+	return percent{}, false
 }
 
 // rollup recomputes a count or percentage from the rows it covers. It skips
-// rollups taken at another time, rows or rollups a gap covers, and rows that
-// were cut short: those a "truncated" reference marks, and those as long as
-// their schema's maxItems.
+// rollups taken at another time, rows or rollups a gap covers, rows that
+// were cut short, which are those a "truncated" reference marks and those as
+// long as their schema's maxItems, and rows or a where field the schema
+// places above the level the artifact was emitted at, where they are absent.
 func (w *walker) rollup(v view, tokens []string, at string, got float64, value any) {
 	raw, _ := v.keyword("x-epack-rollup")
 	spec, ok := raw.(map[string]any)
@@ -107,7 +192,7 @@ func (w *walker) rollup(v view, tokens []string, at string, got float64, value a
 	}
 	found, _ := Resolve(w.doc, rowsAt)
 	rows, ok := found.([]any)
-	if !ok || w.covered(rowsAt) || w.covered(at) || w.truncated(spec, tokens, rowsAt, len(rows)) {
+	if !ok || w.covered(rowsAt) || w.covered(at) || w.truncated(spec, tokens, rowsAt, len(rows)) || w.aboveLevel(rowsAt, where) {
 		return
 	}
 	matching := 0
@@ -160,6 +245,34 @@ func (w *walker) truncated(spec map[string]any, tokens []string, rowsAt string, 
 	return ok && maxItems == float64(n)
 }
 
+// aboveLevel reports whether the schema places the rows at rowsAt, or the
+// field where names in each of them, above the walker's level with
+// x-epack-level, on the value itself or on one that holds it.
+func (w *walker) aboveLevel(rowsAt, where string) bool {
+	rows, rank, ok := w.schema.levelAt(w.doc, rowsAt)
+	if !ok {
+		return false
+	}
+	if rank > w.level {
+		return true
+	}
+	if where == "" || !strings.HasPrefix(where, "/") {
+		return false
+	}
+	v := w.schema.item(rows, 0)
+	rank = max(rank, levelOf(v))
+	for _, token := range strings.Split(where[1:], "/") {
+		token = unescape(token)
+		if idx, err := strconv.Atoi(token); err == nil && idx >= 0 {
+			v = append(w.schema.member(v, token), w.schema.item(v, idx)...)
+		} else {
+			v = w.schema.member(v, token)
+		}
+		rank = max(rank, levelOf(v))
+	}
+	return rank > w.level
+}
+
 type resolved struct {
 	pointer string
 	value   any
@@ -193,6 +306,11 @@ func (w *walker) add(check, at, message string) {
 }
 
 var levelRank = map[string]int{"trust": 0, "audit": 1, "internal": 2}
+
+// levelOf is the rank of the level a view names with x-epack-level, or 0.
+func levelOf(v view) int {
+	return levelRank[v.text("x-epack-level")]
+}
 
 var levelNames = []string{"trust", "audit", "internal"}
 

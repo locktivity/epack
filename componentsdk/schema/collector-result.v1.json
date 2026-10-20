@@ -63,6 +63,11 @@
       "minimum": 0,
       "description": "Number of findings left out after the first 100."
     },
+    "steps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/step" },
+      "description": "The named parts of the run, in the order they started, at every level. Absent when the collector opens none."
+    },
     "calls": {
       "type": "object",
       "required": ["operations"],
@@ -76,12 +81,17 @@
         "requests": {
           "type": "array",
           "items": { "$ref": "#/$defs/request" },
-          "description": "One row per request, at the audit and internal levels. Capped at 1000 rows."
+          "description": "One row per request, at the audit and internal levels: the first 1000, then up to 1000 more whose attempt failed or was a retry."
         },
         "requests_dropped": {
           "type": "integer",
           "minimum": 0,
-          "description": "Number of request rows left out after the first 1000."
+          "description": "Number of request rows left out."
+        },
+        "problem_requests_dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of the rows left out whose attempt failed or was a retry. Present wherever the rows are; 0 means every failed or retried request has a row."
         }
       },
       "description": "The API calls the collector made."
@@ -103,10 +113,23 @@
           "type": "string",
           "description": "The tenant, account, or organization signed in to."
         },
+        "auth_method": {
+          "type": "string",
+          "description": "How the collector proved its identity, such as private_key_jwt for OAuth 2.0 client credentials with a signed key assertion or api_token for an API token."
+        },
+        "requested_scopes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The scopes the collector asked for. A scope here and missing from scopes was not granted."
+        },
         "scopes": {
           "type": "array",
           "items": { "type": "string" },
           "description": "The permissions the sign-in carried."
+        },
+        "read_only": {
+          "const": true,
+          "description": "Present when the collector can show that its credential could only read."
         },
         "id": { "type": "string", "description": "Present at the audit and internal levels only." }
       },
@@ -189,6 +212,27 @@
           "minimum": 0,
           "description": "For a partial gap, the number of items that could not be read."
         },
+        "operation": {
+          "type": "string",
+          "description": "The operation whose failed call left the value out. Absent when no call's error caused the gap, such as for a feature the plan lacks."
+        },
+        "call": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The number of that call, matching the call on its request rows. A partial gap names the first failed call among those it counts."
+        },
+        "source": {
+          "type": "string",
+          "description": "The file and line in the collector's own source that recorded the gap, relative to its module root, such as internal/collector/system_log.go:155."
+        },
+        "missing_permission": {
+          "type": "string",
+          "description": "For a permission_denied gap, the permission to grant, in the vendor's own terms, such as okta.logs.read."
+        },
+        "warning": {
+          "type": "string",
+          "description": "The collector's message to the operator about the gap, redacted. Present at the audit and internal levels only."
+        },
         "detail": { "type": "string", "description": "Present at the audit and internal levels only." }
       }
     },
@@ -197,7 +241,7 @@
       "required": ["check", "pointer", "message"],
       "additionalProperties": false,
       "properties": {
-        "check": { "type": "string", "description": "schema, schema_unusable, population, nulls, or rollups." },
+        "check": { "type": "string", "description": "schema, schema_unusable, population, nulls, rollups, or ratios." },
         "path": { "type": "string", "description": "The artifact the finding is about. A schema_unusable finding has none." },
         "pointer": {
           "type": "string",
@@ -254,14 +298,51 @@
         }
       }
     },
+    "step": {
+      "type": "object",
+      "required": ["name", "title", "start_ms", "end_ms", "requests", "calls", "retries", "failed"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "The step's name, such as people. Step names are part of the collector's contract, like operation names." },
+        "title": { "type": "string", "description": "The step's title, such as People and sign-in methods." },
+        "start_ms": { "type": "integer", "minimum": 0, "description": "When the step started, in milliseconds after the run's started_at." },
+        "end_ms": { "type": "integer", "minimum": 0, "description": "When the step ended, in milliseconds after the run's started_at. A step still open when the collector emitted ended then." },
+        "requests": { "type": "integer", "minimum": 0, "description": "The requests sent in the step, including rows left out of calls.requests." },
+        "calls": { "type": "integer", "minimum": 0, "description": "The calls those requests belong to." },
+        "retries": { "type": "integer", "minimum": 0, "description": "The requests that were retries." },
+        "failed": { "type": "integer", "minimum": 0, "description": "The attempts that failed: those with an error code or a status of 400 or more." },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "calls"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "description": "The operation." },
+              "calls": { "type": "integer", "minimum": 0, "description": "Its calls in the step." }
+            }
+          },
+          "description": "Each operation called in the step, in the order first called, with its number of calls."
+        }
+      }
+    },
     "request": {
       "type": "object",
       "required": ["operation", "method", "host", "attempt", "duration_ms"],
       "additionalProperties": false,
       "properties": {
+        "call": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The call's number in the run, counting from 1 in the order calls start. Every attempt of one call has the same number."
+        },
         "operation": {
           "type": "string",
           "description": "The operation the request belongs to."
+        },
+        "step": {
+          "type": "string",
+          "description": "The step the call was made in. Absent for a call made outside every step."
         },
         "method": { "type": "string", "description": "The HTTP method, DNS and the record type looked up, such as DNS TXT, or DIAL." },
         "host": { "type": "string", "description": "The request's host, the name a DNS lookup queried, or the host dialed." },
@@ -276,6 +357,16 @@
           "minimum": 1,
           "description": "Which attempt the request was: 1 for the first, higher for a retry."
         },
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the attempt was sent, in milliseconds after the run's started_at."
+        },
+        "waited_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "On a retry, how long the SDK waited before sending it: the Retry-After value, the rate limit reset, or its own backoff. Absent on a first attempt and on a retry sent at once."
+        },
         "status": {
           "type": "integer",
           "description": "The response's HTTP status code. Absent when no response arrived."
@@ -284,6 +375,10 @@
         "error": {
           "$ref": "#/$defs/code",
           "description": "The code for a request that failed. Absent when it succeeded."
+        },
+        "vendor_code": {
+          "type": "string",
+          "description": "The vendor's own error code from a failed response, such as E0000047. Never the vendor's message. Absent for collectors that do not read one."
         },
         "duration_ms": {
           "type": "integer",

@@ -1,6 +1,7 @@
 package componentsdk
 
 import (
+	"context"
 	"net/http"
 	"regexp"
 	"sort"
@@ -10,8 +11,14 @@ import (
 	"time"
 )
 
-// maxCallRows bounds the per-request rows a result artifact carries.
-const maxCallRows = 1000
+// maxCallRows bounds the per-request rows a result artifact carries, in the
+// order the requests finish. maxProblemRows bounds the rows it keeps past
+// that, which are only those whose attempt failed or was a retry, so a
+// refusal late in a large run still has a row.
+const (
+	maxCallRows    = 1000
+	maxProblemRows = 1000
+)
 
 // OperationCalls counts one operation's calls in a run.
 type OperationCalls struct {
@@ -31,25 +38,51 @@ type OperationCalls struct {
 // name as its host, its response code, and no route. A dial's row has the
 // method "DIAL" and the dialed host, and its error is the code of a failed
 // dial or of a timeout or reset on the connection afterwards.
+//
+// Call numbers the calls of a run from 1 in the order they start, and every
+// attempt of one call has the same number. StartMS and WaitedMS count from
+// the run's start by its clock, which a test kit run fixes. VendorCode is the
+// vendor's code for a failed response, as HTTPOptions.VendorCode reads it;
+// a row never holds the vendor's message, which can name a resource.
 type CallRow struct {
+	Call       int      `json:"call,omitempty"`
 	Operation  string   `json:"operation"`
+	Step       string   `json:"step,omitempty"`
 	Method     string   `json:"method"`
 	Host       string   `json:"host"`
 	Route      string   `json:"route,omitempty"`
 	QueryKeys  []string `json:"query_keys,omitempty"`
 	Attempt    int      `json:"attempt"`
+	StartMS    int64    `json:"start_ms"`
+	WaitedMS   int64    `json:"waited_ms,omitempty"`
 	Status     int      `json:"status,omitempty"`
 	Rcode      string   `json:"rcode,omitempty"`
 	Error      Code     `json:"error,omitempty"`
+	VendorCode string   `json:"vendor_code,omitempty"`
 	DurationMS int64    `json:"duration_ms"`
 	RequestID  string   `json:"request_id,omitempty"`
 }
 
+// failed reports whether a row's attempt failed: it has an error code or a
+// status of 400 or more.
+func (row CallRow) failed() bool {
+	return row.Error != "" || row.Status >= 400
+}
+
+// problem reports whether a row's attempt failed or was a retry.
+func (row CallRow) problem() bool {
+	return row.failed() || row.Attempt > 1
+}
+
 type ledger struct {
-	mu      sync.Mutex
-	ops     map[string]*OperationCalls
-	rows    []CallRow
-	dropped int
+	mu              sync.Mutex
+	ops             map[string]*OperationCalls
+	rows            []CallRow
+	problemRows     int
+	dropped         int
+	problemsDropped int
+	calls           int
+	steps           []*stepState
 }
 
 func newLedger() *ledger {
@@ -65,42 +98,84 @@ func (l *ledger) stats(name string) *OperationCalls {
 	return s
 }
 
-func (l *ledger) add(op Operation, req *http.Request, attempt int, resp *http.Response, err error, took time.Duration, requestIDHeaders []string) {
-	l.addRouted(op, req, attempt, resp, err, "", took, requestIDHeaders, nil)
-}
-
-// addRouted is add with the code the transport's ClassifyResponse hook gave
-// the response, if any, and the route template of the transport that sent
-// the request.
-func (l *ledger) addRouted(op Operation, req *http.Request, attempt int, resp *http.Response, err error, code Code, took time.Duration, requestIDHeaders []string, route func(string) string) {
+// startCall numbers a call the run starts.
+func (l *ledger) startCall() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s := l.stats(op.Name)
+	l.calls++
+	return l.calls
+}
+
+// callStart is a call as it starts: its operation, the step it belongs to,
+// its number in the run, and when it started.
+type callStart struct {
+	op      Operation
+	step    *stepState
+	number  int
+	started time.Time
+	startMS int64
+}
+
+// beginCall numbers a call of op that starts now with ctx, in the step ctx
+// carries.
+func (r *run) beginCall(ctx context.Context, op Operation) callStart {
+	started := r.now()
+	return callStart{op: op, step: stepIn(ctx, r), number: r.calls.startCall(), started: started, startMS: r.sinceStart(started)}
+}
+
+// attemptRecord is one attempt of an HTTP call, as the transport records it.
+// startMS is when the attempt started, which for a retry is after the call
+// did.
+type attemptRecord struct {
+	call    callStart
+	attempt int
+	req     *http.Request
+	resp    *http.Response
+	err     error
+	// code is the code the transport's ClassifyResponse hook gave the
+	// response, and vendorCode the code its VendorCode hook read.
+	code       Code
+	vendorCode string
+	startMS    int64
+	waited     time.Duration
+	took       time.Duration
+}
+
+// add records an attempt. requestIDHeaders name the headers that carry the
+// vendor's request ID, and route templates the request's path, TemplateRoute
+// when nil.
+func (l *ledger) add(a attemptRecord, requestIDHeaders []string, route func(string) string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	s := l.stats(a.call.op.Name)
 	s.Attempts++
-	if attempt == 1 {
+	if a.attempt == 1 {
 		s.Calls++
 	} else {
 		s.Retries++
 	}
-	row := l.row(op, req, attempt, took, route)
+	row := l.row(a.call, a.req, a.attempt, a.took, route)
+	row.StartMS, row.WaitedMS = a.startMS, a.waited.Milliseconds()
+	row.VendorCode = a.vendorCode
+	code := a.code
 	switch {
-	case err != nil && lostConnection(err):
+	case a.err != nil && lostConnection(a.err):
 		code = CodeVendorError
-	case err != nil:
-		code = Classify(err)
-	case resp != nil:
-		row.Status = resp.StatusCode
+	case a.err != nil:
+		code = Classify(a.err)
+	case a.resp != nil:
+		row.Status = a.resp.StatusCode
 		if s.Statuses == nil {
 			s.Statuses = map[string]int{}
 		}
-		s.Statuses[strconv.Itoa(resp.StatusCode)]++
-		row.RequestID = firstHeader(resp.Header, requestIDHeaders)
-		if v := resp.Header.Get("Deprecation"); v != "" {
+		s.Statuses[strconv.Itoa(a.resp.StatusCode)]++
+		row.RequestID = firstHeader(a.resp.Header, requestIDHeaders)
+		if v := a.resp.Header.Get("Deprecation"); v != "" {
 			s.Deprecation = v
-		} else if v := resp.Header.Get("X-Sentry-Deprecation-Date"); v != "" {
+		} else if v := a.resp.Header.Get("X-Sentry-Deprecation-Date"); v != "" {
 			s.Deprecation = v
 		}
-		if v := resp.Header.Get("Sunset"); v != "" {
+		if v := a.resp.Header.Get("Sunset"); v != "" {
 			s.Sunset = v
 		}
 	}
@@ -111,17 +186,24 @@ func (l *ledger) addRouted(op Operation, req *http.Request, attempt int, resp *h
 		}
 		s.Errors[code]++
 	}
+	l.count(a.call.step, row)
 	l.appendRow(row)
+}
+
+// callRef is a row addCall recorded, kept so a later failure can mark it.
+type callRef struct {
+	index int
+	row   CallRow
+	step  *stepState
 }
 
 // addCall records a DNS lookup or a dial, which the SDK makes once, with no
 // retry. rcode is a lookup's response code, which also keys the operation's
-// statuses, and code is the failure's code, if any. It returns the call's
-// row, or -1 when the rows are full.
-func (l *ledger) addCall(op Operation, method, host, rcode string, code Code, took time.Duration) int {
+// statuses, and code is the failure's code, if any.
+func (l *ledger) addCall(c callStart, method, host, rcode string, code Code, took time.Duration) *callRef {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s := l.stats(op.Name)
+	s := l.stats(c.op.Name)
 	s.Calls++
 	s.Attempts++
 	if rcode != "" {
@@ -136,12 +218,16 @@ func (l *ledger) addCall(op Operation, method, host, rcode string, code Code, to
 		}
 		s.Errors[code]++
 	}
-	return l.appendRow(CallRow{Operation: op.Name, Method: method, Host: host, Attempt: 1, Rcode: rcode, Error: code, DurationMS: took.Milliseconds()})
+	row := CallRow{Call: c.number, Operation: c.op.Name, Step: stepName(c.step), Method: method, Host: host, Attempt: 1, StartMS: c.startMS, Rcode: rcode, Error: code, DurationMS: took.Milliseconds()}
+	l.count(c.step, row)
+	return &callRef{index: l.appendRow(row), row: row, step: c.step}
 }
 
 // failCall gives a call addCall recorded without an error the code of a
-// failure that came later, such as a dial whose connection then reset.
-func (l *ledger) failCall(op Operation, row int, code Code) {
+// failure that came later, such as a dial whose connection then reset. A row
+// left out past the first rows is kept now, as a failed one, when there is
+// room for it.
+func (l *ledger) failCall(op Operation, ref *callRef, code Code) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s := l.stats(op.Name)
@@ -149,27 +235,46 @@ func (l *ledger) failCall(op Operation, row int, code Code) {
 		s.Errors = map[Code]int{}
 	}
 	s.Errors[code]++
-	if row >= 0 && row < len(l.rows) {
-		l.rows[row].Error = code
+	if ref == nil {
+		return
+	}
+	if ref.step != nil {
+		ref.step.failed++
+	}
+	ref.row.Error = code
+	switch {
+	case ref.index >= 0 && ref.index < len(l.rows):
+		l.rows[ref.index].Error = code
+	case l.problemRows < maxProblemRows:
+		l.problemRows++
+		l.dropped--
+		l.rows = append(l.rows, ref.row)
+		ref.index = len(l.rows) - 1
+	default:
+		l.problemsDropped++
 	}
 }
 
-func (l *ledger) addRefused(op Operation, req *http.Request, route func(string) string) {
+// addRefused records a call the transport refused to send, which counts as
+// one failed attempt in its step.
+func (l *ledger) addRefused(c callStart, req *http.Request, route func(string) string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s := l.stats(op.Name)
+	s := l.stats(c.op.Name)
 	s.Calls++
 	if s.Errors == nil {
 		s.Errors = map[Code]int{}
 	}
 	s.Errors[CodeInvalidResponse]++
-	row := l.row(op, req, 1, 0, route)
+	row := l.row(c, req, 1, 0, route)
+	row.StartMS = c.startMS
 	row.Error = CodeInvalidResponse
+	l.count(c.step, row)
 	l.appendRow(row)
 }
 
-func (l *ledger) row(op Operation, req *http.Request, attempt int, took time.Duration, route func(string) string) CallRow {
-	row := CallRow{Operation: op.Name, Method: req.Method, Attempt: attempt, DurationMS: took.Milliseconds()}
+func (l *ledger) row(c callStart, req *http.Request, attempt int, took time.Duration, route func(string) string) CallRow {
+	row := CallRow{Call: c.number, Operation: c.op.Name, Step: stepName(c.step), Method: req.Method, Attempt: attempt, DurationMS: took.Milliseconds()}
 	if req.URL != nil {
 		if route == nil {
 			route = TemplateRoute
@@ -181,10 +286,20 @@ func (l *ledger) row(op Operation, req *http.Request, attempt int, took time.Dur
 	return row
 }
 
-// appendRow adds row and returns its index, or -1 when the rows are full.
+// appendRow keeps row and returns its index, or -1 when it is left out: the
+// first maxCallRows rows are kept whatever they hold, and after them up to
+// maxProblemRows rows whose attempt failed or was a retry. The caller holds
+// l.mu.
 func (l *ledger) appendRow(row CallRow) int {
-	if len(l.rows) >= maxCallRows {
+	switch {
+	case len(l.rows) < maxCallRows:
+	case row.problem() && l.problemRows < maxProblemRows:
+		l.problemRows++
+	default:
 		l.dropped++
+		if row.problem() {
+			l.problemsDropped++
+		}
 		return -1
 	}
 	l.rows = append(l.rows, row)
@@ -206,10 +321,12 @@ func (l *ledger) operations() []OperationCalls {
 	return out
 }
 
-func (l *ledger) requests() ([]CallRow, int) {
+// requests returns a copy of the rows kept, with the count of rows left out
+// and of the failed and retried rows among those.
+func (l *ledger) requests() ([]CallRow, int, int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return append([]CallRow(nil), l.rows...), l.dropped
+	return append([]CallRow(nil), l.rows...), l.dropped, l.problemsDropped
 }
 
 func copyMap[K comparable](m map[K]int) map[K]int {

@@ -4,6 +4,7 @@ package componentconf
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -362,6 +363,180 @@ func TestCollectorSignalHandling(t *testing.T) {
 			}
 			if detail := got.Message + got.Reason; !strings.Contains(detail, tt.message) {
 				t.Errorf("COL-031 detail = %q, want it to contain %q", detail, tt.message)
+			}
+		})
+	}
+}
+
+// resultCollector writes a collector that prints an envelope holding a data
+// artifact and the given result and build file, either of which may be nil.
+func resultCollector(t *testing.T, result, build map[string]any) string {
+	t.Helper()
+	artifacts := []map[string]any{{"path": "artifacts/test.json", "data": map[string]any{"ok": true}}}
+	if build != nil {
+		artifacts = append(artifacts, map[string]any{"path": "artifacts/test.collector-build.json", "schema": "evidencepack/collector-build@v1", "data": build})
+	}
+	if result != nil {
+		artifacts = append(artifacts, map[string]any{"path": "artifacts/test.collector-result.json", "schema": "evidencepack/collector-result@v1", "data": result})
+	}
+	raw, err := json.Marshal(map[string]any{"type": "epack_result", "protocol_version": 1, "artifacts": artifacts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeCollector(t, "results", "cat <<'EOF'\n"+string(raw)+"\nEOF\n")
+}
+
+// sdkResult is a result in the shape the SDK writes, with every field
+// this epack release adds.
+func sdkResult() map[string]any {
+	return map[string]any{
+		"collector": map[string]any{"name": "test", "version": "v0.4.0", "commit": "abc123"},
+		"outcome":   map[string]any{"status": "partial", "code": "permission_denied", "owner": "customer"},
+		"gaps": []any{map[string]any{
+			"path": "artifacts/test.json", "pointer": "/system_log", "status": "not_collected", "code": "permission_denied", "owner": "customer",
+			"vendor_code": "E0000006", "operation": "okta.logs.list", "call": 3, "source": "internal/collector/system_log.go:155",
+			"missing_permission": "okta.logs.read",
+		}},
+		"steps": []any{
+			map[string]any{"name": "people", "title": "People", "start_ms": 300, "end_ms": 900, "requests": 3, "calls": 2, "retries": 1, "failed": 1,
+				"operations": []any{map[string]any{"name": "okta.users.list", "calls": 2}}},
+			map[string]any{"name": "system_log", "title": "Activity log", "start_ms": 900, "end_ms": 950, "requests": 1, "calls": 1, "retries": 0, "failed": 1,
+				"operations": []any{map[string]any{"name": "okta.logs.list", "calls": 1}}},
+		},
+		"calls": map[string]any{
+			"operations": []any{
+				map[string]any{"name": "okta.users.list", "calls": 2, "attempts": 3, "retries": 1},
+				map[string]any{"name": "okta.logs.list", "calls": 1, "attempts": 1, "retries": 0},
+			},
+		},
+		"signed_in_as": map[string]any{"provider": "okta", "kind": "service_app", "auth_method": "private_key_jwt", "requested_scopes": []any{"okta.logs.read"}, "read_only": true},
+		"run":          map[string]any{"started_at": "2026-10-20T06:00:00Z", "finished_at": "2026-10-20T06:00:01Z", "proxy": false, "custom_ca": false},
+	}
+}
+
+func sdkBuild() map[string]any {
+	return map[string]any{
+		"collector": map[string]any{"name": "okta", "version": "v0.4.0", "commit": "abc123"},
+		"schemas":   map[string]any{"artifacts/okta.json": map[string]any{"type": "object"}},
+		"trace_map": map[string]any{"artifacts": map[string]any{}, "lines": map[string]any{}},
+	}
+}
+
+// auditRows returns the rows of sdkResult's calls, as an audit run writes
+// them.
+func auditRows() []any {
+	return []any{
+		map[string]any{"call": 1, "operation": "okta.users.list", "step": "people", "method": "GET", "host": "a.okta.com", "attempt": 1, "start_ms": 300, "status": 429, "duration_ms": 5},
+		map[string]any{"call": 1, "operation": "okta.users.list", "step": "people", "method": "GET", "host": "a.okta.com", "attempt": 2, "start_ms": 1305, "waited_ms": 1000, "status": 200, "duration_ms": 5},
+		map[string]any{"call": 2, "operation": "okta.users.list", "step": "people", "method": "GET", "host": "a.okta.com", "attempt": 1, "start_ms": 1310, "status": 200, "duration_ms": 5},
+		map[string]any{"call": 3, "operation": "okta.logs.list", "step": "system_log", "method": "GET", "host": "a.okta.com", "attempt": 1, "start_ms": 1400, "status": 403, "vendor_code": "E0000006", "duration_ms": 5},
+	}
+}
+
+func resultChecks(t *testing.T, result, build map[string]any, config string) map[string]TestResult {
+	t.Helper()
+	runner := NewRunner(resultCollector(t, result, build), componenttypes.KindCollector)
+	if config != "" {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runner.CollectorConfig = path
+	}
+	return runCollectorConformance(t, runner)
+}
+
+func expectStatuses(t *testing.T, results map[string]TestResult, want map[string]TestStatus) {
+	t.Helper()
+	for id, status := range want {
+		if got := results[id]; got.Status != status {
+			t.Errorf("%s = %s (%s%s), want %s", id, got.Status, got.Message, got.Reason, status)
+		}
+	}
+}
+
+func TestCollectorResultChecks_PassANewResult(t *testing.T) {
+	results := resultChecks(t, sdkResult(), sdkBuild(), "")
+	expectStatuses(t, results, map[string]TestStatus{
+		"COL-075": StatusPass, "COL-076": StatusSkip, "COL-077": StatusPass, "COL-078": StatusPass, "COL-079": StatusPass, "COL-080": StatusPass,
+	})
+
+	audit := sdkResult()
+	audit["calls"].(map[string]any)["requests"] = auditRows()
+	audit["calls"].(map[string]any)["problem_requests_dropped"] = 0
+	audit["gaps"].([]any)[0].(map[string]any)["warning"] = "system log: access denied"
+	results = resultChecks(t, audit, sdkBuild(), `{"level": "audit"}`)
+	expectStatuses(t, results, map[string]TestStatus{
+		"COL-075": StatusPass, "COL-076": StatusPass, "COL-077": StatusPass, "COL-078": StatusPass, "COL-079": StatusPass, "COL-080": StatusSkip,
+	})
+}
+
+func TestCollectorResultChecks_PassAResultFromAnOlderSDK(t *testing.T) {
+	old := map[string]any{
+		"collector": map[string]any{"name": "test", "version": "v0.3.0"},
+		"outcome":   map[string]any{"status": "collected"},
+		"gaps":      []any{},
+		"calls":     map[string]any{"operations": []any{map[string]any{"name": "okta.users.list", "calls": 1, "attempts": 1, "retries": 0}}},
+		"run":       map[string]any{"started_at": "2026-10-20T06:00:00Z", "finished_at": "2026-10-20T06:00:01Z", "proxy": false, "custom_ca": false},
+	}
+	results := resultChecks(t, old, nil, "")
+	expectStatuses(t, results, map[string]TestStatus{
+		"COL-075": StatusPass, "COL-076": StatusSkip, "COL-077": StatusSkip, "COL-078": StatusSkip, "COL-079": StatusSkip, "COL-080": StatusPass,
+	})
+	for _, id := range resultIDs {
+		if got := resultChecks(t, nil, nil, "")[id]; got.Status != StatusSkip || !strings.Contains(got.Reason, "no collector result") {
+			t.Errorf("without a result, %s = %s (%s), want a skip", id, got.Status, got.Reason)
+		}
+	}
+}
+
+func TestCollectorResultChecks_FailWhatDisagrees(t *testing.T) {
+	cases := map[string]struct {
+		change func(result, build map[string]any)
+		config string
+		id     string
+		want   string
+	}{
+		"a field the schema lacks": {func(r, _ map[string]any) { r["calls"].(map[string]any)["requests_kept"] = 3 }, "", "COL-075", "does not match evidencepack/collector-result@v1"},
+		"a call whose attempts disagree": {func(r, _ map[string]any) {
+			rows := auditRows()
+			rows[1].(map[string]any)["operation"] = "okta.apps.list"
+			r["calls"].(map[string]any)["requests"] = rows
+		}, `{"level": "audit"}`, "COL-076", "the attempts of call 1 name okta.users.list"},
+		"a first attempt that waited": {func(r, _ map[string]any) {
+			rows := auditRows()
+			rows[0].(map[string]any)["waited_ms"] = 250
+			r["calls"].(map[string]any)["requests"] = rows
+		}, `{"level": "audit"}`, "COL-076", "waited 250ms before its first attempt"},
+		"a step that ends before it starts": {func(r, _ map[string]any) {
+			r["steps"].([]any)[1].(map[string]any)["end_ms"] = 100
+		}, "", "COL-077", "ends at 100ms, before it starts"},
+		"steps whose counts disagree": {func(r, _ map[string]any) {
+			r["steps"].([]any)[0].(map[string]any)["requests"] = 9
+		}, "", "COL-077", "counts 9 requests"},
+		"a gap naming an uncounted operation": {func(r, _ map[string]any) {
+			r["gaps"].([]any)[0].(map[string]any)["operation"] = "okta.apps.list"
+		}, "", "COL-078", "names operation okta.apps.list"},
+		"a permission on another code": {func(r, _ map[string]any) {
+			g := r["gaps"].([]any)[0].(map[string]any)
+			g["code"], g["owner"] = "vendor_error", "vendor"
+		}, "", "COL-078", "only a permission_denied gap names one"},
+		"a build file for another build": {func(_, b map[string]any) {
+			b["collector"].(map[string]any)["commit"] = "def456"
+		}, "", "COL-079", `names version "v0.4.0" and commit "def456"`},
+		"a build file the schema rejects": {func(_, b map[string]any) { b["run_id"] = "r1" }, "", "COL-079", "does not match evidencepack/collector-build@v1"},
+		"rows at trust":                   {func(r, _ map[string]any) { r["calls"].(map[string]any)["requests"] = auditRows() }, "", "COL-080", "holds 4 request rows at the trust level"},
+		"a warning at trust": {func(r, _ map[string]any) {
+			r["gaps"].([]any)[0].(map[string]any)["warning"] = "user 00u1 cannot read the log"
+		}, "", "COL-080", "holds its warning or error text at the trust level"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			result, build := sdkResult(), sdkBuild()
+			tc.change(result, build)
+			got := resultChecks(t, result, build, tc.config)[tc.id]
+			if got.Status != StatusFail || !strings.Contains(got.Message, tc.want) {
+				t.Errorf("%s = %s (%s%s), want a failure saying %q", tc.id, got.Status, got.Message, got.Reason, tc.want)
 			}
 		})
 	}

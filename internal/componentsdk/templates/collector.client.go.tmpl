@@ -21,12 +21,18 @@ const Host = "api.example.com"
 const baseURL = "https://" + Host + "/v1"
 
 // Operation names, one per API call. They count each call in the collector
-// result and key the test kit's fault matrix, so rename one only on purpose.
+// result and key the test kit's fault matrix and the trace map, so rename
+// one only on purpose.
 const (
 	OpGetOrganization = "{{.Name}}.organization.get"
 	OpListUsers       = "{{.Name}}.users.list"
 	OpListFactors     = "{{.Name}}.users.factors.list"
 )
+
+// PermissionReadUsers is the permission the token needs to list users and
+// their factors, in the vendor's own terms, which a permission_denied gap
+// names. TODO: Use the vendor's name for it.
+const PermissionReadUsers = "users:read"
 
 const (
 	maxResponseBytes = 32 << 20
@@ -71,7 +77,7 @@ type Factor struct {
 // no organization by that name, which is a configuration error.
 func (c *Client) GetOrganization(ctx context.Context) (*Organization, error) {
 	var org Organization
-	err := c.get(ctx, OpGetOrganization, "/organizations/"+url.PathEscape(c.organization), &org)
+	resp, err := c.get(ctx, OpGetOrganization, "/organizations/"+url.PathEscape(c.organization), &org)
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 		return nil, componentsdk.CodeError(componentsdk.CodeConfigInvalid, fmt.Errorf("organization %q not found: %w", c.organization, err))
@@ -80,7 +86,7 @@ func (c *Client) GetOrganization(ctx context.Context) (*Organization, error) {
 		return nil, err
 	}
 	if org.ID == "" || org.MFARequired == nil {
-		return nil, invalidResponse(OpGetOrganization, "has no id or mfa_required")
+		return nil, componentsdk.ResponseError(resp, invalidResponse(OpGetOrganization, "has no id or mfa_required"))
 	}
 	return &org, nil
 }
@@ -99,39 +105,60 @@ func (c *Client) ListFactors(ctx context.Context, userID string) ([]Factor, erro
 // it never reads as an empty list.
 func list[T any](ctx context.Context, c *Client, op, path string) ([]T, error) {
 	var items []T
-	if err := c.get(ctx, op, path, &items); err != nil {
+	resp, err := c.get(ctx, op, path, &items)
+	if err != nil {
 		return nil, err
 	}
 	if items == nil {
-		return nil, invalidResponse(op, "is null, not a list")
+		return nil, componentsdk.ResponseError(resp, invalidResponse(op, "is null, not a list"))
 	}
 	return items, nil
 }
 
-// get sends a GET named op and decodes the JSON response into out.
-func (c *Client) get(ctx context.Context, op, path string, out any) error {
+// get sends a GET named op and decodes the JSON response into out. It
+// returns the response, its body read and closed, so a caller that finds the
+// body wanting can build an error with componentsdk.ResponseError, which
+// gives a gap recorded from it the response's call.
+func (c *Client) get(ctx context.Context, op, path string, out any) (*http.Response, error) {
 	ctx = componentsdk.WithOperation(ctx, componentsdk.Operation{Name: op})
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
-		return &APIError{StatusCode: resp.StatusCode, Body: string(body), Header: resp.Header}
+		return resp, componentsdk.ResponseError(resp, &APIError{StatusCode: resp.StatusCode, Body: string(body), Header: resp.Header})
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(out); err != nil {
-		return fmt.Errorf("%s: decoding the response: %w", op, err)
+		return resp, componentsdk.ResponseError(resp, fmt.Errorf("%s: decoding the response: %w", op, err))
 	}
-	return nil
+	return resp, nil
+}
+
+// VendorCode reads the vendor's own error code from a failed response's
+// body, for componentsdk.HTTPOptions.VendorCode, which records it on the
+// response's row in the collector result. It returns the code alone, never
+// the message, which can name a resource. TODO: Read the vendor's error
+// format; this one reads {"error": {"code": "..."}}.
+func VendorCode(_ *http.Response, body []byte) string {
+	var e struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &e) != nil {
+		return ""
+	}
+	return e.Error.Code
 }
 
 // APIError is a response whose status is not 200.

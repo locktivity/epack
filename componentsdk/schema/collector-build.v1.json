@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "evidencepack/collector-build@v1",
+  "description": "A collector build: its name, version, and commit, the schemas it checks its artifacts against, and its trace map. It describes the build rather than the run, so every run of one build writes the same bytes, at every level.",
+  "type": "object",
+  "required": ["collector", "schemas"],
+  "additionalProperties": false,
+  "properties": {
+    "collector": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The collector's name, as its spec declares it."
+        },
+        "version": {
+          "type": "string",
+          "description": "The collector's version, such as v0.4.0. Absent when the build set none."
+        },
+        "commit": {
+          "type": "string",
+          "description": "The source commit the collector was built from. Absent when the build set none."
+        }
+      },
+      "description": "The collector build."
+    },
+    "schemas": {
+      "type": "object",
+      "additionalProperties": { "type": ["object", "boolean"] },
+      "description": "The JSON Schema each data artifact was checked against, keyed as the collector's spec keys them, by artifact path or schema ID. An artifact of a normalized type with no schema here was checked against the SDK's own schema for its type."
+    },
+    "trace_map": {
+      "$ref": "#/$defs/trace_map",
+      "description": "The collector's trace map, which links each field to the calls and the code behind it. Absent for a collector without one."
+    }
+  },
+  "$defs": {
+    "trace_map": {
+      "type": "object",
+      "required": ["artifacts", "lines"],
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/$defs/field" }
+          },
+          "description": "Each artifact's fields, by artifact path and then by JSON pointer, with each array index written as *. The empty pointer stands for the whole artifact."
+        },
+        "lines": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/line" },
+          "additionalProperties": { "type": "string" },
+          "description": "The text of each source line the fields name, by its file, relative to the collector's module root, and its line number."
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" },
+          "description": "The operations whose failure leaves the field out or changes it, from the test kit's fault matrix over each suite's clean scenario."
+        },
+        "code": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/code" },
+          "description": "Source lines behind the field, from static analysis of the collector's source. Analysis can miss a line, so they are a guide for reading the source."
+        },
+        "gaps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/line" },
+          "description": "The lines that record a gap for the field, from the gap sources the fault matrix's runs record."
+        },
+        "copies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/copy" },
+          "description": "For a normalized field, the detailed fields it copies, from the collector's Mirror calls."
+        }
+      }
+    },
+    "code": {
+      "type": "object",
+      "required": ["role", "line"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": ["assign", "input", "condition", "helper"],
+          "description": "assign for a line that assigns the field, input for one that changes a value the assignment is computed from, condition for the test of an if, loop, or case such a line sits under or a check before it that skips the rest of a loop, and helper for a function the assignment calls."
+        },
+        "line": { "$ref": "#/$defs/line" },
+        "end": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "For a helper, the last line of its function. Every line from line to end is in lines."
+        }
+      }
+    },
+    "line": {
+      "type": "string",
+      "pattern": "^[^:]+:[1-9][0-9]*$",
+      "description": "A file relative to the collector's module root and a line number, such as internal/collector/users.go:120."
+    },
+    "copy": {
+      "type": "object",
+      "required": ["path", "pointer"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "description": "The artifact the copied field is in." },
+        "pointer": { "type": "string", "description": "The copied field, with each array index written as *." }
+      }
+    }
+  }
+}

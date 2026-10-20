@@ -54,11 +54,13 @@
           "x-epack-rollup": {"rows": "inventory", "where": "/mfa_enabled", "as": "count"}
         },
         "mfa_enabled_pct": {
-          "type": ["number", "null"],
+          "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Percentage of users with an active MFA factor. Null when there are no users, or, with a partial gap, when some user's factors could not be read.",
+          "description": "Percentage of users with an active MFA factor, rounded down. Null when there are no users, or, with a partial gap, when some user's factors could not be read.",
           "x-epack-denominator": "total_count",
+          "x-epack-numerator": "mfa_enabled_count",
+          "x-epack-rounding": "floor",
           "x-epack-rollup": {"rows": "inventory", "where": "/mfa_enabled", "as": "pct"}
         },
         "inventory": {

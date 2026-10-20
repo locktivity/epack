@@ -35,17 +35,17 @@ func NewDialer(ctx CollectorContext) *Dialer {
 // one, so it is never a *net.TCPConn.
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	op := operationOr(ctx, "dial")
-	started := d.run.now()
+	call := d.run.beginCall(ctx, op)
 	conn, err := d.dial(WithOperation(ctx, op), network, address)
 	host, _, splitErr := net.SplitHostPort(address)
 	if splitErr != nil {
 		host = address
 	}
-	row := d.run.calls.addCall(op, "DIAL", strings.ToLower(host), "", Classify(err), d.run.now().Sub(started))
+	ref := d.run.calls.addCall(call, "DIAL", strings.ToLower(host), "", Classify(err), d.run.now().Sub(call.started))
 	if err != nil {
 		return conn, err
 	}
-	return &ledgerConn{Conn: conn, calls: d.run.calls, op: op, row: row}, nil
+	return &ledgerConn{Conn: conn, calls: d.run.calls, op: op, ref: ref}, nil
 }
 
 // RootCAs returns the certificate authorities to verify dialed hosts'
@@ -63,7 +63,7 @@ type ledgerConn struct {
 	net.Conn
 	calls  *ledger
 	op     Operation
-	row    int
+	ref    *callRef
 	failed atomic.Bool
 }
 
@@ -91,6 +91,6 @@ func (c *ledgerConn) note(err error) {
 		return
 	}
 	if c.failed.CompareAndSwap(false, true) {
-		c.calls.failCall(c.op, c.row, code)
+		c.calls.failCall(c.op, c.ref, code)
 	}
 }

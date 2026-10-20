@@ -630,3 +630,24 @@ func TestMarkdownEscaping(t *testing.T) {
 		t.Errorf("nameList = %q, want %q", got, want)
 	}
 }
+
+func TestBuildFilesAreNotEvidence(t *testing.T) {
+	index := `{"suite": "s", "scenarios": [{"name": "clean", "dir": "clean", "artifacts": [
+		{"path": "artifacts/s.json", "schema": ""},
+		{"path": "artifacts/s.collector-build.json", "schema": "evidencepack/collector-build@v1"}]}]}`
+	base := writeTree(t, map[string]string{
+		"s/scenarios.json":                         index,
+		"s/clean/artifacts/s.json":                 `{"x": 1}`,
+		"s/clean/artifacts/s.collector-build.json": `{"trace_map": {"lines": {"a.go:1": "old"}}}`,
+	})
+	head := writeTree(t, map[string]string{
+		"s/scenarios.json":                         index,
+		"s/clean/artifacts/s.json":                 `{"x": 2}`,
+		"s/clean/artifacts/s.collector-build.json": `{"trace_map": {"lines": {"a.go:2": "moved"}}}`,
+	})
+	res := runDiff(t, "--base", base, "--head", head)
+	if res.code != exitOK {
+		t.Fatalf("exit %d: %s", res.code, res.stderr)
+	}
+	assertLines(t, lines(t, res.report, "s/clean"), []string{"value_changed artifacts/s.json/x 1 2"})
+}

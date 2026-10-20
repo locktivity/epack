@@ -9,6 +9,8 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+
+	"github.com/locktivity/epack/componentsdk"
 )
 
 const (
@@ -64,11 +66,24 @@ func compareTrees(base, head *tree) *report {
 			sr.Suite, sr.Scenario, sr.Status = h.suite, h.name, statusAdded
 		default:
 			sr.Suite, sr.Scenario, sr.Status = h.suite, h.name, statusCompared
-			sr.Changes = compareFiles(b.files, h.files)
+			sr.Changes = compareFiles(evidence(base, b, head), evidence(head, h, base))
 		}
 		r.Scenarios = append(r.Scenarios, sr)
 	}
 	return r
+}
+
+// evidence returns a scenario's files without the collector build file. It
+// describes the build rather than the evidence, and its trace map moves
+// with every edit to the collector's code.
+func evidence(t *tree, sc *scenario, other *tree) map[string][]byte {
+	out := make(map[string][]byte, len(sc.files))
+	for path, data := range sc.files {
+		if t.schema(sc.key(), path, other) != componentsdk.BuildSchema {
+			out[path] = data
+		}
+	}
+	return out
 }
 
 func compareFiles(base, head map[string][]byte) []change {

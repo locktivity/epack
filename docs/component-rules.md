@@ -94,6 +94,12 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-072 | MUST | File artifacts carry an explicit `path` and no `data` field |
 | COL-073 | MUST | Collectors requiring file artifacts exit with config error (exit 2) when `EPACK_COLLECTOR_OUTPUT_DIR` is not set |
 | COL-074 | MAY | Emit a collector result artifact (`evidencepack/collector-result@v1`) recording each value left out and the API calls made |
+| COL-075 | MUST | A collector result artifact match `evidencepack/collector-result@v1` |
+| COL-076 | SHOULD | Request rows that carry call numbers agree: one call's attempts share its operation and step and number up in order, and only a retry waits |
+| COL-077 | SHOULD | Run steps be named once each, listed in start order, end no earlier than they start, and count their calls consistently |
+| COL-078 | SHOULD | A gap's operation be one the result counts, its call have rows when no failed row was dropped, and a missing permission sit only on a `permission_denied` gap |
+| COL-079 | MUST | A build file (`evidencepack/collector-build@v1`) match its schema and name the collector result's version and commit |
+| COL-080 | MUST | At the trust level, the collector result hold no request rows, gap warnings or error text, or principal ID |
 
 **Protocol envelope format:**
 ```json
@@ -610,6 +616,8 @@ jobs:
 
 Pin it to the commit of the epack release in `go.mod`. `checks` runs the repository's own checks after lint, one command per line. `main-package`, `targets`, `conformance-level`, and `golangci-lint-version` override the defaults.
 
+The `trace-map` job runs `epack sdk map --check` at the epack version in `go.mod`, which rebuilds the trace map from the collectortest suites and the source and fails when the committed one differs, naming the command that rewrites it (see [Trace map](collect-protocol.md#trace-map)). The release workflow runs CI before the SLSA build, so a tag cannot ship a stale map. `trace-map` names the committed map, `docs/schema/trace-map.json` by default. A collector without one passes the job.
+
 To add conformance to another pipeline, run the same steps yourself:
 
 ```yaml
@@ -698,7 +706,10 @@ Some tests are skipped by default because they require specific conditions:
 | Collector: `--secret` without `--config`, so it never uses the credential | C-032, COL-043 |
 | Requires malformed input injection | C-033 |
 | Feature not supported | REM-020 to REM-061 (based on capabilities) |
-| Collector exits 2 (needs config), 3 (needs credentials), or 4 (cannot reach its API) on the run that should collect | C-010, C-020, COL-001, COL-002, COL-005, COL-006, COL-010, COL-011, COL-034, COL-040 |
+| Collector exits 2 (needs config), 3 (needs credentials), or 4 (cannot reach its API) on the run that should collect | C-010, C-020, COL-001, COL-002, COL-005, COL-006, COL-010, COL-011, COL-034, COL-040, COL-075 to COL-080 |
+| Collector writes no collector result, as one built without the SDK does | COL-075 to COL-080 |
+| Collector result without call numbers on its rows, steps, gap calls, or a build file, as from an older SDK | COL-076, COL-077, COL-078, COL-079 |
+| The run that should collect asks for the audit or internal level | COL-080 |
 | Collector exits before SIGTERM is sent | COL-031 |
 | No general-error scenario | COL-041 |
 
@@ -720,8 +731,8 @@ To achieve full conformance, components must pass all testable requirements. Ski
 
 | Level | Count | IDs |
 |-------|-------|-----|
-| MUST | 30 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, COL-001, COL-005, COL-006, COL-010, COL-011, COL-020, COL-021, COL-023, COL-030, COL-031, COL-033, COL-034, COL-035, COL-040, COL-052, COL-060, COL-061, COL-062, COL-071, COL-072, COL-073 |
-| SHOULD | 17 | C-013, C-014, C-022, C-032, COL-002, COL-012, COL-022, COL-024, COL-032, COL-041, COL-042, COL-043, COL-044, COL-050, COL-051, COL-053, COL-063 |
+| MUST | 33 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, COL-001, COL-005, COL-006, COL-010, COL-011, COL-020, COL-021, COL-023, COL-030, COL-031, COL-033, COL-034, COL-035, COL-040, COL-052, COL-060, COL-061, COL-062, COL-071, COL-072, COL-073, COL-075, COL-079, COL-080 |
+| SHOULD | 20 | C-013, C-014, C-022, C-032, COL-002, COL-012, COL-022, COL-024, COL-032, COL-041, COL-042, COL-043, COL-044, COL-050, COL-051, COL-053, COL-063, COL-076, COL-077, COL-078 |
 | MAY | 9 | COL-003, COL-004, COL-013, COL-014, COL-015, COL-016, COL-045, COL-070, COL-074 |
 
 ### Tools

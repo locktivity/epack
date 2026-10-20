@@ -60,11 +60,11 @@ func escapeToken(s string) string {
 }
 
 // artifactsByPath indexes data artifacts by path, leaving out the result
-// artifact.
+// artifact and the build file.
 func artifactsByPath(artifacts []componentsdk.EmittedArtifact) map[string]componentsdk.EmittedArtifact {
 	out := map[string]componentsdk.EmittedArtifact{}
 	for _, a := range artifacts {
-		if a.Schema == componentsdk.ResultSchema || a.File != "" {
+		if sdkArtifact(a) || a.File != "" {
 			continue
 		}
 		out[a.Path] = a

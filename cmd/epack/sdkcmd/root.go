@@ -40,6 +40,13 @@ Run conformance tests to verify your component:
   epack sdk test ./my-component
   epack sdk test .                     # Build and test
 
+TRACE MAP
+
+Write a collector's trace map, which links each field to its calls and code:
+
+  epack sdk map                        # Run the suites and write the map
+  epack sdk map --check                # Fail if the committed map is stale
+
 MOCK DATA
 
 Generate sample inputs for testing:
@@ -52,6 +59,7 @@ Generate sample inputs for testing:
 	cmd.AddCommand(newRunCommand())
 	cmd.AddCommand(newTestCommand())
 	cmd.AddCommand(newMockCommand())
+	cmd.AddCommand(newMapCommand())
 
 	return cmd
 }

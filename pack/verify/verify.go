@@ -30,6 +30,21 @@ type Result struct {
 
 	// TransparencyLog contains info about the transparency log entry, if available.
 	TransparencyLog *TransparencyLogEntry
+
+	// Certificate holds what a keyless signature's certificate says about
+	// the CI run that signed. It is nil for a signature made with a key.
+	Certificate *CertificateClaims
+}
+
+// CertificateClaims is what a Fulcio certificate records about the build
+// that signed, from the run's OIDC token: the CI run, the repository whose
+// workflow ran with its commit and ref, and where the runner ran.
+type CertificateClaims struct {
+	RunInvocationURI       string
+	SourceRepositoryURI    string
+	SourceRepositoryDigest string
+	SourceRepositoryRef    string
+	RunnerEnvironment      string
 }
 
 // TransparencyLogEntry contains information about a transparency log entry.

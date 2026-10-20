@@ -49,6 +49,7 @@ import (
 	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
 	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/internal/safefile"
+	"github.com/locktivity/epack/internal/tracemap"
 )
 
 // Suite describes a collector to check.
@@ -118,8 +119,8 @@ type Suite struct {
 	Insensitive []string
 
 	// SkipChecks turns off checks by name: "determinism", "coverage",
-	// "levels", "population", "nulls", "rollups", "credentials", "faults",
-	// or "sensitivity".
+	// "levels", "population", "nulls", "rollups", "ratios", "credentials",
+	// "faults", "sensitivity", or "tracemap".
 	SkipChecks []string
 
 	// SkipFaults leaves faults out of the matrix by name. A name such as
@@ -130,6 +131,12 @@ type Suite struct {
 	// vendor's throttle sent as a 400 (see StatusFault and
 	// componentsdk.HTTPOptions.ClassifyResponse).
 	Faults []Fault
+
+	// GapOperations turns on a check that every gap a fault leaves names
+	// the faulted operation, as a gap recorded from an error the SDK's
+	// client returned, or from one built with componentsdk.ResponseError,
+	// does. Faults a Semantics entry declares are exempt.
+	GapOperations bool
 }
 
 // Semantic declares what a fault on an operation means, for the cases where
@@ -174,9 +181,9 @@ type Report struct {
 // Violation is one broken rule.
 type Violation struct {
 	// Check names the check: "scenario", "secrets", "schema",
-	// "schema_unusable", "population", "nulls", "rollups", "determinism",
-	// "coverage", "levels", "credentials", "faults", "sensitivity",
-	// "recording", or "export".
+	// "schema_unusable", "population", "nulls", "rollups", "ratios",
+	// "determinism", "coverage", "levels", "credentials", "faults",
+	// "sensitivity", "tracemap", "recording", or "export".
 	Check string
 	// Case names the run within the check, such as
 	// "graph.users.list/500/first" for a fault.
@@ -264,6 +271,9 @@ func Check(s Suite) (*Report, error) {
 		}
 	}
 	k := &kit{suite: s, report: &Report{}, seen: map[string]bool{}, reported: map[Violation]bool{}, canaries: canariesOf(s), ignore: newIgnoreSet(s.Ignore)}
+	if tracing(s) {
+		k.trace = newTracer()
+	}
 	if k.suite.Clock.IsZero() {
 		k.suite.Clock = cmp.Or(s.Scenarios[0].recordedAt, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	}
@@ -305,6 +315,15 @@ func Check(s Suite) (*Report, error) {
 	if !k.skipped("sensitivity") {
 		k.checkSensitivity()
 	}
+	if k.trace != nil {
+		if dir := os.Getenv(tracemap.Env); dir != "" {
+			if err := k.writeTrace(dir); err != nil {
+				k.violate("export", "", "writing the suite's trace under %s: %v", tracemap.Env, err)
+			}
+		} else if !k.skipped("tracemap") {
+			k.checkTraceMap()
+		}
+	}
 	return k.report, nil
 }
 
@@ -313,6 +332,7 @@ type kit struct {
 	report       *Report
 	schemas      map[string]*outputcheck.Schema
 	resultSchema *outputcheck.Schema
+	buildSchema  *outputcheck.Schema
 	ca           *testCA
 	baseline     *componentsdk.InProcessResult
 	baselineNet  *network
@@ -321,6 +341,10 @@ type kit struct {
 	canaries     []canary
 	ignore       ignoreSet
 	export       *exporter
+	trace        *tracer
+	// checkedBuild is the build file checkSchemas validated. Every run of a
+	// suite emits the same one, so it is validated once.
+	checkedBuild []byte
 }
 
 // canary is a secret's value, which no output may contain.
@@ -445,7 +469,14 @@ func (k *kit) runWith(check, name string, scenario Scenario, wrap func(*network)
 		wrap(n)
 	}
 	clock := k.clockFor(scenario)
-	res := componentsdk.RunInProcess(k.suite.Spec, k.suite.Run, componentsdk.InProcessOptions{
+	spec := k.suite.Spec
+	if check != "scenario" {
+		// The trace map changes nothing a run does, and only the scenario
+		// runs' build files are kept, so the other runs, the fault matrix's
+		// hundreds among them, leave its bytes out of theirs.
+		spec.TraceMap = nil
+	}
+	res := componentsdk.RunInProcess(spec, k.suite.Run, componentsdk.InProcessOptions{
 		Name:      k.suite.Name,
 		Config:    config,
 		Secrets:   overlay(k.suite.Secrets, scenario.Secrets),
@@ -472,7 +503,7 @@ func (k *kit) runWith(check, name string, scenario Scenario, wrap func(*network)
 	}
 	k.checkSecrets(check, name, res, outputDir)
 	k.checkSchemas(check, name, res)
-	k.checkOutput(check, name, res)
+	k.checkOutput(check, name, res, componentsdk.LevelOf(config))
 	if !k.skipped("credentials") {
 		k.checkHostLists(res)
 	}
@@ -530,6 +561,13 @@ func (k *kit) runScenarios() {
 			r := res
 			k.baseline = &r
 			k.baselineNet = n
+		}
+		switch {
+		case k.trace == nil || res.Result == nil:
+		case i == 0:
+			k.trace.setBaseline(res)
+		default:
+			k.trace.addFields(res)
 		}
 	}
 }
@@ -606,6 +644,9 @@ func (k *kit) loadSchemas() error {
 	if k.resultSchema, err = outputcheck.Compile(componentsdk.ResultSchemaJSON()); err != nil {
 		return fmt.Errorf("result schema: %w", err)
 	}
+	if k.buildSchema, err = outputcheck.Compile(componentsdk.BuildSchemaJSON()); err != nil {
+		return fmt.Errorf("build file schema: %w", err)
+	}
 	k.schemas = map[string]*outputcheck.Schema{}
 	for key, file := range k.suite.Schemas {
 		abs, err := filepath.Abs(file)
@@ -627,8 +668,15 @@ func (k *kit) checkSchemas(check, name string, res componentsdk.InProcessResult)
 			continue
 		}
 		sch := k.suiteSchema(a.Path, a.Schema)
-		if a.Schema == componentsdk.ResultSchema {
+		switch a.Schema {
+		case componentsdk.ResultSchema:
 			sch = k.resultSchema
+		case componentsdk.BuildSchema:
+			if bytes.Equal(a.Data, k.checkedBuild) {
+				continue
+			}
+			k.checkedBuild = a.Data
+			sch = k.buildSchema
 		}
 		if sch == nil {
 			continue
@@ -769,6 +817,9 @@ func (k *kit) runFaultMatrix() {
 					continue
 				}
 				k.judgeFault(label, op.Name, pos, f, res, in.changedCalls())
+				if k.trace != nil {
+					k.trace.addFault(op.Name, res)
+				}
 			}
 		}
 	}
@@ -821,8 +872,16 @@ func (k *kit) judgeFault(label, op, position string, f Fault, res componentsdk.I
 	for _, p := range compareRuns(base.Artifacts, res.Artifacts, gapsOf(res.Result), k.ignore) {
 		k.violate("faults", label, "%s", p)
 	}
+	left := newGaps(base.Result, res.Result)
+	if k.suite.GapOperations {
+		for _, g := range left {
+			if g.Operation != op {
+				k.violate("faults", label, "%s", misnamedGap(g, op))
+			}
+		}
+	}
 	wrongCode := false
-	for _, g := range newGaps(base.Result, res.Result) {
+	for _, g := range left {
 		if f.Expect != "" && g.Code != f.Expect {
 			wrongCode = true
 			k.violate("faults", label, "the gap at %s %s has code %s, want %s", g.Path, g.Pointer, g.Code, f.Expect)
@@ -859,6 +918,15 @@ func leftGap(clean, faulted *componentsdk.CollectorResult, code componentsdk.Cod
 		}
 	}
 	return false
+}
+
+// misnamedGap explains a gap a fault on op left that names another operation
+// or none.
+func misnamedGap(g componentsdk.Gap, op string) string {
+	if g.Operation == "" {
+		return fmt.Sprintf("the gap at %s %s names no operation, want %s: record it from the error the call returned, or from one built with componentsdk.ResponseError", g.Path, pointerLabel(g.Pointer), op)
+	}
+	return fmt.Sprintf("the gap at %s %s names operation %s, want %s, whose fault left it", g.Path, pointerLabel(g.Pointer), g.Operation, op)
 }
 
 // unrecorded explains a fault that reached op and left no new gap: the run

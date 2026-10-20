@@ -3,7 +3,10 @@
 package componentconf
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +17,10 @@ import (
 
 	"github.com/locktivity/epack/internal/componentsdk"
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/tracemap"
 )
+
+var updateTraceMap = flag.Bool("update-trace-map", false, "rewrite the collector scaffold's trace map template from a build of the scaffold")
 
 // TestScaffoldedCollectorConforms builds what `epack sdk new collector`
 // generates against this checkout, runs its tests, which include the
@@ -107,5 +113,72 @@ func goCmd(t *testing.T, dir string, args ...string) {
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+// TestScaffoldTraceMapIsCurrent builds the trace map of what `epack sdk new
+// collector` generates, as `epack sdk map` would, and compares it with the
+// map the scaffold ships. With -update-trace-map it rewrites the template
+// instead, from a scaffold whose names are distinct enough to put back as
+// template actions.
+func TestScaffoldTraceMapIsCurrent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a scaffolded collector")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("the collector build depends on internal/execsafe")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "epack-collector-zz-name")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := componentsdk.Scaffold(componentsdk.ScaffoldOptions{
+		TargetDir: dir, Name: "zz-name", Kind: componenttypes.KindCollector, ModulePath: "github.com/OWNER/epack-collector-zz-name",
+	}); err != nil {
+		t.Fatalf("Scaffold() = %v", err)
+	}
+	useCheckout(t, dir, repoRoot)
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOFLAGS", "-mod=mod")
+	var output bytes.Buffer
+	m, _, err := tracemap.Build(context.Background(), tracemap.Options{Dir: dir, Output: &output})
+	if err != nil {
+		t.Fatalf("building the scaffold's trace map: %v\n%s", err, output.String())
+	}
+	built, err := tracemap.Encode(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *updateTraceMap {
+		template := string(built)
+		for _, r := range []struct{ value, action string }{
+			{"ZZ_NAME_API_TOKEN", "{{.TokenEnv}}"},
+			{"epack-collector-zz-name", "{{.BinaryName}}"},
+			{"zz-name", "{{.Name}}"},
+			{"zzname", "{{.VendorPackage}}"},
+		} {
+			template = strings.ReplaceAll(template, r.value, r.action)
+		}
+		if strings.Contains(template, "github.com/OWNER") || strings.Contains(template, "zz") {
+			t.Fatal("the map holds a name the template cannot fill in")
+		}
+		path := filepath.Join(repoRoot, "internal", "componentsdk", "templates", "collector.trace-map.json.tmpl")
+		if err := os.WriteFile(path, []byte(template), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	shipped, err := os.ReadFile(filepath.Join(dir, "docs", "schema", "trace-map.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(shipped, built) {
+		var old tracemap.Map
+		_ = json.Unmarshal(shipped, &old)
+		t.Errorf("the scaffold's trace map is stale (%s); rewrite it with go test -tags conformance ./internal/componentconf -run TestScaffoldTraceMapIsCurrent -update-trace-map", tracemap.Diff(&old, m))
 	}
 }

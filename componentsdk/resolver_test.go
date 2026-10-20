@@ -104,7 +104,7 @@ func TestResolverNamesAndCountsEachLookup(t *testing.T) {
 			t.Errorf("%s = %+v, want one NOERROR call", op.Name, op)
 		}
 	}
-	rows, _ := c.run.calls.requests()
+	rows, _, _ := c.run.calls.requests()
 	methods := make([]string, 0, len(rows))
 	for _, row := range rows {
 		methods = append(methods, row.Method)
@@ -156,7 +156,7 @@ func TestResolverTellsAnswersFromFailures(t *testing.T) {
 	if op.Errors[CodeVendorError] != 3 || op.Errors[CodeTimeout] != 1 || len(op.Errors) != 2 {
 		t.Errorf("errors = %v, want vendor_error for SERVFAIL, REFUSED, and the socket error, timeout for the timeout, and none for NXDOMAIN", op.Errors)
 	}
-	rows, _ := c.run.calls.requests()
+	rows, _, _ := c.run.calls.requests()
 	got := make([]string, 0, len(rows))
 	for _, row := range rows {
 		got = append(got, row.Host+":"+row.Rcode+":"+string(row.Error))

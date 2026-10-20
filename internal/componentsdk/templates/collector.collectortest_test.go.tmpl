@@ -52,6 +52,9 @@ func TestCollectorKit(t *testing.T) {
 			{{.VendorPackage}}.OpListUsers,
 			{{.VendorPackage}}.OpListFactors,
 		},
+		// Every gap a fault leaves names the faulted call, since the client
+		// builds its errors with componentsdk.ResponseError.
+		GapOperations: true,
 	})
 }
 

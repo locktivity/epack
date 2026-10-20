@@ -14,6 +14,7 @@ See [docs/](docs/) for usage documentation.
 | `internal/collector/gaps.go` | Records each value the collector leaves out, and why |
 | `internal/{{.VendorPackage}}/client.go` | The API client, with one named operation per call |
 | `docs/schema/v1.0.0.json` | The artifact's JSON Schema, with the `x-epack` annotations the output checks read |
+| `docs/schema/trace-map.json` | The trace map, which links each field to the calls and the code behind it |
 
 ## Development
 
@@ -48,6 +49,16 @@ RECORD_ORGANIZATION=your-org {{.TokenEnv}}=your-token make record
 ```
 
 To test against the recording, load it with `collectortest.LoadScenario` in place of the scenario in `fixtures_test.go`.
+
+### Trace map
+
+`docs/schema/trace-map.json` links each field of the artifact to the calls whose failure leaves it out or changes it, the source lines behind it, and the lines that record its gaps. The collector embeds it, and every pack carries it in the collector's build file. After a change to the code, rewrite it and commit the result:
+
+```bash
+make trace-map
+```
+
+CI fails when the committed map is stale, and so does `go test` when the suite finds a call or field the map lacks.
 
 ### Conformance
 

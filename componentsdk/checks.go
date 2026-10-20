@@ -25,6 +25,10 @@ const (
 	CheckNulls = outputcheck.CheckNulls
 	// CheckRollups reports an x-epack-rollup its rows do not give.
 	CheckRollups = outputcheck.CheckRollups
+	// CheckRatios reports a percentage or boolean that does not follow from
+	// its x-epack-numerator and x-epack-denominator, rounded as its
+	// x-epack-rounding says.
+	CheckRatios = outputcheck.CheckRatios
 )
 
 // CheckFinding is one problem the output checks found when the collector
@@ -121,10 +125,11 @@ func schemaFor(spec map[string]*artifactSchema, path, schemaID string) *outputch
 	return s
 }
 
-// outputChecks runs the schema, population, nulls, and rollups checks on each
-// data artifact that has a schema. It keeps the first maxCheckFindings
-// findings and counts the rest. Messages are redacted like gap details.
-func outputChecks(set *emittedSet, spec map[string]*artifactSchema, gaps []Gap, secrets []string) ([]CheckFinding, int) {
+// outputChecks runs the schema, population, nulls, rollups, and ratios checks
+// on each data artifact that has a schema, as emitted at level. It keeps the
+// first maxCheckFindings findings and counts the rest. Messages are redacted
+// like gap details.
+func outputChecks(set *emittedSet, spec map[string]*artifactSchema, gaps []Gap, secrets []string, level Level) ([]CheckFinding, int) {
 	var found []outputcheck.Finding
 	for _, key := range sortedKeys(spec) {
 		if err := spec[key].err; err != nil {
@@ -148,7 +153,7 @@ func outputChecks(set *emittedSet, spec map[string]*artifactSchema, gaps []Gap, 
 			continue
 		}
 		found = append(found, outputcheck.Validate(s, e.path, doc)...)
-		found = append(found, outputcheck.Check(s, e.path, doc, located)...)
+		found = append(found, outputcheck.Check(s, e.path, doc, located, string(level))...)
 	}
 	dropped := 0
 	if len(found) > maxCheckFindings {

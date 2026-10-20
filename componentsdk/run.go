@@ -29,6 +29,9 @@ type run struct {
 	sleep    func(context.Context, time.Duration) error
 	clock    func() time.Time
 	schemas  map[string]*artifactSchema
+	// status prints a status line for the run, as StartStep does with a
+	// step's title.
+	status func(string)
 
 	mu        sync.Mutex
 	rng       *rand.Rand
@@ -60,6 +63,23 @@ func newRun(spec CollectorSpec, name, runID string, base http.RoundTripper, seed
 // create.
 type runCarrier interface {
 	sdkRun() *run
+}
+
+type runKey struct{}
+
+// withRun returns a copy of ctx that carries r, so StartStep can reach the
+// run from the contexts a collector derives from CollectorContext.Context.
+func withRun(ctx context.Context, r *run) context.Context {
+	return context.WithValue(ctx, runKey{}, r)
+}
+
+// runFrom returns the run ctx carries, or nil.
+func runFrom(ctx context.Context) *run {
+	if ctx == nil {
+		return nil
+	}
+	r, _ := ctx.Value(runKey{}).(*run)
+	return r
 }
 
 // runOf returns ctx's run. A context the SDK did not create gets a fresh run
@@ -130,6 +150,11 @@ func (r *run) now() time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return t.Add(r.waited)
+}
+
+// sinceStart is how long after the run's start t falls, in milliseconds.
+func (r *run) sinceStart(t time.Time) int64 {
+	return max(t.Sub(r.started).Milliseconds(), 0)
 }
 
 // Now returns the current time for ctx's run. Collectors stamp artifacts and
