@@ -29,7 +29,8 @@ type ScrubRules struct {
 
 	// Patterns rewrite their matches after the literals, in order. A
 	// replacement can refer to the pattern's groups, as in
-	// regexp.Regexp.ReplaceAllString.
+	// regexp.Regexp.ReplaceAllString. In a CBOR body they match each string
+	// and map key on its own.
 	Patterns []ScrubPattern
 
 	// Keep lists values the built-in rules leave as they are, such as a
@@ -1296,6 +1297,14 @@ func (c *scanner) scan(where, text string) {
 }
 
 func (c *scanner) textAt(s string, depth int) {
+	c.marks(s)
+	rewriteRuns(s, depth, c)
+}
+
+// marks flags what the scrub check knows by its form alone: secrets, tenant
+// identifiers, and credentials with a known shape. Long tokens are judged
+// apart, by rewriteRuns.
+func (c *scanner) marks(s string) {
 	for _, f := range c.forms {
 		if strings.Contains(s, f.form) {
 			c.add("the value of secret " + f.key)
@@ -1334,7 +1343,6 @@ func (c *scanner) textAt(s string, depth int) {
 			c.add("an AWS access key ID")
 		}
 	}
-	rewriteRuns(s, depth, c)
 }
 
 func (c *scanner) token(run string) string {
@@ -1367,7 +1375,11 @@ func scanScenario(s Scenario, secrets []canary, identifiers map[string]string) [
 				c.scan(at+".header."+name, v)
 			}
 		}
-		c.scan(at+".body", r.Body)
+		if isCBOR(r.Header.Get("Content-Type")) {
+			c.scanCBOR(at+".body", []byte(r.Body))
+		} else {
+			c.scan(at+".body", r.Body)
+		}
 	}
 	for i, rec := range s.DNS {
 		at := fmt.Sprintf("dns[%d]", i)

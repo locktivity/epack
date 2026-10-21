@@ -2,9 +2,10 @@ module github.com/locktivity/epack
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
+	github.com/aws/smithy-go v1.25.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/godbus/dbus/v5 v5.1.0

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,10 +126,16 @@ var (
 // recorded_at. A replay runs at that moment, so it sends the same
 // time-based requests.
 //
+// Record scrubs a response body as text, except a body whose Content-Type is
+// application/cbor or ends in +cbor, such as AWS services on the Smithy RPC
+// v2 CBOR protocol send: it decodes that body, scrubs each value, and
+// encodes it again.
+//
 // Record writes nothing and returns an error when a call, lookup, or dial
 // got no answer, such as one that timed out, when an endpoint does what the
-// kit's endpoints cannot replay, or when the scrub check finds a secret's
-// value or a token in the scrubbed result.
+// kit's endpoints cannot replay, when a response body is neither text nor
+// CBOR that decodes, or when the scrub check finds a secret's value or a
+// token in the scrubbed result.
 func Record(opts RecordOptions) (RecordReport, error) {
 	switch {
 	case opts.Run == nil:
@@ -264,15 +271,24 @@ func scrubbedScenario(name string, opts RecordOptions, scrub *scrubber, exchange
 	keep := headerFilter(opts.Headers)
 	sc := Scenario{Name: name, Config: config}
 	for _, ex := range exchanges {
-		if !utf8.Valid(ex.body) {
-			return Scenario{}, nil, fmt.Errorf("the response to %s is not text, and a recording holds text bodies only", ex)
+		cborBody := isCBOR(ex.header.Get("Content-Type"))
+		if !cborBody && !utf8.Valid(ex.body) {
+			return Scenario{}, nil, fmt.Errorf("the response to %s is neither text nor CBOR, and a recording holds only bodies it can scrub", ex)
 		}
 		r := Response{Operation: ex.op, Method: ex.method, Status: ex.status, URL: scrub.url(ex.url)}
 		if r.RequestBody, err = scrub.requestBody(ex.reqType, ex.reqBody); err != nil {
 			return Scenario{}, nil, fmt.Errorf("%s: %w", ex, err)
 		}
 		r.Header = scrub.headers(ex.header, keep)
-		r.Body = scrub.text(string(ex.body))
+		if cborBody {
+			body, err := scrub.cborBody(ex.body)
+			if err != nil {
+				return Scenario{}, nil, fmt.Errorf("the CBOR response to %s: %w", ex, err)
+			}
+			r.Body = string(body)
+		} else {
+			r.Body = scrub.text(string(ex.body))
+		}
 		sc.Responses = append(sc.Responses, r)
 	}
 	setTimes(sc.Responses)
@@ -1013,18 +1029,23 @@ func LoadScenario(path string) (Scenario, error) {
 }
 
 // responseFile is a Response as a recording holds it. A body that is a JSON
-// object or array is written as JSON, so it reads and diffs as JSON; any
-// other body is a string.
+// object or array is written as JSON, so it reads and diffs as JSON. A body
+// that is not UTF-8, such as CBOR, is written as base64, with body_encoding
+// set to base64, so it replays byte for byte. Any other body is a string.
 type responseFile struct {
-	Operation   string          `json:"operation,omitempty"`
-	Method      string          `json:"method,omitempty"`
-	URL         string          `json:"url,omitempty"`
-	RequestBody json.RawMessage `json:"request_body,omitempty"`
-	Times       int             `json:"times,omitempty"`
-	Status      int             `json:"status,omitempty"`
-	Header      http.Header     `json:"header,omitempty"`
-	Body        json.RawMessage `json:"body,omitempty"`
+	Operation    string          `json:"operation,omitempty"`
+	Method       string          `json:"method,omitempty"`
+	URL          string          `json:"url,omitempty"`
+	RequestBody  json.RawMessage `json:"request_body,omitempty"`
+	Times        int             `json:"times,omitempty"`
+	Status       int             `json:"status,omitempty"`
+	Header       http.Header     `json:"header,omitempty"`
+	BodyEncoding string          `json:"body_encoding,omitempty"`
+	Body         json.RawMessage `json:"body,omitempty"`
 }
+
+// base64Body is the body_encoding of a body written as base64.
+const base64Body = "base64"
 
 // MarshalJSON writes r as a recording holds it.
 func (r Response) MarshalJSON() ([]byte, error) {
@@ -1032,13 +1053,20 @@ func (r Response) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, err := embedJSON(r.Body)
+	var body json.RawMessage
+	encoding := ""
+	if utf8.ValidString(r.Body) {
+		body, err = embedJSON(r.Body)
+	} else {
+		encoding = base64Body
+		body, err = marshalJSON(base64.StdEncoding.EncodeToString([]byte(r.Body)))
+	}
 	if err != nil {
 		return nil, err
 	}
 	return marshalJSON(responseFile{
 		Operation: r.Operation, Method: r.Method, URL: r.URL, RequestBody: requestBody,
-		Times: r.Times, Status: r.Status, Header: r.Header, Body: body,
+		Times: r.Times, Status: r.Status, Header: r.Header, BodyEncoding: encoding, Body: body,
 	})
 }
 
@@ -1054,7 +1082,15 @@ func (r *Response) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	body, err := unembedJSON(f.Body)
+	var body string
+	switch f.BodyEncoding {
+	case "":
+		body, err = unembedJSON(f.Body)
+	case base64Body:
+		body, err = unbase64(f.Body)
+	default:
+		err = fmt.Errorf("body_encoding %q is not %s", f.BodyEncoding, base64Body)
+	}
 	if err != nil {
 		return err
 	}
@@ -1094,4 +1130,20 @@ func unembedJSON(raw json.RawMessage) (string, error) {
 		return "", err
 	}
 	return b.String(), nil
+}
+
+// unbase64 reads a body written as a base64 string.
+func unbase64(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", fmt.Errorf("a base64 body must be a string: %w", err)
+	}
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return "", fmt.Errorf("the body is not base64: %w", err)
+	}
+	return string(b), nil
 }

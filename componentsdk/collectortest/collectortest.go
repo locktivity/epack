@@ -174,7 +174,7 @@ type Report struct {
 	// Violations lists every rule a run broke.
 	Violations []Violation
 	// Unmutated lists operations whose responses the sensitivity check could
-	// not change, such as XML or CBOR bodies, so it proved nothing for them.
+	// not change, such as XML bodies, so it proved nothing for them.
 	Unmutated []string
 }
 
@@ -960,7 +960,11 @@ func (k *kit) checkSensitivity() {
 			if !containsString(ops[i], op.Name) {
 				continue
 			}
-			if body, ok := mutateJSON(mutated.Responses[i].Body); ok {
+			mutate := mutateJSON
+			if isCBOR(mutated.Responses[i].Header.Get("Content-Type")) {
+				mutate = mutateCBOR
+			}
+			if body, ok := mutate(mutated.Responses[i].Body); ok {
 				mutated.Responses[i].Body = body
 				changed = true
 			}

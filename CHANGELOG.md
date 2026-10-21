@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-21
+
+### ENHANCEMENTS
+
+- collectortest: `Record` can record CBOR responses, such as those from AWS
+  services on the Smithy RPC v2 CBOR protocol. It decodes each
+  `application/cbor` body and scrubs its strings, map keys, and integers with
+  the same rules as text bodies. The scrub check reads the decoded body too,
+  and a body that does not decode fails the recording
+- collectortest: recordings store a body that is not UTF-8 as base64 with
+  `"body_encoding": "base64"`. Replays return the same bytes
+- collectortest: the sensitivity check changes CBOR responses the same way it
+  changes JSON responses. It used to skip them and list the operation as
+  unmutated
+
+### BUG FIXES
+
+- epack is built with Go 1.26.10, which fixes GO-2026-6809 in `crypto/x509`
+
+### UPGRADE NOTES
+
+- collectortest imports `github.com/aws/smithy-go`. After bumping epack in a
+  collector, `go mod tidy` adds it as an indirect requirement
+
 ## [0.9.3] - 2026-10-20
 
 ### BUG FIXES
