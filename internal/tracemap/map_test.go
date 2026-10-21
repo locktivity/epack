@@ -100,6 +100,21 @@ func TestFromTracesFailsForAnOperationThatFeedsNothing(t *testing.T) {
 	}
 }
 
+func TestUncodedListsFieldsOperationsFeedWithNoCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads a module, which compiles the SDK")
+	}
+	traces := fixtureTraces()
+	traces[0].Artifacts["artifacts/fixture.json"]["/raw"] = &FieldTrace{Operations: []string{"fixture.people.list"}}
+	m, err := FromTraces(context.Background(), fixtureDir, traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Uncoded(); !reflect.DeepEqual(got, []string{"artifacts/fixture.json /raw"}) {
+		t.Errorf("Uncoded = %q, want the field written only through a type that encodes itself", got)
+	}
+}
+
 func TestDiffCountsFieldsAndLines(t *testing.T) {
 	old := &Map{Artifacts: map[string]map[string]*Field{"a.json": {"/x": {Operations: []string{"op"}}, "/y": {}}}, Lines: Lines{"a.go:1": "x"}}
 	current := &Map{Artifacts: map[string]map[string]*Field{"a.json": {"/x": {}, "/z": {}}}, Lines: Lines{"a.go:1": "y"}}

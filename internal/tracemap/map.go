@@ -313,6 +313,21 @@ func (m *Map) Summary() string {
 	return count(fields, "field", "fields") + " in " + count(len(m.Artifacts), "artifact", "artifacts") + ", " + count(len(m.Lines), "source line", "source lines")
 }
 
+// Uncoded lists each field that operations feed but that has no code, as its
+// artifact path and pattern, in order.
+func (m *Map) Uncoded() []string {
+	var out []string
+	for _, path := range slices.Sorted(maps.Keys(m.Artifacts)) {
+		fields := m.Artifacts[path]
+		for _, pattern := range slices.Sorted(maps.Keys(fields)) {
+			if f := fields[pattern]; f != nil && len(f.Operations) > 0 && len(f.Code) == 0 {
+				out = append(out, path+" "+pattern)
+			}
+		}
+	}
+	return out
+}
+
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return one

@@ -33,6 +33,9 @@ type analysis struct {
 	rootsBySchema map[string][]types.Type
 	sites         map[*types.Var][]*site
 	funcs         map[*types.Func]*ast.FuncDecl
+	// encodedFields holds each MarshalJSON method of the module that encodes
+	// one field of its receiver alone, with the index path to the field.
+	encodedFields map[*types.Func][]int
 }
 
 // site is one place that writes a variable or field: a statement, a
@@ -52,6 +55,7 @@ func newAnalysis(prog *program) *analysis {
 		rootsBySchema: map[string][]types.Type{},
 		sites:         map[*types.Var][]*site{},
 		funcs:         map[*types.Func]*ast.FuncDecl{},
+		encodedFields: map[*types.Func][]int{},
 	}
 	for _, p := range prog.pkgs {
 		for _, f := range p.files {
@@ -84,6 +88,9 @@ func (a *analysis) visit(info *types.Info, n ast.Node, stack []ast.Node) {
 	case *ast.FuncDecl:
 		if fn, ok := info.Defs[n.Name].(*types.Func); ok && n.Body != nil {
 			a.funcs[fn] = n
+			if path := encodedField(info, n); path != nil {
+				a.encodedFields[fn] = path
+			}
 		}
 	case *ast.AssignStmt:
 		for i, lhs := range n.Lhs {
@@ -242,19 +249,21 @@ func deref(t types.Type) types.Type {
 	}
 }
 
-// fieldAt returns the deepest struct field the pointer pattern passes
-// through from the root type, or nil when the pattern leaves the types the
-// analysis can follow: an interface, a type with its own MarshalJSON, or a
-// name no field encodes as.
-func fieldAt(root types.Type, pattern string) *types.Var {
+// fieldsAt returns the struct fields whose value is the JSON the pointer
+// pattern names from the root type: the deepest field the pattern passes
+// through, and each field a MarshalJSON of the module encodes alone from
+// it. It returns nil when the pattern leaves the types the analysis can
+// follow: an interface, a type that encodes itself any other way, or a name
+// no field encodes as.
+func (a *analysis) fieldsAt(root types.Type, pattern string) []*types.Var {
 	if pattern == "" {
 		return nil
 	}
-	var last *types.Var
+	var fields []*types.Var
 	t := root
 	for _, token := range strings.Split(pattern[1:], "/") {
-		t = deref(t)
-		if marshalsItself(t) {
+		var ok bool
+		if fields, t, ok = a.encoded(fields, t); !ok {
 			return nil
 		}
 		switch u := t.Underlying().(type) {
@@ -263,7 +272,7 @@ func fieldAt(root types.Type, pattern string) *types.Var {
 			if f == nil {
 				return nil
 			}
-			last, t = f, f.Type()
+			fields, t = []*types.Var{f}, f.Type()
 		case *types.Slice:
 			if token != "*" {
 				return nil
@@ -280,7 +289,83 @@ func fieldAt(root types.Type, pattern string) *types.Var {
 			return nil
 		}
 	}
-	return last
+	fields, _, _ = a.encoded(fields, t)
+	return fields
+}
+
+// encoded follows each MarshalJSON of the module that encodes one field
+// alone, from t to the type whose JSON it writes, adding each field it
+// passes to fields. It reports false at an interface or at a type that
+// encodes itself any other way.
+func (a *analysis) encoded(fields []*types.Var, t types.Type) ([]*types.Var, types.Type, bool) {
+	seen := map[types.Type]bool{}
+	for t = deref(t); marshalsItself(t); t = deref(t) {
+		f := a.encodedFieldOf(t)
+		if f == nil || seen[t] {
+			return fields, t, false
+		}
+		seen[t] = true
+		fields, t = append(fields, f), f.Type()
+	}
+	return fields, t, true
+}
+
+// encodedFieldOf returns the field of t that its MarshalJSON encodes alone,
+// in t itself when t is an instance of a generic type, or nil.
+func (a *analysis) encodedFieldOf(t types.Type) *types.Var {
+	obj, index, _ := types.LookupFieldOrMethod(types.NewPointer(t), true, nil, "MarshalJSON")
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return nil
+	}
+	path, ok := a.encodedFields[fn.Origin()]
+	if !ok {
+		return nil
+	}
+	// A promoted method encodes a field of the embedded struct it is
+	// declared on.
+	var f *types.Var
+	for _, i := range append(index[:len(index)-1:len(index)-1], path...) {
+		st, ok := deref(t).Underlying().(*types.Struct)
+		if !ok || i >= st.NumFields() {
+			return nil
+		}
+		f = st.Field(i)
+		t = f.Type()
+	}
+	return f
+}
+
+// encodedField returns the index path to the field of its receiver that a
+// MarshalJSON method encodes alone, as one whose body is
+// return json.Marshal(l.Record) does, or nil.
+func encodedField(info *types.Info, decl *ast.FuncDecl) []int {
+	if decl.Name.Name != "MarshalJSON" || decl.Recv == nil || len(decl.Recv.List) != 1 || len(decl.Recv.List[0].Names) != 1 || len(decl.Body.List) != 1 {
+		return nil
+	}
+	ret, ok := decl.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != 1 {
+		return nil
+	}
+	call, ok := ast.Unparen(ret.Results[0]).(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return nil
+	}
+	if fn := callee(info, call); fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != "encoding/json" || fn.Name() != "Marshal" {
+		return nil
+	}
+	sel, ok := ast.Unparen(call.Args[0]).(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	recv, ok := ast.Unparen(sel.X).(*ast.Ident)
+	if !ok || info.Uses[recv] == nil || info.Uses[recv] != info.Defs[decl.Recv.List[0].Names[0]] {
+		return nil
+	}
+	if s := info.Selections[sel]; s != nil && s.Kind() == types.FieldVal {
+		return s.Index()
+	}
+	return nil
 }
 
 func unescapeToken(t string) string {
@@ -384,9 +469,7 @@ func (a *analysis) fieldLines(path, schema, pattern string) []tracedLine {
 	}
 	var targets []*types.Var
 	for _, r := range roots {
-		if f := fieldAt(r, pattern); f != nil {
-			targets = append(targets, f)
-		}
+		targets = append(targets, a.fieldsAt(r, pattern)...)
 	}
 	if len(targets) == 0 {
 		return nil

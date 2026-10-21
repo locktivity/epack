@@ -1,7 +1,8 @@
 // Package collector is a small collector the trace map tests build a map
 // for. Its code has the shapes the analysis follows: a percentage from two
 // counts, a loop with checks that skip items, a helper, rows built in a
-// loop, an embedded struct, and a normalized copy.
+// loop, an embedded struct, a record a MarshalJSON encodes alone, one whose
+// generic type is instantiated in two packages, and a normalized copy.
 package collector
 
 import (
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"example.com/epack-collector-fixture/internal/billing"
 	"github.com/locktivity/epack/componentsdk"
 )
 
@@ -24,10 +26,12 @@ const (
 // Output is the detailed artifact.
 type Output struct {
 	Meta
-	Org    string `json:"org"`
-	Users  *Users `json:"users,omitempty"`
-	Raw    Opaque `json:"raw"`
-	Hidden string `json:"-"`
+	Org     string          `json:"org"`
+	Users   *Users          `json:"users,omitempty"`
+	Raw     Opaque          `json:"raw"`
+	Plan    Lookup[Plan]    `json:"plan"`
+	Billing billing.Account `json:"billing"`
+	Hidden  string          `json:"-"`
 }
 
 // Meta is embedded, so its fields encode at the top level.
@@ -50,11 +54,26 @@ type User struct {
 	MFA   *bool  `json:"has_active_mfa"`
 }
 
-// Opaque encodes itself, so the analysis cannot follow its fields.
-type Opaque struct{ v string }
+// Opaque encodes itself as other than one of its fields, so the analysis
+// cannot follow them.
+type Opaque struct {
+	V string `json:"v"`
+}
 
-// MarshalJSON writes the value alone.
-func (o Opaque) MarshalJSON() ([]byte, error) { return json.Marshal(o.v) }
+// MarshalJSON writes a label in place of the fields.
+func (o Opaque) MarshalJSON() ([]byte, error) { return json.Marshal("opaque " + o.V) }
+
+// Lookup encodes as its record alone, so the analysis follows the record's
+// fields.
+type Lookup[T any] struct{ Record *T }
+
+// MarshalJSON writes the record, or null.
+func (l Lookup[T]) MarshalJSON() ([]byte, error) { return json.Marshal(l.Record) }
+
+// Plan is the org's plan.
+type Plan struct {
+	Name string `json:"name"`
+}
 
 // Normalized is the normalized artifact, whose path is not a constant.
 type Normalized struct {
@@ -167,6 +186,11 @@ func Run(ctx componentsdk.CollectorContext) error {
 	}
 	gaps := gapLog{rec: componentsdk.Records(ctx)}
 	out := &Output{Meta: Meta{CollectedAt: componentsdk.Now(ctx).UTC().Format("2006-01-02")}, Org: org.Name}
+	out.Raw.V = org.Name
+	out.Plan.Record = &Plan{Name: org.Name}
+	var owner billing.Optional[billing.Owner]
+	owner.Value = &billing.Owner{Name: org.Name}
+	out.Billing.Owner = owner
 	var people []person
 	if err := get(opPeople, "/people", &people); err != nil {
 		gaps.notCollected(err, "/users")

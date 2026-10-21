@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-20
+
+### BUG FIXES
+
+- `epack sdk map` finds the code behind a field whose type has a
+  `MarshalJSON` of exactly `return json.Marshal(v.Field)`, such as a generic
+  `Lookup[T]` that encodes as its record, and behind the fields under it.
+  It used to stop at any type with its own `MarshalJSON`
+- `epack sdk map` finds a write through a generic type that two of the
+  collector's packages instantiate with the same type arguments
+
+### ENHANCEMENTS
+
+- `epack sdk map` prints a warning on stderr for each field that operations
+  feed but that has no code. The warning does not change the exit code
+
 ## [0.9.1] - 2026-10-20
 
 ### BUG FIXES

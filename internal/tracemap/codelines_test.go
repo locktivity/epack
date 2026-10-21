@@ -104,11 +104,41 @@ func TestFieldAtStopsWhereTheJSONIsNotTheFields(t *testing.T) {
 			t.Errorf("%q: lines %v, want none", pattern, got)
 		}
 	}
-	if fieldAt(a.roots["artifacts/fixture.json"][0], "/raw/v") != nil {
-		t.Error("a type with its own MarshalJSON has no fields to follow")
+	if len(a.fieldsAt(a.roots["artifacts/fixture.json"][0], "/raw/v")) != 0 {
+		t.Error("a type that encodes itself other than as one of its fields has no fields to follow")
 	}
 	if got := a.fieldLines("artifacts/other.json", "", "/users/total_count"); got != nil {
 		t.Errorf("an artifact no code emits has no lines, got %v", got)
+	}
+}
+
+func TestFieldLinesFollowAMarshalerThatEncodesOneField(t *testing.T) {
+	a := fixtureAnalysis(t)
+	want := []string{
+		"assign out.Plan.Record = &Plan{Name: org.Name}",
+		`condition if err := get(opOrg, "/org", &org); err != nil {`,
+		`condition if org.Name == "" {`,
+	}
+	for _, pattern := range []string{"/plan", "/plan/name"} {
+		got := linesOf(t, a, "artifacts/fixture.json", "", pattern)
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%s lines =\n%s\nwant\n%s", pattern, strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
+}
+
+func TestFieldLinesFollowAGenericTypeInstantiatedInTwoPackages(t *testing.T) {
+	a := fixtureAnalysis(t)
+	got := linesOf(t, a, "artifacts/fixture.json", "", "/billing/owner")
+	want := []string{
+		"assign out.Billing.Owner = owner",
+		"assign owner.Value = &billing.Owner{Name: org.Name}",
+		`condition if err := get(opOrg, "/org", &org); err != nil {`,
+		`condition if org.Name == "" {`,
+		"input var owner billing.Optional[billing.Owner]",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("lines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 

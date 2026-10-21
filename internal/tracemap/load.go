@@ -98,6 +98,10 @@ func loadProgram(ctx context.Context, dir string) (*program, error) {
 		}
 		return fromExport.Import(path)
 	})
+	// With one context for every package, a generic type instantiated with the
+	// same type arguments in two packages is one type, so its fields are the
+	// same variables in both.
+	ctxt := types.NewContext()
 	// go list -deps lists each package after the packages it imports, so the
 	// module's own imports are checked before the packages that need them.
 	for _, lp := range mains {
@@ -115,7 +119,7 @@ func loadProgram(ctx context.Context, dir string) (*program, error) {
 			sp.files = append(sp.files, f)
 		}
 		var typeErrs []error
-		conf := types.Config{Importer: imp, Error: func(err error) { typeErrs = append(typeErrs, err) }}
+		conf := types.Config{Context: ctxt, Importer: imp, Error: func(err error) { typeErrs = append(typeErrs, err) }}
 		pkg, _ := conf.Check(lp.ImportPath, prog.fset, sp.files, sp.info)
 		if len(typeErrs) > 0 {
 			return nil, fmt.Errorf("type-checking %s: %w", lp.ImportPath, typeErrs[0])

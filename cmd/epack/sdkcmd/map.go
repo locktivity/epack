@@ -36,6 +36,8 @@ with COLLECTORTEST_MAP set, so each collectortest suite writes what its fault
 matrix found, merges the suites, and adds the lines static analysis of the
 module's source finds. It fails when the tests fail, and when an operation a
 suite lists feeds no field unless the suite lists it in Suite.Insensitive.
+It prints a warning for each field that operations feed but that has no code.
+The warning does not change the exit code.
 
 Commit the map beside the collector's schema and pass it, embedded with
 go:embed, as CollectorSpec.TraceMap: the SDK writes it into the build file
@@ -75,6 +77,7 @@ func runMap(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	warnUncoded(cmd.ErrOrStderr(), m)
 	shown := filepath.ToSlash(rel)
 	if mapCheck {
 		if err := checkMap(root, rel, m); err != nil {
@@ -92,6 +95,20 @@ func runMap(cmd *cobra.Command, args []string) error {
 	}
 	out.Print("%s Wrote %s: %s\n", p.Green("✓"), shown, m.Summary())
 	return nil
+}
+
+// warnUncoded writes to w each field of m that operations feed but that has
+// no code. It does not go through the output writer, because redaction would
+// replace some pointers, such as a long camelCase one, with [REDACTED].
+func warnUncoded(w io.Writer, m *tracemap.Map) {
+	uncoded := m.Uncoded()
+	if len(uncoded) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "warning: the trace map has no code for %d of the fields that operations feed:\n", len(uncoded))
+	for _, field := range uncoded {
+		_, _ = fmt.Fprintf(w, "  %s\n", field)
+	}
 }
 
 // checkMap compares the map committed at rel, beneath root, with m, the one
