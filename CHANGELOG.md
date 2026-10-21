@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-20
+
+### BUG FIXES
+
+- `epack sdk map` finds the code behind the fields of a type whose
+  `MarshalJSON` marshals the value as a local type with the same fields, such
+  as `type entry Entry` and then `json.Marshal(entry(e))`. This also works when
+  the method deletes keys from the result, or embeds the value in a struct
+  that overrides a field's `json` tag to drop `omitempty`
+
 ## [0.9.2] - 2026-10-20
 
 ### BUG FIXES

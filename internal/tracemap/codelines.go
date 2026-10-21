@@ -34,7 +34,8 @@ type analysis struct {
 	sites         map[*types.Var][]*site
 	funcs         map[*types.Func]*ast.FuncDecl
 	// encodedFields holds each MarshalJSON method of the module that encodes
-	// one field of its receiver alone, with the index path to the field.
+	// one field of its receiver alone, with the index path to the field, or
+	// the receiver's own fields under their own names, with an empty path.
 	encodedFields map[*types.Func][]int
 }
 
@@ -88,7 +89,7 @@ func (a *analysis) visit(info *types.Info, n ast.Node, stack []ast.Node) {
 	case *ast.FuncDecl:
 		if fn, ok := info.Defs[n.Name].(*types.Func); ok && n.Body != nil {
 			a.funcs[fn] = n
-			if path := encodedField(info, n); path != nil {
+			if path, ok := encodedField(info, n); ok {
 				a.encodedFields[fn] = path
 			}
 		}
@@ -252,9 +253,10 @@ func deref(t types.Type) types.Type {
 // fieldsAt returns the struct fields whose value is the JSON the pointer
 // pattern names from the root type: the deepest field the pattern passes
 // through, and each field a MarshalJSON of the module encodes alone from
-// it. It returns nil when the pattern leaves the types the analysis can
-// follow: an interface, a type that encodes itself any other way, or a name
-// no field encodes as.
+// it. A MarshalJSON of the module that writes its receiver's own fields is
+// followed as though the type had none. It returns nil when the pattern
+// leaves the types the analysis can follow: an interface, a type that
+// encodes itself any other way, or a name no field encodes as.
 func (a *analysis) fieldsAt(root types.Type, pattern string) []*types.Var {
 	if pattern == "" {
 		return nil
@@ -295,14 +297,18 @@ func (a *analysis) fieldsAt(root types.Type, pattern string) []*types.Var {
 
 // encoded follows each MarshalJSON of the module that encodes one field
 // alone, from t to the type whose JSON it writes, adding each field it
-// passes to fields. It reports false at an interface or at a type that
-// encodes itself any other way.
+// passes to fields, and stops at one that writes its receiver's own fields.
+// It reports false at an interface or at a type that encodes itself any
+// other way.
 func (a *analysis) encoded(fields []*types.Var, t types.Type) ([]*types.Var, types.Type, bool) {
 	seen := map[types.Type]bool{}
 	for t = deref(t); marshalsItself(t); t = deref(t) {
-		f := a.encodedFieldOf(t)
-		if f == nil || seen[t] {
+		f, ok := a.encodedFieldOf(t)
+		if !ok || seen[t] {
 			return fields, t, false
+		}
+		if f == nil {
+			return fields, t, true
 		}
 		seen[t] = true
 		fields, t = append(fields, f), f.Type()
@@ -311,61 +317,345 @@ func (a *analysis) encoded(fields []*types.Var, t types.Type) ([]*types.Var, typ
 }
 
 // encodedFieldOf returns the field of t that its MarshalJSON encodes alone,
-// in t itself when t is an instance of a generic type, or nil.
-func (a *analysis) encodedFieldOf(t types.Type) *types.Var {
+// in t itself when t is an instance of a generic type, or nil when the
+// method writes t's own fields. It reports false when t encodes itself any
+// other way.
+func (a *analysis) encodedFieldOf(t types.Type) (*types.Var, bool) {
 	obj, index, _ := types.LookupFieldOrMethod(types.NewPointer(t), true, nil, "MarshalJSON")
 	fn, ok := obj.(*types.Func)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	path, ok := a.encodedFields[fn.Origin()]
 	if !ok {
-		return nil
+		return nil, false
 	}
 	// A promoted method encodes a field of the embedded struct it is
-	// declared on.
+	// declared on, or that struct's own fields.
 	var f *types.Var
 	for _, i := range append(index[:len(index)-1:len(index)-1], path...) {
 		st, ok := deref(t).Underlying().(*types.Struct)
 		if !ok || i >= st.NumFields() {
-			return nil
+			return nil, false
 		}
 		f = st.Field(i)
 		t = f.Type()
 	}
-	return f
+	return f, true
 }
 
-// encodedField returns the index path to the field of its receiver that a
-// MarshalJSON method encodes alone, as one whose body is
-// return json.Marshal(l.Record) does, or nil.
-func encodedField(info *types.Info, decl *ast.FuncDecl) []int {
-	if decl.Name.Name != "MarshalJSON" || decl.Recv == nil || len(decl.Recv.List) != 1 || len(decl.Recv.List[0].Names) != 1 || len(decl.Body.List) != 1 {
+// encodedField returns the index path from a MarshalJSON method's receiver
+// to the value the method encodes, or false for a method that encodes
+// anything else. The path leads to one field for a body of
+// return json.Marshal(l.Record), and is empty for a method that writes the
+// receiver's own fields, as ownFields describes.
+func encodedField(info *types.Info, decl *ast.FuncDecl) ([]int, bool) {
+	if decl.Name.Name != "MarshalJSON" || decl.Recv == nil || len(decl.Recv.List) != 1 || len(decl.Recv.List[0].Names) != 1 {
+		return nil, false
+	}
+	recv, ok := info.Defs[decl.Recv.List[0].Names[0]].(*types.Var)
+	if !ok {
+		return nil, false
+	}
+	if path := oneField(info, decl.Body, recv); path != nil {
+		return path, true
+	}
+	return nil, ownFields(info, decl, recv)
+}
+
+// oneField returns the index path to the field of recv that a body of
+// return json.Marshal(l.Record) encodes alone, or nil.
+func oneField(info *types.Info, body *ast.BlockStmt, recv *types.Var) []int {
+	if len(body.List) != 1 {
 		return nil
 	}
-	ret, ok := decl.Body.List[0].(*ast.ReturnStmt)
+	ret, ok := body.List[0].(*ast.ReturnStmt)
 	if !ok || len(ret.Results) != 1 {
 		return nil
 	}
 	call, ok := ast.Unparen(ret.Results[0]).(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 {
-		return nil
-	}
-	if fn := callee(info, call); fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != "encoding/json" || fn.Name() != "Marshal" {
+	if !ok || !callsJSON(info, call, "Marshal") {
 		return nil
 	}
 	sel, ok := ast.Unparen(call.Args[0]).(*ast.SelectorExpr)
 	if !ok {
 		return nil
 	}
-	recv, ok := ast.Unparen(sel.X).(*ast.Ident)
-	if !ok || info.Uses[recv] == nil || info.Uses[recv] != info.Defs[decl.Recv.List[0].Names[0]] {
+	if x, ok := ast.Unparen(sel.X).(*ast.Ident); !ok || info.Uses[x] != recv {
 		return nil
 	}
 	if s := info.Selections[sel]; s != nil && s.Kind() == types.FieldVal {
 		return s.Index()
 	}
 	return nil
+}
+
+// ownFields reports whether a MarshalJSON method on a struct value writes
+// the receiver's own fields under their own names, so each key of its JSON
+// is one the fields encode as without the method. It holds when each
+// []byte the method returns is nil or comes from json.Marshal of one of
+// these:
+//   - the receiver converted to a type with the same fields and tags that
+//     does not encode itself, such as entry(e) after type entry Entry;
+//   - a struct literal that sets only such a conversion, on an embedded
+//     field, and whose other fields redeclare fields of the receiver with
+//     other tag options, such as without omitempty, so they are written
+//     zero under the receiver's names;
+//   - a map[string]json.RawMessage, declared without a value, that such
+//     JSON is unmarshaled into and that otherwise only has keys deleted.
+//
+// A variable that holds the []byte must take it only from such a call and
+// be only returned or unmarshaled. Named results are not followed, since a
+// deferred call could change them after the return.
+func ownFields(info *types.Info, decl *ast.FuncDecl, recv *types.Var) bool {
+	st, ok := recv.Type().Underlying().(*types.Struct)
+	results := decl.Type.Results
+	if !ok || results == nil || len(results.List) == 0 || len(results.List[0].Names) > 0 {
+		return false
+	}
+	m := &marshaler{info: info, recv: recv, fields: st, body: decl.Body, uses: map[*types.Var][]use{}, checking: map[*types.Var]bool{}}
+	var stack []ast.Node
+	ast.Inspect(decl.Body, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		if id, ok := n.(*ast.Ident); ok {
+			if v, ok := info.ObjectOf(id).(*types.Var); ok {
+				m.uses[v] = append(m.uses[v], use{id: id, parent: stack[len(stack)-1], grand: stack[len(stack)-2]})
+			}
+		}
+		stack = append(stack, n)
+		return true
+	})
+	var returns []*ast.ReturnStmt
+	ast.Inspect(decl.Body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			returns = append(returns, n)
+		}
+		return true
+	})
+	for _, ret := range returns {
+		switch {
+		case len(ret.Results) == 1 && m.marshaled(ret.Results[0]):
+		case len(ret.Results) == 2 && m.bytes(ret.Results[0]):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// marshaler is a MarshalJSON method as ownFields reads it.
+type marshaler struct {
+	info   *types.Info
+	recv   *types.Var
+	fields *types.Struct
+	body   *ast.BlockStmt
+	// uses holds each identifier in the body that names a variable.
+	uses map[*types.Var][]use
+	// checking holds the variables bytes is checking, so that one that
+	// leads back to itself ends the search.
+	checking map[*types.Var]bool
+}
+
+// use is an identifier that names a variable, with its parent and the
+// parent's parent.
+type use struct {
+	id            *ast.Ident
+	parent, grand ast.Node
+}
+
+// marshaled reports whether e is json.Marshal of a value that writes the
+// receiver's own fields.
+func (m *marshaler) marshaled(e ast.Expr) bool {
+	call, ok := ast.Unparen(e).(*ast.CallExpr)
+	return ok && callsJSON(m.info, call, "Marshal") && m.value(call.Args[0])
+}
+
+// value reports whether e is the receiver converted to a type with its
+// fields, a struct literal that embeds such a conversion, or a map that
+// holds the conversion's JSON.
+func (m *marshaler) value(e ast.Expr) bool {
+	switch e := ast.Unparen(e).(type) {
+	case *ast.CallExpr:
+		return m.conversion(e)
+	case *ast.CompositeLit:
+		return m.wrapper(e)
+	case *ast.Ident:
+		return m.keys(e)
+	}
+	return false
+}
+
+// conversion reports whether call converts the receiver to a type with the
+// same fields and tags that does not encode itself. The tags are compared
+// too, since a conversion between struct types ignores them.
+func (m *marshaler) conversion(call *ast.CallExpr) bool {
+	tv, ok := m.info.Types[call.Fun]
+	if !ok || !tv.IsType() || !types.Identical(tv.Type.Underlying(), m.fields) || marshalsItself(tv.Type) {
+		return false
+	}
+	id, ok := ast.Unparen(call.Args[0]).(*ast.Ident)
+	return ok && m.info.Uses[id] == m.recv
+}
+
+// wrapper reports whether lit is a struct literal whose one element sets an
+// embedded field to the receiver's conversion, and whose other fields each
+// redeclare a field of the receiver: the same name and type under the same
+// JSON name, so only the tag's options differ and the field is written
+// zero.
+func (m *marshaler) wrapper(lit *ast.CompositeLit) bool {
+	st, ok := m.info.TypeOf(lit).(*types.Struct)
+	if !ok || len(lit.Elts) != 1 {
+		return false
+	}
+	kv, ok := lit.Elts[0].(*ast.KeyValueExpr)
+	if !ok {
+		return false
+	}
+	key, isKey := kv.Key.(*ast.Ident)
+	conv, ok := ast.Unparen(kv.Value).(*ast.CallExpr)
+	if !isKey || !ok || !m.conversion(conv) {
+		return false
+	}
+	for i := range st.NumFields() {
+		f := st.Field(i)
+		name, _, _ := strings.Cut(reflect.StructTag(st.Tag(i)).Get("json"), ",")
+		if f == m.info.Uses[key] {
+			if !f.Embedded() || name != "" || !types.Identical(f.Type(), m.info.TypeOf(conv)) {
+				return false
+			}
+			continue
+		}
+		if name == "" {
+			name = f.Name()
+		}
+		if own := jsonField(m.fields, name); f.Embedded() || own == nil || own.Name() != f.Name() || !types.Identical(own.Type(), f.Type()) {
+			return false
+		}
+	}
+	return true
+}
+
+// keys reports whether id names a map[string]json.RawMessage, declared in
+// the body without a value, that holds the receiver's own JSON less some
+// keys: the only JSON unmarshaled into it is bytes that bytes accepts, and
+// it is otherwise only marshaled or has keys deleted.
+func (m *marshaler) keys(id *ast.Ident) bool {
+	v, ok := m.info.Uses[id].(*types.Var)
+	if !ok || !m.local(v) {
+		return false
+	}
+	mt, ok := v.Type().Underlying().(*types.Map)
+	if !ok || !types.Identical(mt.Key(), types.Typ[types.String]) || !isRawMessage(v.Pkg(), mt.Elem()) {
+		return false
+	}
+	for _, u := range m.uses[v] {
+		switch p := u.parent.(type) {
+		case *ast.ValueSpec:
+			if len(p.Values) > 0 {
+				return false
+			}
+		case *ast.CallExpr:
+			if p.Args[0] != u.id || (!callsBuiltin(m.info, p, "delete") && !callsJSON(m.info, p, "Marshal")) {
+				return false
+			}
+		case *ast.UnaryExpr:
+			call, ok := u.grand.(*ast.CallExpr)
+			if !ok || p.Op != token.AND || !callsJSON(m.info, call, "Unmarshal") || call.Args[1] != p || !m.bytes(call.Args[0]) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// bytes reports whether e is nil or names a variable, declared in the body,
+// that holds the receiver's own JSON: each assignment to it takes the
+// []byte from json.Marshal of a value that value accepts, and it is
+// otherwise only returned or unmarshaled.
+func (m *marshaler) bytes(e ast.Expr) bool {
+	e = ast.Unparen(e)
+	if tv, ok := m.info.Types[e]; ok && tv.IsNil() {
+		return true
+	}
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	v, ok := m.info.Uses[id].(*types.Var)
+	if !ok || !m.local(v) {
+		return false
+	}
+	if m.checking[v] {
+		return true
+	}
+	m.checking[v] = true
+	defer delete(m.checking, v)
+	for _, u := range m.uses[v] {
+		switch p := u.parent.(type) {
+		case *ast.AssignStmt:
+			if len(p.Lhs) != 2 || p.Lhs[0] != u.id || !m.marshaled(p.Rhs[0]) {
+				return false
+			}
+		case *ast.ValueSpec:
+			if len(p.Values) > 0 {
+				return false
+			}
+		case *ast.ReturnStmt:
+			if len(p.Results) != 2 || p.Results[0] != u.id {
+				return false
+			}
+		case *ast.CallExpr:
+			if !callsJSON(m.info, p, "Unmarshal") || p.Args[0] != u.id {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// local reports whether v is declared in the method's body, so that every
+// use of it is in uses.
+func (m *marshaler) local(v *types.Var) bool {
+	return m.body.Pos() <= v.Pos() && v.Pos() < m.body.End()
+}
+
+// callsJSON reports whether call calls the named function of encoding/json.
+func callsJSON(info *types.Info, call *ast.CallExpr, name string) bool {
+	fn := callee(info, call)
+	return fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == "encoding/json" && fn.Name() == name
+}
+
+// isRawMessage reports whether t is encoding/json's RawMessage, as pkg
+// imports it. With the jsonv2 experiment, RawMessage is an alias of
+// jsontext.Value.
+func isRawMessage(pkg *types.Package, t types.Type) bool {
+	for _, imp := range pkg.Imports() {
+		if imp.Path() == "encoding/json" {
+			obj := imp.Scope().Lookup("RawMessage")
+			return obj != nil && types.Identical(t, obj.Type())
+		}
+	}
+	return false
+}
+
+// callsBuiltin reports whether call calls the named builtin function.
+func callsBuiltin(info *types.Info, call *ast.CallExpr, name string) bool {
+	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
+	if !ok {
+		return false
+	}
+	b, ok := info.Uses[id].(*types.Builtin)
+	return ok && b.Name() == name
 }
 
 func unescapeToken(t string) string {

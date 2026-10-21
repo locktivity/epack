@@ -127,6 +127,46 @@ func TestFieldLinesFollowAMarshalerThatEncodesOneField(t *testing.T) {
 	}
 }
 
+func TestFieldLinesFollowAMarshalerThatWritesItsOwnFields(t *testing.T) {
+	a := fixtureAnalysis(t)
+	for pattern, want := range map[string][]string{
+		"/teams/*/name": {
+			`assign out.Teams = append(out.Teams, Team{Name: org.Name, leftOut: []string{"size"}})`,
+			`condition if err := get(opOrg, "/org", &org); err != nil {`,
+			`condition if org.Name == "" {`,
+		},
+		"/summary/named_pct": {
+			"assign out.Summary = Summary{Teams: len(out.Teams), NamedPct: percent(named, len(out.Teams))}",
+			"condition for _, t := range out.Teams {",
+			`condition if err := get(opOrg, "/org", &org); err != nil {`,
+			`condition if org.Name == "" {`,
+			`condition if t.Name != "" {`,
+			"helper func percent(n, total int) *int { ... }",
+			"input named := 0",
+			"input named++",
+			`input out.Teams = append(out.Teams, Team{Name: org.Name, leftOut: []string{"size"}})`,
+		},
+	} {
+		got := linesOf(t, a, "artifacts/fixture.json", "", pattern)
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%s lines =\n%s\nwant\n%s", pattern, strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
+}
+
+func TestFieldLinesStopAtAMarshalerThatChangesItsOwnFields(t *testing.T) {
+	a := fixtureAnalysis(t)
+	for pattern, how := range map[string]string{
+		"/renamed/name":   "converts itself to a type whose tags differ",
+		"/masked/key":     "sets the field its wrapper redeclares",
+		"/rewritten/name": "replaces a value in its JSON",
+	} {
+		if got := a.fieldLines("artifacts/fixture.json", "", pattern); len(got) != 0 {
+			t.Errorf("%s: lines %v, want none from a MarshalJSON that %s", pattern, got, how)
+		}
+	}
+}
+
 func TestFieldLinesFollowAGenericTypeInstantiatedInTwoPackages(t *testing.T) {
 	a := fixtureAnalysis(t)
 	got := linesOf(t, a, "artifacts/fixture.json", "", "/billing/owner")

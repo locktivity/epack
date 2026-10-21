@@ -2,7 +2,9 @@
 // for. Its code has the shapes the analysis follows: a percentage from two
 // counts, a loop with checks that skip items, a helper, rows built in a
 // loop, an embedded struct, a record a MarshalJSON encodes alone, one whose
-// generic type is instantiated in two packages, and a normalized copy.
+// generic type is instantiated in two packages, rows and a summary whose
+// MarshalJSON writes their own fields through a local type, and a
+// normalized copy.
 package collector
 
 import (
@@ -26,12 +28,17 @@ const (
 // Output is the detailed artifact.
 type Output struct {
 	Meta
-	Org     string          `json:"org"`
-	Users   *Users          `json:"users,omitempty"`
-	Raw     Opaque          `json:"raw"`
-	Plan    Lookup[Plan]    `json:"plan"`
-	Billing billing.Account `json:"billing"`
-	Hidden  string          `json:"-"`
+	Org       string          `json:"org"`
+	Users     *Users          `json:"users,omitempty"`
+	Raw       Opaque          `json:"raw"`
+	Plan      Lookup[Plan]    `json:"plan"`
+	Billing   billing.Account `json:"billing"`
+	Teams     []Team          `json:"teams"`
+	Summary   Summary         `json:"summary"`
+	Renamed   Renamed         `json:"renamed"`
+	Masked    Masked          `json:"masked"`
+	Rewritten Rewritten       `json:"rewritten"`
+	Hidden    string          `json:"-"`
 }
 
 // Meta is embedded, so its fields encode at the top level.
@@ -63,6 +70,56 @@ type Opaque struct {
 // MarshalJSON writes a label in place of the fields.
 func (o Opaque) MarshalJSON() ([]byte, error) { return json.Marshal("opaque " + o.V) }
 
+// Renamed converts itself to a type whose tags differ, so its JSON names
+// are not its fields'.
+type Renamed struct {
+	Name string `json:"name"`
+}
+
+// MarshalJSON writes the name as label.
+func (r Renamed) MarshalJSON() ([]byte, error) {
+	type renamed struct {
+		Name string `json:"label"`
+	}
+	return json.Marshal(renamed(r))
+}
+
+// Masked redeclares its field in a wrapper that sets it, so the JSON under
+// the field's name is not the field's.
+type Masked struct {
+	Key string `json:"key"`
+}
+
+// MarshalJSON writes the key masked.
+func (m Masked) MarshalJSON() ([]byte, error) {
+	type masked Masked
+	return json.Marshal(struct {
+		masked
+		Key string `json:"key"`
+	}{masked: masked(m), Key: "****"})
+}
+
+// Rewritten replaces a value in its own JSON, so the JSON under the field's
+// name is not the field's.
+type Rewritten struct {
+	Name string `json:"name"`
+}
+
+// MarshalJSON writes the name replaced.
+func (r Rewritten) MarshalJSON() ([]byte, error) {
+	type rewritten Rewritten
+	raw, err := json.Marshal(rewritten(r))
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	fields["name"] = json.RawMessage(`"rewritten"`)
+	return json.Marshal(fields)
+}
+
 // Lookup encodes as its record alone, so the analysis follows the record's
 // fields.
 type Lookup[T any] struct{ Record *T }
@@ -73,6 +130,50 @@ func (l Lookup[T]) MarshalJSON() ([]byte, error) { return json.Marshal(l.Record)
 // Plan is the org's plan.
 type Plan struct {
 	Name string `json:"name"`
+}
+
+// Team is one row. Its MarshalJSON leaves out the keys in leftOut, for
+// values the collector could not read.
+type Team struct {
+	Name    string `json:"name"`
+	Size    *int   `json:"size"`
+	leftOut []string
+}
+
+// MarshalJSON writes the team without the keys in leftOut.
+func (t Team) MarshalJSON() ([]byte, error) {
+	type team Team
+	raw, err := json.Marshal(team(t))
+	if err != nil || len(t.leftOut) == 0 {
+		return raw, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	for _, key := range t.leftOut {
+		delete(fields, key)
+	}
+	return json.Marshal(fields)
+}
+
+// Summary counts the teams. Its MarshalJSON writes named_pct as null, not
+// leaving it out, when there are no teams to take it over.
+type Summary struct {
+	Teams    int  `json:"teams"`
+	NamedPct *int `json:"named_pct,omitempty"`
+}
+
+// MarshalJSON writes named_pct as null when there are no teams.
+func (s Summary) MarshalJSON() ([]byte, error) {
+	type summary Summary
+	if s.Teams != 0 {
+		return json.Marshal(summary(s))
+	}
+	return json.Marshal(struct {
+		summary
+		NamedPct *int `json:"named_pct"`
+	}{summary: summary(s)})
 }
 
 // Normalized is the normalized artifact, whose path is not a constant.
@@ -191,6 +292,17 @@ func Run(ctx componentsdk.CollectorContext) error {
 	var owner billing.Optional[billing.Owner]
 	owner.Value = &billing.Owner{Name: org.Name}
 	out.Billing.Owner = owner
+	out.Teams = append(out.Teams, Team{Name: org.Name, leftOut: []string{"size"}})
+	named := 0
+	for _, t := range out.Teams {
+		if t.Name != "" {
+			named++
+		}
+	}
+	out.Summary = Summary{Teams: len(out.Teams), NamedPct: percent(named, len(out.Teams))}
+	out.Renamed.Name = org.Name
+	out.Masked.Key = org.Name
+	out.Rewritten.Name = org.Name
 	var people []person
 	if err := get(opPeople, "/people", &people); err != nil {
 		gaps.notCollected(err, "/users")
