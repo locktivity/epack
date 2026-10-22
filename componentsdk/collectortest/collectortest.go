@@ -89,6 +89,12 @@ type Suite struct {
 	// sensitivity checks run on it.
 	Scenarios []Scenario
 
+	// Codec encodes the JSON bodies of a recording made with
+	// RecordOptions.Codec. It also decodes request bodies for RequestBody to
+	// match, and response bodies for the sensitivity check to change. See
+	// BodyCodec.
+	Codec BodyCodec
+
 	// Required names the operations allowed to fail the whole run, such as
 	// the sign-in.
 	Required []string
@@ -958,18 +964,24 @@ func (k *kit) checkSensitivity() {
 		mutated := k.suite.Scenarios[0]
 		mutated.Responses = append([]Response(nil), mutated.Responses...)
 		changed := false
+		var failure error
 		for i := range mutated.Responses {
 			if !containsString(ops[i], op.Name) {
 				continue
 			}
-			mutate := mutateJSON
-			if isCBOR(mutated.Responses[i].Header.Get("Content-Type")) {
-				mutate = mutateCBOR
+			body, ok, err := k.mutateBody(op.Name, mutated.Responses[i])
+			if err != nil {
+				failure = fmt.Errorf("response %d: %w", i, err)
+				break
 			}
-			if body, ok := mutate(mutated.Responses[i].Body); ok {
+			if ok {
 				mutated.Responses[i].Body = body
 				changed = true
 			}
+		}
+		if failure != nil {
+			k.violate("sensitivity", op.Name, "the check cannot change %s's responses: %v", op.Name, failure)
+			continue
 		}
 		if !changed {
 			k.report.Unmutated = append(k.report.Unmutated, op.Name)

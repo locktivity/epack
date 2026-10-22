@@ -1375,7 +1375,7 @@ func scanScenario(s Scenario, secrets []canary, identifiers map[string]string) [
 				c.scan(at+".header."+name, v)
 			}
 		}
-		if isCBOR(r.Header.Get("Content-Type")) {
+		if isCBOR(r.Header.Get("Content-Type")) && !r.decoded {
 			c.scanCBOR(at+".body", []byte(r.Body))
 		} else {
 			c.scan(at+".body", r.Body)

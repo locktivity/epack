@@ -64,6 +64,12 @@ type RecordOptions struct {
 	// header that begins with the rest.
 	Headers []string
 
+	// Codec decodes bodies a recording could not otherwise hold, such as a
+	// gRPC API's protobuf messages, into JSON the recording holds instead.
+	// A run replays the recording only with the same codec as Suite.Codec.
+	// See BodyCodec.
+	Codec BodyCodec
+
 	// resolver, dial, and roots stand in for the network's DNS, its
 	// connections, and the system's certificate authorities in the kit's
 	// own tests.
@@ -129,12 +135,14 @@ var (
 // Record scrubs a response body as text, except a body whose Content-Type is
 // application/cbor or ends in +cbor, such as AWS services on the Smithy RPC
 // v2 CBOR protocol send: it decodes that body, scrubs each value, and
-// encodes it again.
+// encodes it again. A body RecordOptions.Codec takes is scrubbed as the JSON
+// the codec decodes it to, and the recording keeps that JSON.
 //
 // Record writes nothing and returns an error when a call, lookup, or dial
 // got no answer, such as one that timed out, when an endpoint does what the
 // kit's endpoints cannot replay, when a response body is neither text nor
-// CBOR that decodes, or when the scrub check finds a secret's value or a
+// CBOR that decodes, when the codec cannot decode a body it takes or encode
+// it once scrubbed, or when the scrub check finds a secret's value or a
 // token in the scrubbed result.
 func Record(opts RecordOptions) (RecordReport, error) {
 	switch {
@@ -271,22 +279,36 @@ func scrubbedScenario(name string, opts RecordOptions, scrub *scrubber, exchange
 	keep := headerFilter(opts.Headers)
 	sc := Scenario{Name: name, Config: config}
 	for _, ex := range exchanges {
-		cborBody := isCBOR(ex.header.Get("Content-Type"))
-		if !cborBody && !utf8.Valid(ex.body) {
-			return Scenario{}, nil, fmt.Errorf("the response to %s is neither text nor CBOR, and a recording holds only bodies it can scrub", ex)
-		}
 		r := Response{Operation: ex.op, Method: ex.method, Status: ex.status, URL: scrub.url(ex.url)}
-		if r.RequestBody, err = scrub.requestBody(ex.reqType, ex.reqBody); err != nil {
+		reqBody, err := decodeRequest(opts.Codec, ex.op, ex.reqHeader, ex.reqBody)
+		if err != nil {
+			return Scenario{}, nil, fmt.Errorf("the request body of %s: %s", ex, scrub.text(err.Error()))
+		}
+		if reqBody == nil {
+			reqBody = ex.reqBody
+		}
+		if r.RequestBody, err = scrub.requestBody(ex.reqHeader.Get("Content-Type"), reqBody); err != nil {
 			return Scenario{}, nil, fmt.Errorf("%s: %w", ex, err)
 		}
 		r.Header = scrub.headers(ex.header, keep)
-		if cborBody {
+		decoded, err := decodeResponse(opts.Codec, ex.op, r.Header, ex.body)
+		switch {
+		case err != nil:
+			return Scenario{}, nil, fmt.Errorf("the response to %s: %s", ex, scrub.text(err.Error()))
+		case decoded != nil:
+			if r.Body, err = scrub.decodedBody(decoded); err != nil {
+				return Scenario{}, nil, fmt.Errorf("the response to %s: %w", ex, err)
+			}
+			r.decoded = true
+		case isCBOR(ex.header.Get("Content-Type")):
 			body, err := scrub.cborBody(ex.body)
 			if err != nil {
 				return Scenario{}, nil, fmt.Errorf("the CBOR response to %s: %w", ex, err)
 			}
 			r.Body = string(body)
-		} else {
+		case !utf8.Valid(ex.body):
+			return Scenario{}, nil, fmt.Errorf("the response to %s is neither text nor CBOR, and a recording holds only bodies it can scrub or RecordOptions.Codec decodes", ex)
+		default:
 			r.Body = scrub.text(string(ex.body))
 		}
 		sc.Responses = append(sc.Responses, r)
@@ -308,7 +330,7 @@ func scrubbedScenario(name string, opts RecordOptions, scrub *scrubber, exchange
 		files = append(files, f)
 		sc.Endpoints = append(sc.Endpoints, ep)
 	}
-	if _, err := NewReplay(sc); err != nil {
+	if _, err := newReplay(sc, opts.Codec); err != nil {
 		return Scenario{}, nil, fmt.Errorf("the scrubbed recording does not replay: %w", err)
 	}
 	if _, err := newDNSServer(sc); err != nil {
@@ -384,18 +406,18 @@ func matchKey(r Response) string {
 
 // exchange is one attempt of a call in a recorded run.
 type exchange struct {
-	op      string
-	call    uint64
-	attempt int
-	method  string
-	url     *url.URL
-	reqType string
-	reqBody []byte
-	status  int
-	header  http.Header
-	body    []byte
-	err     error
-	retried bool
+	op        string
+	call      uint64
+	attempt   int
+	method    string
+	url       *url.URL
+	reqHeader http.Header
+	reqBody   []byte
+	status    int
+	header    http.Header
+	body      []byte
+	err       error
+	retried   bool
 }
 
 // String names the call by its method, its URL with query values left out,
@@ -415,7 +437,7 @@ type httpRecorder struct {
 func (r *httpRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	op, _ := componentsdk.OperationOf(req.Context())
 	target := *req.URL
-	ex := &exchange{op: op.Name, call: componentsdk.CallOf(req.Context()), attempt: componentsdk.AttemptOf(req.Context()), method: req.Method, url: &target, reqType: req.Header.Get("Content-Type")}
+	ex := &exchange{op: op.Name, call: componentsdk.CallOf(req.Context()), attempt: componentsdk.AttemptOf(req.Context()), method: req.Method, url: &target, reqHeader: req.Header.Clone()}
 	defer r.add(ex)
 	if req.Body != nil && req.Body != http.NoBody {
 		body, err := readRecorded(req.Body)
@@ -985,7 +1007,8 @@ func writeRecording(path string, r recording) error {
 // its config, when it has one, as their whole configuration. Check runs the
 // scrub check on each scenario LoadScenario loaded, and when Suite.Clock is
 // zero and the first scenario is a recording, the other scenarios run at
-// the moment it was recorded too.
+// the moment it was recorded too. A recording made with RecordOptions.Codec
+// replays only in runs with the same codec as Suite.Codec.
 func LoadScenario(path string) (Scenario, error) {
 	data, err := safefile.ReadFile(path, limits.Artifact)
 	if err != nil {
@@ -1016,8 +1039,10 @@ func LoadScenario(path string) (Scenario, error) {
 		}
 		s.Endpoints = append(s.Endpoints, ep)
 	}
-	if _, err := NewReplay(s); err != nil {
-		return Scenario{}, fmt.Errorf("%s: %w", path, err)
+	for i := range s.Responses {
+		if _, err := newReplayEntry(s, i); err != nil {
+			return Scenario{}, fmt.Errorf("%s: %w", path, err)
+		}
 	}
 	if _, err := newDNSServer(s); err != nil {
 		return Scenario{}, fmt.Errorf("%s: %w", path, err)
@@ -1031,7 +1056,9 @@ func LoadScenario(path string) (Scenario, error) {
 // responseFile is a Response as a recording holds it. A body that is a JSON
 // object or array is written as JSON, so it reads and diffs as JSON. A body
 // that is not UTF-8, such as CBOR, is written as base64, with body_encoding
-// set to base64, so it replays byte for byte. Any other body is a string.
+// set to base64, so it replays byte for byte. A body a BodyCodec decoded is
+// written as the codec's JSON, with body_encoding set to codec. Any other
+// body is a string.
 type responseFile struct {
 	Operation    string          `json:"operation,omitempty"`
 	Method       string          `json:"method,omitempty"`
@@ -1055,9 +1082,12 @@ func (r Response) MarshalJSON() ([]byte, error) {
 	}
 	var body json.RawMessage
 	encoding := ""
-	if utf8.ValidString(r.Body) {
+	switch {
+	case r.decoded:
+		encoding, body = codecBody, json.RawMessage(r.Body)
+	case utf8.ValidString(r.Body):
 		body, err = embedJSON(r.Body)
-	} else {
+	default:
 		encoding = base64Body
 		body, err = marshalJSON(base64.StdEncoding.EncodeToString([]byte(r.Body)))
 	}
@@ -1088,8 +1118,10 @@ func (r *Response) UnmarshalJSON(data []byte) error {
 		body, err = unembedJSON(f.Body)
 	case base64Body:
 		body, err = unbase64(f.Body)
+	case codecBody:
+		body, err = codecJSON(f.Body)
 	default:
-		err = fmt.Errorf("body_encoding %q is not %s", f.BodyEncoding, base64Body)
+		err = fmt.Errorf("body_encoding %q is not %s or %s", f.BodyEncoding, base64Body, codecBody)
 	}
 	if err != nil {
 		return err
@@ -1097,6 +1129,7 @@ func (r *Response) UnmarshalJSON(data []byte) error {
 	*r = Response{
 		Operation: f.Operation, Method: f.Method, URL: f.URL, Status: f.Status,
 		Header: f.Header, Body: body, Times: f.Times, RequestBody: requestBody,
+		decoded: f.BodyEncoding == codecBody,
 	}
 	return nil
 }
@@ -1146,4 +1179,17 @@ func unbase64(raw json.RawMessage) (string, error) {
 		return "", fmt.Errorf("the body is not base64: %w", err)
 	}
 	return string(b), nil
+}
+
+// codecJSON reads a body written as a codec's JSON, which may be any JSON
+// value, compacted.
+func codecJSON(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", errors.New("a codec body must be the codec's JSON")
+	}
+	var b bytes.Buffer
+	if err := json.Compact(&b, raw); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }

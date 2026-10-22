@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-10-22
+
+### ENHANCEMENTS
+
+- collectortest: `RecordOptions.Codec` and `Suite.Codec` take a `BodyCodec`
+  that turns bodies like a gRPC API's protobuf messages into JSON and back.
+  `Record` scrubs the JSON with the same rules as a JSON body, runs the
+  scrub check on it, and writes it with `"body_encoding": "codec"`. A body
+  the codec cannot decode, or cannot encode after scrubbing, fails the
+  recording
+- collectortest: the kit's runs encode a recording's codec bodies with
+  `Suite.Codec`, so field lengths and gRPC framing match the scrubbed
+  values. `RequestBody` matches the JSON the codec decodes a request's body
+  to, so calls that differ only in their gRPC request get their own
+  answers. `NewReplay` returns an error for a codec recording because it has
+  no codec
+- collectortest: the sensitivity check changes the bodies `Suite.Codec`
+  decodes the same way it changes JSON. It used to list their operations as
+  unmutated
+
 ## [0.9.5] - 2026-10-22
 
 ### ENHANCEMENTS

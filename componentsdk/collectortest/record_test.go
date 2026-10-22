@@ -618,6 +618,7 @@ func TestLoadScenarioRejectsAnUnusableRecording(t *testing.T) {
 		"body encoding":  `{"name":"x","responses":[{"url":"https://a.example/","body_encoding":"hex","body":"a0"}]}`,
 		"bad base64":     `{"name":"x","responses":[{"url":"https://a.example/","body_encoding":"base64","body":"not base64!"}]}`,
 		"base64 object":  `{"name":"x","responses":[{"url":"https://a.example/","body_encoding":"base64","body":{"a":1}}]}`,
+		"codec, no body": `{"name":"x","responses":[{"url":"https://a.example/","body_encoding":"codec"}]}`,
 		"no port":        `{"name":"x","endpoints":[{"address":"www.example.com"}]}`,
 		"bad version":    `{"name":"x","endpoints":[{"address":"www.example.com:443","min_version":"TLS 1.4"}]}`,
 		"endpoint field": `{"name":"x","endpoints":[{"address":"www.example.com:443","plain_text":true}]}`,

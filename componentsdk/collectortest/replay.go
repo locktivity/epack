@@ -78,7 +78,11 @@ type Response struct {
 	Status int
 
 	Header http.Header
-	Body   string
+
+	// Body is the response's body. In a recording made with
+	// RecordOptions.Codec, a body the codec decoded is the codec's JSON,
+	// which the kit's runs encode with Suite.Codec.
+	Body string
 
 	// Times limits how many requests this response answers. Responses with
 	// the same match answer in the order listed, which suits pagination.
@@ -89,10 +93,16 @@ type Response struct {
 	// contain: each key of an object it lists must match recursively, and
 	// any other value must be equal. A form-encoded body, as AWS's Query and
 	// EC2 calls send, matches as an object of its fields, each a string, or
-	// a list of strings when repeated. Calls to one URL that differ only in
-	// their bodies, such as per-item JSON-RPC or Query calls, then get their
-	// own answers, so a fault on one cannot shift the answers of the rest.
+	// a list of strings when repeated, and a body Suite.Codec takes matches
+	// as the JSON the codec decodes it to. Calls to one URL that differ only
+	// in their bodies, such as per-item JSON-RPC, Query, or gRPC calls, then
+	// get their own answers, so a fault on one cannot shift the answers of
+	// the rest.
 	RequestBody string
+
+	// decoded marks Body as the JSON a BodyCodec decoded the response's
+	// body to.
+	decoded bool
 }
 
 type replayEntry struct {
@@ -116,36 +126,61 @@ type Replay struct {
 	entries   []*replayEntry
 	unmatched []string
 	answers   *answerLog
+	codec     BodyCodec
 }
 
 // NewReplay returns a Replay of s's responses. It fails when a response has
-// a URL without a scheme and host, neither an operation nor a URL, or a
-// RequestBody that is not JSON.
+// a URL without a scheme and host, neither an operation nor a URL, a
+// RequestBody that is not JSON, or a body recorded with RecordOptions.Codec,
+// which only the kit's runs encode.
 func NewReplay(s Scenario) (*Replay, error) {
-	r := &Replay{}
+	return newReplay(s, nil)
+}
+
+// newReplay returns a Replay of s's responses that encodes the bodies Record
+// decoded with codec, and matches RequestBody against the JSON codec decodes
+// a request's body to.
+func newReplay(s Scenario, codec BodyCodec) (*Replay, error) {
+	r := &Replay{codec: codec}
 	for i, resp := range s.Responses {
-		e := &replayEntry{resp: resp, method: strings.ToUpper(resp.Method), ops: map[string]bool{}, hosts: map[string]bool{}}
-		if e.method == "" {
-			e.method = http.MethodGet
+		e, err := newReplayEntry(s, i)
+		if err != nil {
+			return nil, err
 		}
-		if resp.Operation == "" || resp.URL != "" {
-			u, err := url.Parse(resp.URL)
-			if err != nil || u.Host == "" {
-				return nil, fmt.Errorf("scenario %q response %d: URL %q needs a scheme and host", s.Name, i, resp.URL)
+		if resp.decoded {
+			if e.resp.Body, err = encodeResponse(codec, resp); err != nil {
+				return nil, fmt.Errorf("scenario %q response %d: %w", s.Name, i, err)
 			}
-			e.target = u
-			e.hasQuery = u.RawQuery != "" || u.ForceQuery
-		}
-		if resp.RequestBody != "" {
-			body, err := outputcheck.Decode([]byte(resp.RequestBody))
-			if err != nil {
-				return nil, fmt.Errorf("scenario %q response %d: RequestBody is not JSON: %v", s.Name, i, err)
-			}
-			e.body, e.hasBody = body, true
+			e.resp.decoded = false
 		}
 		r.entries = append(r.entries, e)
 	}
 	return r, nil
+}
+
+// newReplayEntry checks the ith of s's responses and returns its entry.
+func newReplayEntry(s Scenario, i int) (*replayEntry, error) {
+	resp := s.Responses[i]
+	e := &replayEntry{resp: resp, method: strings.ToUpper(resp.Method), ops: map[string]bool{}, hosts: map[string]bool{}}
+	if e.method == "" {
+		e.method = http.MethodGet
+	}
+	if resp.Operation == "" || resp.URL != "" {
+		u, err := url.Parse(resp.URL)
+		if err != nil || u.Host == "" {
+			return nil, fmt.Errorf("scenario %q response %d: URL %q needs a scheme and host", s.Name, i, resp.URL)
+		}
+		e.target = u
+		e.hasQuery = u.RawQuery != "" || u.ForceQuery
+	}
+	if resp.RequestBody != "" {
+		body, err := outputcheck.Decode([]byte(resp.RequestBody))
+		if err != nil {
+			return nil, fmt.Errorf("scenario %q response %d: RequestBody is not JSON: %v", s.Name, i, err)
+		}
+		e.body, e.hasBody = body, true
+	}
+	return e, nil
 }
 
 // RoundTrip answers req with the first response that matches it and has
@@ -166,7 +201,7 @@ func (r *Replay) RoundTrip(req *http.Request) (*http.Response, error) {
 		if e.hasBody {
 			if !bodyRead {
 				bodyRead = true
-				body, bodyOK = requestBody(req)
+				body, bodyOK = requestBody(req, op.Name, r.codec)
 			}
 			if !bodyOK || !containsJSON(body, e.body) {
 				continue
@@ -210,10 +245,10 @@ func (e *replayEntry) matches(req *http.Request, op string) bool {
 	return !e.hasQuery || sameQuery(e.target.Query(), u.Query())
 }
 
-// requestBody reads req's body as JSON, or, for a form-encoded request, as
-// an object of its fields. The replay is the last transport the request
-// reaches, so it may consume the body.
-func requestBody(req *http.Request) (any, bool) {
+// requestBody reads req's body as the JSON codec decodes it to, as JSON, or,
+// for a form-encoded request, as an object of its fields. The replay is the
+// last transport the request reaches, so it may consume the body.
+func requestBody(req *http.Request, op string, codec BodyCodec) (any, bool) {
 	if req.Body == nil || req.Body == http.NoBody {
 		return nil, false
 	}
@@ -221,6 +256,13 @@ func requestBody(req *http.Request) (any, bool) {
 	_ = req.Body.Close()
 	if err != nil {
 		return nil, false
+	}
+	decoded, err := decodeRequest(codec, op, req.Header, raw)
+	if err != nil {
+		return nil, false
+	}
+	if decoded != nil {
+		raw = decoded
 	}
 	if doc, err := outputcheck.Decode(raw); err == nil {
 		return doc, true

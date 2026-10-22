@@ -26,7 +26,7 @@ type network struct {
 }
 
 func (k *kit) newNetwork(s Scenario) (*network, error) {
-	rp, err := NewReplay(s)
+	rp, err := newReplay(s, k.suite.Codec)
 	if err != nil {
 		return nil, err
 	}
