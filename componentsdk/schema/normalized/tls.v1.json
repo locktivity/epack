@@ -191,30 +191,54 @@
           "type": ["integer", "null"],
           "minimum": 0
         },
+        "reachable_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
         "reachable_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100
+        },
+        "certificate_valid_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
         },
         "certificate_valid_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100
         },
+        "hostname_valid_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
         "hostname_valid_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100
+        },
+        "modern_protocol_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
         },
         "modern_protocol_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100
         },
+        "expiring_soon_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
         "expiring_soon_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100
+        },
+        "legacy_protocol_supported_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
         },
         "legacy_protocol_supported_pct": {
           "type": ["integer", "null"],

@@ -53,11 +53,15 @@ func TestDialerNamesAndCountsEachDial(t *testing.T) {
 	}
 	_ = conn.Close()
 	probe := WithOperation(context.Background(), Operation{Name: "tls.probe"})
-	if _, err := d.DialContext(probe, "tcp", "refused.example.com:443"); err != refused {
-		t.Errorf("err = %v, want the dial's error unchanged", err)
-	}
-	if _, err := d.DialContext(probe, "tcp", "slow.example.com:443"); err != slow {
-		t.Errorf("err = %v, want the dial's error unchanged", err)
+	for i, want := range []error{refused, slow} {
+		address := map[error]string{refused: "refused.example.com:443", slow: "slow.example.com:443"}[want]
+		_, err := d.DialContext(probe, "tcp", address)
+		if !errors.Is(err, want) {
+			t.Errorf("err = %v, want the dial's error", err)
+		}
+		if call, ok := callOf(err); !ok || call.operation != "tls.probe" || call.call != i+2 {
+			t.Errorf("%s: err names call %+v, want tls.probe call %d", address, call, i+2)
+		}
 	}
 
 	if got := strings.Join(fake.ops, ","); got != "dial,tls.probe,tls.probe" {
@@ -120,8 +124,13 @@ func TestDialerCountsAFailureOnTheConnection(t *testing.T) {
 			t.Fatal(err)
 		}
 		for range 2 {
-			if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, want) {
-				t.Errorf("%s: read err = %v, want %v unchanged", address, err, want)
+			_, err := conn.Read(make([]byte, 1))
+			if !errors.Is(err, want) {
+				t.Errorf("%s: read err = %v, want %v", address, err, want)
+			}
+			_, named := callOf(err)
+			if failure := op == "conn.reset" || op == "conn.slow"; named != failure {
+				t.Errorf("%s: read err names its call: %t, want %t", address, named, failure)
 			}
 		}
 		_ = conn.Close()

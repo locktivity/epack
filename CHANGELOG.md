@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-22
+
+### ENHANCEMENTS
+
+- componentsdk: a failed dial returns an error that names its call, and so
+  does a timeout or reset on a dialed connection. A gap recorded from either
+  names the call too, so a collector that dials through the SDK can turn on
+  collectortest's `GapOperations` check
+- componentsdk: a failed DNS lookup returns an error that names its call, so
+  a gap recorded from it names the call too. A name or record that does not
+  exist still returns `net.Resolver`'s `*net.DNSError` as it is
+- componentsdk: the normalized email-dns schema lists the summary counts
+  behind its percentages: `with_mx_count`, `with_spf_count`,
+  `with_dmarc_count`, `with_dkim_count`, `with_all_three_count`,
+  `enforced_count`, and `with_reporting_count`
+- componentsdk: the normalized TLS schema lists the summary counts behind its
+  percentages: `reachable_count`, `certificate_valid_count`,
+  `hostname_valid_count`, `modern_protocol_count`, `expiring_soon_count`, and
+  `legacy_protocol_supported_count`
+
+### UPGRADE NOTES
+
+- A failed lookup or dial returns an error that wraps the `*net.DNSError` or
+  `*net.OpError` instead of returning it as is. Get it with `errors.As`
+  rather than a type assertion
+
 ## [0.9.4] - 2026-10-21
 
 ### ENHANCEMENTS

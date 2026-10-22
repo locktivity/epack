@@ -2,6 +2,7 @@ package componentsdk
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -133,10 +134,19 @@ func TestResolverTellsAnswersFromFailures(t *testing.T) {
 	r := NewResolver(c)
 	ctx := WithOperation(context.Background(), Operation{Name: "dns.spf.lookup"})
 	names := []string{"example.com", "missing.example.com", "broken.example.com", "slow.example.com", "refused.example.com", "socket.example.com"}
-	for _, name := range names {
+	for i, name := range names {
 		_, err := r.LookupTXT(ctx, name)
-		if err != failures[name] {
-			t.Errorf("LookupTXT(%s) err = %v, want the resolver's error unchanged", name, err)
+		if name == "example.com" || name == "missing.example.com" {
+			if err != failures[name] {
+				t.Errorf("LookupTXT(%s) err = %v, want the resolver's error unchanged", name, err)
+			}
+			continue
+		}
+		if !errors.Is(err, failures[name]) {
+			t.Errorf("LookupTXT(%s) err = %v, want the resolver's error", name, err)
+		}
+		if call, ok := callOf(err); !ok || call.operation != "dns.spf.lookup" || call.call != i+1 {
+			t.Errorf("LookupTXT(%s) err names call %+v, want dns.spf.lookup call %d", name, call, i+1)
 		}
 	}
 	if _, err := r.LookupTXT(ctx, "missing.example.com"); err == nil {

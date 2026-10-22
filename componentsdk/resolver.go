@@ -25,12 +25,14 @@ const (
 	rcodeServFail = "SERVFAIL"
 )
 
-// Resolver looks up DNS records with the signatures and errors of
-// net.Resolver, and counts each lookup in the run's call ledger. A name or
-// record that does not exist is an answer, not a failure: the lookup returns
-// a *net.DNSError whose IsNotFound is true, and the ledger counts it under
-// NXDOMAIN with no error code. A failure, such as SERVFAIL or a timeout,
-// counts under the code Classify gives it.
+// Resolver looks up DNS records with the signatures of net.Resolver, and
+// counts each lookup in the run's call ledger. A name or record that does not
+// exist is an answer, not a failure: the lookup returns net.Resolver's
+// *net.DNSError unchanged, with IsNotFound true, and the ledger counts it
+// under NXDOMAIN with no error code. A failure, such as SERVFAIL or a timeout,
+// counts under the code Classify gives it. The error a failed lookup returns
+// names the lookup's call, so a gap recorded from it names it too. Use
+// errors.As to get the *net.DNSError from that error.
 //
 // Each lookup is an operation named by its context (see WithOperation), such
 // as "dns.spf.lookup", or by default "dns." and the lookup's kind: "dns.txt",
@@ -93,6 +95,9 @@ func lookup[T any](ctx context.Context, r *Resolver, defaultOp, qtype, name stri
 	}
 	host := strings.TrimSuffix(strings.ToLower(name), ".")
 	r.run.calls.addCall(call, "DNS "+qtype, host, rcode, code, r.run.now().Sub(call.started))
+	if err != nil && rcode != rcodeNXDomain {
+		return answer, &callError{err: err, operation: op.Name, call: call.number}
+	}
 	return answer, err
 }
 

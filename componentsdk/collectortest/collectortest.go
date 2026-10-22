@@ -135,7 +135,9 @@ type Suite struct {
 	// GapOperations turns on a check that every gap a fault leaves names
 	// the faulted operation, as a gap recorded from an error the SDK's
 	// client returned, or from one built with componentsdk.ResponseError,
-	// does. Faults a Semantics entry declares are exempt.
+	// does. A gap recorded from a failed DNS lookup or dial, or from a
+	// timeout or reset on a dialed connection, names it too. Faults a
+	// Semantics entry declares are exempt.
 	GapOperations bool
 }
 

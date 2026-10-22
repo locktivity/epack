@@ -185,11 +185,21 @@
           "minimum": 0,
           "description": "Total number of domains scanned"
         },
+        "with_mx_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of domains with at least one MX record"
+        },
         "with_mx_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100,
           "description": "Percentage of domains with MX records"
+        },
+        "with_spf_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of domains with an SPF record, valid or not"
         },
         "with_spf_pct": {
           "type": ["integer", "null"],
@@ -197,11 +207,21 @@
           "maximum": 100,
           "description": "Percentage of domains with SPF records"
         },
+        "with_dmarc_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of domains with a DMARC record, valid or not"
+        },
         "with_dmarc_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100,
           "description": "Percentage of domains with DMARC records"
+        },
+        "with_dkim_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of domains with a DKIM record at one of the common selectors"
         },
         "with_dkim_pct": {
           "type": ["integer", "null"],
@@ -209,17 +229,32 @@
           "maximum": 100,
           "description": "Percentage of domains with DKIM records"
         },
+        "with_all_three_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of domains with MX, SPF, and DMARC records"
+        },
         "with_all_three_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100,
           "description": "Percentage of domains with MX, SPF, and DMARC"
         },
+        "enforced_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of domains with DMARC p=reject and pct=100"
+        },
         "enforced_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100,
           "description": "Percentage of domains with DMARC p=reject"
+        },
+        "with_reporting_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of domains with rua configured in a valid DMARC record"
         },
         "with_reporting_pct": {
           "type": ["integer", "null"],
