@@ -249,11 +249,7 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		t.Errorf("publish.yaml should publish the drafts when the sandboxes status passes: %+v", publish)
 	}
 
-	license, err := os.ReadFile(filepath.Join("..", "..", "LICENSE"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if readFile(t, dir, "LICENSE") != string(license) {
+	if readFile(t, dir, "LICENSE") != readEpackFile(t, "LICENSE") {
 		t.Error("LICENSE should be epack's own")
 	}
 	if readme := readFile(t, dir, "README.md"); strings.Contains(readme, "TODO: Add license") || !strings.Contains(readme, "See [LICENSE](LICENSE).") {
@@ -547,17 +543,14 @@ func TestGenerateGoMod_PinsOnlyAReleaseVersion(t *testing.T) {
 // Go version in go.mod, and without the toolchain line that is the older
 // release the go line names.
 func TestGenerateGoMod_UsesEpacksGoVersions(t *testing.T) {
-	epack, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	epack := readEpackFile(t, "go.mod")
 	scaffold, err := renderTemplate("go.mod.tmpl", newTemplateData("demo", componenttypes.KindCollector, "github.com/acme/epack-collector-demo"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, directive := range []string{"go", "toolchain"} {
 		line := regexp.MustCompile(`(?m)^` + directive + ` \S+$`)
-		want := line.FindString(string(epack))
+		want := line.FindString(epack)
 		if want == "" {
 			t.Fatalf("epack's go.mod has no %s line", directive)
 		}
@@ -622,6 +615,18 @@ func TestGenerateMocks_CollectorFollowsTheProtocol(t *testing.T) {
 			t.Errorf("run-collector.sh lacks %q", want)
 		}
 	}
+}
+
+// readEpackFile reads one of epack's own files from the repository root, with
+// LF line endings. A Windows checkout can give the file CRLF endings, while
+// .gitattributes keeps the templates LF.
+func readEpackFile(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
 }
 
 func readFile(t *testing.T, dir, rel string) string {
