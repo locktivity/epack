@@ -1,5 +1,8 @@
 # Release workflow for {{.BinaryName}}
-# Triggers on version tags (v*) and builds with SLSA Level 3 provenance
+# Triggers on version tags (v*) and builds with SLSA Level 3 provenance. When
+# the repository variable SANDBOX_RELEASE_CHECK is true, the release starts as
+# a draft and is published once the sandbox check posts a successful
+# "sandboxes" commit status on the tag's commit (see publish.yaml).
 
 name: Release
 
@@ -49,18 +52,26 @@ jobs:
             arch: amd64
           - os: darwin
             arch: arm64
+    # slsa-verifier can check the builder only by its release tag, and a
+    # shorter tag such as v2 fails the build, so this pins the full tag
+    # rather than a commit SHA.
     uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
     with:
       go-version-file: go.mod
       config-file: .slsa-goreleaser/{{.BinaryName}}-${{"{{"}} matrix.os {{"}}"}}-${{"{{"}} matrix.arch {{"}}"}}.yml
       evaluated-envs: "VERSION:${{"{{"}} needs.args.outputs.version {{"}}"}},COMMIT:${{"{{"}} needs.args.outputs.commit {{"}}"}}"
+      # The release job attaches the binaries and provenance itself, so the
+      # release can start as a draft.
+      upload-assets: false
 
-  # Create GitHub Release with all artifacts
+  # Create GitHub Release with all artifacts, as a draft while the sandbox
+  # check is on
   release:
     needs: [args, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      statuses: read
     steps:
       - uses: actions/checkout@v4
 
@@ -74,20 +85,45 @@ jobs:
           mkdir -p release
           # Find and move all binaries and attestations
           find artifacts -type f \( -name "{{.BinaryName}}-*" -o -name "*.intoto.jsonl" \) -exec mv {} release/ \;
-          # Rename .intoto.jsonl to .sigstore.json (epack expects this extension)
+          # Copy .intoto.jsonl to .sigstore.json (epack expects this extension)
           cd release
           for f in *.intoto.jsonl; do
-            [ -f "$f" ] && mv "$f" "${f%.intoto.jsonl}.sigstore.json"
+            [ -f "$f" ] && cp "$f" "${f%.intoto.jsonl}.sigstore.json"
           done
           # Create checksums
-          sha256sum * > checksums.txt
+          sha256sum -- * > checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
-          target_commitish: ${{"{{"}} needs.args.outputs.commit {{"}}"}}
           generate_release_notes: true
-          draft: false
+          draft: ${{"{{"}} vars.SANDBOX_RELEASE_CHECK == 'true' {{"}}"}}
+          target_commitish: ${{"{{"}} needs.args.outputs.commit {{"}}"}}
         env:
           GITHUB_TOKEN: ${{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
+
+      # The check may have finished before the build did. Only a status from
+      # the account SANDBOX_STATUS_SENDER names counts. Otherwise publish.yaml
+      # publishes the draft when the status arrives, and a failed check leaves
+      # the draft for a maintainer to publish by hand.
+      - name: Publish if the sandbox check already passed
+        if: vars.SANDBOX_RELEASE_CHECK == 'true'
+        env:
+          GH_TOKEN: ${{"{{"}} github.token {{"}}"}}
+          TAG: ${{"{{"}} github.ref_name {{"}}"}}
+          COMMIT: ${{"{{"}} needs.args.outputs.commit {{"}}"}}
+          SENDER: ${{"{{"}} vars.SANDBOX_STATUS_SENDER {{"}}"}}
+        run: |
+          if [ -z "$SENDER" ]; then
+            echo "SANDBOX_STATUS_SENDER is not set, so the release stays a draft until a maintainer publishes it." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$COMMIT/statuses?per_page=100" \
+            --jq '[.[] | select(.context == "sandboxes" and .creator.login == env.SENDER)][0].state // ""')"
+          if [ "$state" = success ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            echo "The sandbox check had already passed, so the release is published." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The release stays a draft until the sandbox check passes. Its status is ${state:-not posted yet}." >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/locktivity/epack/internal/componentsdk"
 	"github.com/locktivity/epack/internal/componenttypes"
@@ -41,8 +42,8 @@ A collector gets the layout the epack collectors share: its entrypoint in
 cmd/epack-collector-<name>/main.go, its handler and gap records in
 internal/collector, an API client under internal/, its artifact's JSON
 Schema in docs/schema, a collectortest suite that go test runs, a test that
-records a scenario from a real account, and CI that calls epack's shared
-collector workflow.
+records a sandbox, CI that calls epack's shared collector workflow, and
+release workflows that can wait for the sandbox check before publishing.
 
 Examples:
   epack sdk new tool my-analyzer
@@ -124,6 +125,9 @@ func runNew(cmd *cobra.Command, args []string) error {
 	out.Print("  cd %s\n", dirName)
 	if newModule == "" {
 		out.Print("  # Replace github.com/OWNER in go.mod%s with your module path\n", importNote(kind))
+	}
+	if kind == componenttypes.KindCollector && strings.HasPrefix(result.Repository, "OWNER/") {
+		out.Print("  # Replace %s in docs/ with the GitHub repository you release from\n", result.Repository)
 	}
 	if result.EpackVersion == "" {
 		out.Print("  go get github.com/locktivity/epack@main  %s\n", p.Dim("# source build of epack: pick the SDK to build against"))

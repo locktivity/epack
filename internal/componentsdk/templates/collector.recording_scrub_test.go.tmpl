@@ -1,0 +1,69 @@
+package collector
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"testing"
+
+	"github.com/locktivity/epack/componentsdk/collectortest"
+)
+
+// kitName replaces the name of the organization and of each user in a
+// recording.
+const kitName = "Kit Name"
+
+// recordScrubPatterns remove from a recording what a public repository must
+// not hold and Record's own rules don't know: the names of the organization
+// and its users, which no SANDBOX_ variable holds.
+var recordScrubPatterns = []collectortest.ScrubPattern{
+	{Pattern: recordedName, Replace: `"name": "` + kitName + `"`},
+}
+
+var (
+	recordedName  = regexp.MustCompile(`"name"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+	recordedEmail = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
+	fakeEmail     = regexp.MustCompile(`@example\.com$`)
+)
+
+func TestRecordScrubPatterns(t *testing.T) {
+	got := `{"id": "org-1", "name": "Acme \"West\"", "mfa_required": true} [{"id":"u1","name":"Avery Quinn"}]`
+	for _, p := range recordScrubPatterns {
+		got = p.Pattern.ReplaceAllString(got, p.Replace)
+	}
+	if want := `{"id": "org-1", "name": "Kit Name", "mfa_required": true} [{"id":"u1","name": "Kit Name"}]`; got != want {
+		t.Errorf("scrubbed to %s, want %s", got, want)
+	}
+}
+
+// TestRecordingsScrubbed fails while a committed recording still holds a
+// name in a response other than kitName, or an email address outside
+// example.com.
+func TestRecordingsScrubbed(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("testdata", "recordings", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, email := range recordedEmail.FindAll(raw, -1) {
+			if !fakeEmail.Match(email) {
+				t.Errorf("%s: holds an email address outside example.com", path)
+			}
+		}
+		sc, err := collectortest.LoadScenario(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, res := range sc.Responses {
+			for _, m := range recordedName.FindAllStringSubmatch(res.Body, -1) {
+				if m[1] != kitName {
+					t.Errorf("%s: the %s response holds a name", path, res.Operation)
+				}
+			}
+		}
+	}
+}

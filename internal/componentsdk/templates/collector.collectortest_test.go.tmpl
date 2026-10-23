@@ -1,6 +1,13 @@
 package collector
 
 import (
+	"errors"
+	"io/fs"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/locktivity/epack/componentsdk"
@@ -9,17 +16,17 @@ import (
 	"{{.ModulePath}}/internal/{{.VendorPackage}}"
 )
 
-// TestCollectorKit runs the collector against the scenarios below, then
-// injects faults into each operation's calls and checks the output against
-// the schema, every collection level, and the credential and sensitivity
-// rules.
+// TestCollectorKit runs the collector against the scenarios below and the
+// one recorded from the sandbox, then injects faults into each operation's
+// calls and checks the output against the schema, every collection level,
+// and the credential and sensitivity rules.
 func TestCollectorKit(t *testing.T) {
 	collectortest.Run(t, collectortest.Suite{
 		Spec:    Spec("test", "collectortest"),
 		Run:     Run,
 		Config:  kitConfig(),
 		Secrets: kitSecrets(),
-		Scenarios: []collectortest.Scenario{
+		Scenarios: append([]collectortest.Scenario{
 			kitClean(),
 			{
 				Name: "no users",
@@ -36,7 +43,7 @@ func TestCollectorKit(t *testing.T) {
 					},
 				},
 			},
-		},
+		}, kitRecordings(t, "{{.Name}}")...),
 		// The sign-in is the only call whose failure may fail the run.
 		Required: []string{ {{- .VendorPackage}}.OpGetOrganization},
 		Semantics: []collectortest.Semantic{
@@ -58,6 +65,26 @@ func TestCollectorKit(t *testing.T) {
 	})
 }
 
+// kitRecordings loads the scenarios TestRecord in record_test.go records
+// from sandboxes, and logs each one not recorded yet.
+func kitRecordings(t *testing.T, names ...string) []collectortest.Scenario {
+	t.Helper()
+	var out []collectortest.Scenario
+	for _, name := range names {
+		path := filepath.Join("testdata", "recordings", name+".json")
+		sc, err := collectortest.LoadScenario(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			t.Logf("no recording at %s yet", path)
+		case err != nil:
+			t.Fatal(err)
+		default:
+			out = append(out, sc)
+		}
+	}
+	return out
+}
+
 func TestRunRejectsInvalidConfiguration(t *testing.T) {
 	cases := map[string]struct {
 		config  map[string]any
@@ -77,5 +104,32 @@ func TestRunRejectsInvalidConfiguration(t *testing.T) {
 				t.Errorf("exit %d, failure %+v; want exit 2 with config_invalid", res.ExitCode, res.Failure)
 			}
 		})
+	}
+}
+
+// TestConformanceListsEveryCredential checks that conformance-secrets in
+// ci.yaml and CONFORMANCE_SECRETS in the Makefile each list every variable
+// the kit passes a credential in. Conformance gives a canary value only to
+// the variables they list.
+func TestConformanceListsEveryCredential(t *testing.T) {
+	want := slices.Sorted(maps.Keys(kitSecrets()))
+	for file, key := range map[string]string{
+		"../../.github/workflows/ci.yaml": "conformance-secrets:",
+		"../../Makefile":                  "CONFORMANCE_SECRETS :=",
+	} {
+		raw, err := os.ReadFile(filepath.FromSlash(file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, line := range strings.Split(string(raw), "\n") {
+			if value, ok := strings.CutPrefix(strings.TrimSpace(line), key); ok {
+				got = strings.Fields(strings.Trim(value, ` "'`))
+				slices.Sort(got)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s lists %v after %s, want the kit's credentials %v", file, got, key, want)
+		}
 	}
 }

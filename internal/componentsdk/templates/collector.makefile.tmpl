@@ -47,10 +47,12 @@ conformance: build
 trace-map:
 	go run -tags components github.com/locktivity/epack/cmd/epack@$(EPACK_VERSION) sdk map
 
-# Records the clean scenario from the organization RECORD_ORGANIZATION names,
-# with the token in {{.TokenEnv}}. See internal/collector/record_test.go.
+# Records the sandbox organization to
+# internal/collector/testdata/recordings/{{.Name}}.json. It reads the
+# organization from {{.SandboxEnv}} and the token from
+# {{.TokenEnv}}. See internal/collector/record_test.go.
 record:
-	go test -tags record -run TestRecord -count=1 -v ./internal/collector/
+	go test -tags record -run '^TestRecord$$/^{{.Name}}$$' -count=1 -v ./internal/collector/
 
 sdk-test:
 	epack sdk test .

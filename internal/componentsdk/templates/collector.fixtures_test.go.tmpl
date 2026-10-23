@@ -20,8 +20,7 @@ func kitSecrets() map[string]string {
 
 // kitClean answers every call a clean run makes, written by hand: an
 // organization that requires MFA, with three users. Two have an active
-// factor, and one has none. A recording that record_test.go makes of a real
-// organization can replace it.
+// factor, and one has none.
 func kitClean() collectortest.Scenario {
 	return collectortest.Scenario{
 		Name: "clean",

@@ -2,12 +2,14 @@ package componentsdk
 
 import (
 	"encoding/json"
+	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -74,12 +76,16 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		"internal/collector/collectortest_test.go",
 		"internal/collector/fixtures_test.go",
 		"internal/collector/record_test.go",
+		"internal/collector/recording_scrub_test.go",
 		"internal/demo/client.go",
 		"docs/schema/v1.0.0.json",
 		"docs/schema/embed.go",
 		"docs/schema/trace-map.json",
+		"docs/levels.md",
 		"testdata/conformance.json",
 		"Makefile",
+		"LICENSE",
+		".github/workflows/publish.yaml",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(file))); err != nil {
 			t.Errorf("missing %s", file)
@@ -133,6 +139,9 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 	if !strings.Contains(kit, "collectortest.Run(t, collectortest.Suite{") || !strings.Contains(kit, "Operations: []string{") || !strings.Contains(kit, "GapOperations: true,") {
 		t.Error("collectortest_test.go should run a kit suite that lists every operation and checks each gap names its call")
 	}
+	if !strings.Contains(kit, `}, kitRecordings(t, "demo")...),`) || !strings.Contains(kit, "func TestConformanceListsEveryCredential(") {
+		t.Error("collectortest_test.go should load the sandbox's recording and check that conformance lists every credential")
+	}
 	var traceMap struct {
 		Artifacts map[string]map[string]struct {
 			Operations []string `json:"operations"`
@@ -148,6 +157,20 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 	record := readFile(t, dir, "internal/collector/record_test.go")
 	if !strings.HasPrefix(record, "//go:build record\n") || !strings.Contains(record, "collectortest.Record(") {
 		t.Error("record_test.go should call collectortest.Record behind the record build tag")
+	}
+	for _, want := range []string{
+		`t.Run("demo", func(t *testing.T) {`,
+		`os.Getenv("SANDBOX_DEMO_ORGANIZATION")`,
+		`collectortest.EnvIdentifiers("SANDBOX_", map[string]string{"SANDBOX_DEMO_ORGANIZATION": kitOrganization})`,
+		`Out:     "testdata/recordings/demo.json",`,
+		"Patterns:    recordScrubPatterns,",
+	} {
+		if !strings.Contains(record, want) {
+			t.Errorf("record_test.go lacks %q", want)
+		}
+	}
+	if scrub := readFile(t, dir, "internal/collector/recording_scrub_test.go"); !strings.HasPrefix(scrub, "package collector\n") || !strings.Contains(scrub, "func TestRecordingsScrubbed(t *testing.T) {") {
+		t.Error("recording_scrub_test.go should check the committed recordings without a build tag")
 	}
 
 	var schema map[string]any
@@ -172,7 +195,7 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		"--config testdata/conformance.json",
 		"$(foreach s,$(CONFORMANCE_SECRETS),--secret $(s))",
 		"CONFORMANCE_SECRETS := DEMO_API_TOKEN\n",
-		"\tgo test -tags record -run TestRecord -count=1 -v ./internal/collector/\n",
+		"\tgo test -tags record -run '^TestRecord$$/^demo$$' -count=1 -v ./internal/collector/\n",
 		"\tgo run -tags components github.com/locktivity/epack/cmd/epack@$(EPACK_VERSION) sdk map\n",
 	} {
 		if !strings.Contains(makefile, want) {
@@ -200,6 +223,49 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 	release := readFile(t, dir, ".github/workflows/release.yaml")
 	if !strings.Contains(release, "  test:\n    uses: ./.github/workflows/ci.yaml\n") || !strings.Contains(release, "needs: [test, args]") {
 		t.Errorf("release.yaml should run ci.yaml before the SLSA builds:\n%s", release)
+	}
+	if !regexp.MustCompile(`\n    uses: slsa-framework/slsa-github-generator/\.github/workflows/builder_go_slsa3\.yml@v\d+\.\d+\.\d+\n`).MatchString(release) {
+		t.Error("release.yaml should call the SLSA builder by its full release tag")
+	}
+	for _, want := range []string{
+		"      upload-assets: false\n",
+		"          draft: ${{ vars.SANDBOX_RELEASE_CHECK == 'true' }}\n",
+		"      - name: Publish if the sandbox check already passed\n",
+	} {
+		if !strings.Contains(release, want) {
+			t.Errorf("release.yaml should leave a draft for the sandbox check: it lacks %q", want)
+		}
+	}
+	var publish struct {
+		On   map[string]any `yaml:"on"`
+		Jobs map[string]struct {
+			If string `yaml:"if"`
+		} `yaml:"jobs"`
+	}
+	if err := safeyaml.Unmarshal([]byte(readFile(t, dir, ".github/workflows/publish.yaml")), limits.ConfigFile, &publish); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := publish.On["status"]; !ok || !strings.Contains(publish.Jobs["publish"].If, "github.event.context == 'sandboxes'") {
+		t.Errorf("publish.yaml should publish the drafts when the sandboxes status passes: %+v", publish)
+	}
+
+	license, err := os.ReadFile(filepath.Join("..", "..", "LICENSE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readFile(t, dir, "LICENSE") != string(license) {
+		t.Error("LICENSE should be epack's own")
+	}
+	if readme := readFile(t, dir, "README.md"); strings.Contains(readme, "TODO: Add license") || !strings.Contains(readme, "See [LICENSE](LICENSE).") {
+		t.Error("README.md should name the license")
+	}
+	for _, file := range []string{"docs/configuration.md", "docs/examples.md"} {
+		if docs := readFile(t, dir, file); !strings.Contains(docs, "    source: acme/epack-collector-demo@^0.1\n") || strings.Contains(docs, "@v1") {
+			t.Errorf("%s should name the repository with a constraint the first release meets", file)
+		}
+	}
+	if !strings.Contains(readFile(t, dir, "docs/configuration.md"), "(https://github.com/acme/epack-collector-demo/blob/main/docs/levels.md)") {
+		t.Error("docs/configuration.md should link to levels.md")
 	}
 	slsa := readFile(t, dir, ".slsa-goreleaser/epack-collector-demo-linux-amd64.yml")
 	if !strings.Contains(slsa, "main: ./cmd/epack-collector-demo") || !strings.Contains(slsa, "-X main.Commit={{ .Env.COMMIT }}") {
@@ -252,6 +318,7 @@ func TestVendorPackageAndTokenEnv(t *testing.T) {
 		{"go", "api", "GO_API_TOKEN"},
 		{"time", "api", "TIME_API_TOKEN"},
 		{"collector", "api", "COLLECTOR_API_TOKEN"},
+		{"collect", "api", "COLLECT_API_TOKEN"},
 		{"error", "api", "ERROR_API_TOKEN"},
 		{"epack-stats", "epackstats", "API_TOKEN"},
 		{"ld-audit", "ldaudit", "API_TOKEN"},
@@ -265,23 +332,79 @@ func TestVendorPackageAndTokenEnv(t *testing.T) {
 	}
 }
 
-// TestVendorPackageNeverSharesANameWithAnotherImport checks every collector
-// file that imports the vendor client: a collector named after one of its
-// other imports, or its own package, must get the fallback package name, or
-// the scaffold would not compile.
-func TestVendorPackageNeverSharesANameWithAnotherImport(t *testing.T) {
+func TestSandboxEnvKeepsTheName(t *testing.T) {
+	for name, want := range map[string]string{
+		"github":           "SANDBOX_GITHUB_ORGANIZATION",
+		"google-workspace": "SANDBOX_GOOGLE_WORKSPACE_ORGANIZATION",
+		"email.dns_v2":     "SANDBOX_EMAIL_DNS_V2_ORGANIZATION",
+		"1password":        "SANDBOX_1PASSWORD_ORGANIZATION",
+		"epack-stats":      "SANDBOX_EPACK_STATS_ORGANIZATION",
+	} {
+		if got := newTemplateData(name, componenttypes.KindCollector, "").SandboxEnv; got != want {
+			t.Errorf("SandboxEnv for %q = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestGithubRepository(t *testing.T) {
+	for modulePath, want := range map[string]string{
+		"github.com/acme/epack-collector-demo":            "acme/epack-collector-demo",
+		"github.com/acme/collectors/epack-collector-demo": "acme/collectors",
+		"github.com/OWNER/epack-collector-demo":           "OWNER/epack-collector-demo",
+		"example.com/epack-collector-demo":                "OWNER/epack-collector-demo",
+		"github.com/acme":                                 "OWNER/epack-collector-demo",
+	} {
+		if got := githubRepository(modulePath, "epack-collector-demo"); got != want {
+			t.Errorf("githubRepository(%q) = %q, want %q", modulePath, got, want)
+		}
+	}
+}
+
+// TestScaffold_CollectorDocsLinkByURL checks that every link in a
+// collector's docs/ pages is a full URL. registry.epack.dev shows those pages
+// and resolves a relative link from the repository's root, so a link to
+// levels.md from docs/configuration.md would not be found there.
+func TestScaffold_CollectorDocsLinkByURL(t *testing.T) {
+	dir := t.TempDir()
+	result, err := Scaffold(ScaffoldOptions{TargetDir: dir, Name: "demo", Kind: componenttypes.KindCollector, ModulePath: "github.com/acme/epack-collector-demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := regexp.MustCompile(`\]\(([^)]*)\)`)
+	for _, file := range result.FilesCreated {
+		if !strings.HasPrefix(file, "docs/") || !strings.HasSuffix(file, ".md") {
+			continue
+		}
+		for _, m := range link.FindAllStringSubmatch(readFile(t, dir, file), -1) {
+			if !strings.HasPrefix(m[1], "https://") {
+				t.Errorf("%s links to %s, which the registry cannot resolve", file, m[1])
+			}
+		}
+	}
+}
+
+// TestVendorPackageNeverSharesAName checks every collector file that imports
+// the vendor client, and the names its package declares: a collector named
+// after one of the file's other imports, its package, or a function, type,
+// variable, or constant of that package must get the fallback package name,
+// or the scaffold would not compile.
+func TestVendorPackageNeverSharesAName(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Scaffold(ScaffoldOptions{TargetDir: dir, Name: "demo", Kind: componenttypes.KindCollector, ModulePath: "example.com/epack-collector-demo"}); err != nil {
 		t.Fatal(err)
 	}
+	declared := map[string][]string{}
+	importers := map[string]bool{}
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
 		if err != nil {
 			return err
 		}
+		pkg := filepath.Dir(path)
+		declared[pkg] = append(declared[pkg], declaredNames(file)...)
 		importsVendor := false
 		names := []string{file.Name.Name}
 		for _, spec := range file.Imports {
@@ -296,8 +419,12 @@ func TestVendorPackageNeverSharesANameWithAnotherImport(t *testing.T) {
 			}
 			names = append(names, name)
 		}
+		if !importsVendor {
+			return nil
+		}
+		importers[pkg] = true
 		for _, name := range names {
-			if importsVendor && vendorPackage(name) != "api" {
+			if vendorPackage(name) == name {
 				t.Errorf("%s names %q beside the vendor client: add it to takenPackageNames", path, name)
 			}
 		}
@@ -306,6 +433,39 @@ func TestVendorPackageNeverSharesANameWithAnotherImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for pkg := range importers {
+		for _, name := range declared[pkg] {
+			if vendorPackage(name) == name {
+				t.Errorf("%s declares %q, which a vendor client of that name would clash with: add it to takenPackageNames", pkg, name)
+			}
+		}
+	}
+}
+
+// declaredNames lists the functions, types, variables, and constants file
+// declares at package level.
+func declaredNames(file *ast.File) []string {
+	var names []string
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Recv == nil {
+				names = append(names, d.Name.Name)
+			}
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch s := spec.(type) {
+				case *ast.TypeSpec:
+					names = append(names, s.Name.Name)
+				case *ast.ValueSpec:
+					for _, n := range s.Names {
+						names = append(names, n.Name)
+					}
+				}
+			}
+		}
+	}
+	return names
 }
 
 func schemaHasKeyword(node any, keyword string) bool {
@@ -369,7 +529,7 @@ func TestGenerateGoMod_PinsOnlyAReleaseVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pinned != "module github.com/acme/epack-tool-demo\n\ngo 1.26.0\n\nrequire github.com/locktivity/epack v0.5.3\n" {
+	if pinned != "module github.com/acme/epack-tool-demo\n\ngo 1.26.0\n\ntoolchain go1.26.10\n\nrequire github.com/locktivity/epack v0.5.3\n" {
 		t.Errorf("go.mod = %q", pinned)
 	}
 	data.EpackVersion = ""
@@ -377,8 +537,33 @@ func TestGenerateGoMod_PinsOnlyAReleaseVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unpinned != "module github.com/acme/epack-tool-demo\n\ngo 1.26.0\n" {
+	if unpinned != "module github.com/acme/epack-tool-demo\n\ngo 1.26.0\n\ntoolchain go1.26.10\n" {
 		t.Errorf("go.mod = %q", unpinned)
+	}
+}
+
+// TestGenerateGoMod_UsesEpacksGoVersions checks that a scaffold's go and
+// toolchain lines match epack's own go.mod. CI and release builds use the
+// Go version in go.mod, and without the toolchain line that is the older
+// release the go line names.
+func TestGenerateGoMod_UsesEpacksGoVersions(t *testing.T) {
+	epack, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaffold, err := renderTemplate("go.mod.tmpl", newTemplateData("demo", componenttypes.KindCollector, "github.com/acme/epack-collector-demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, directive := range []string{"go", "toolchain"} {
+		line := regexp.MustCompile(`(?m)^` + directive + ` \S+$`)
+		want := line.FindString(string(epack))
+		if want == "" {
+			t.Fatalf("epack's go.mod has no %s line", directive)
+		}
+		if got := line.FindString(scaffold); got != want {
+			t.Errorf("the scaffold's go.mod has %q, want %q from epack's go.mod", got, want)
+		}
 	}
 }
 

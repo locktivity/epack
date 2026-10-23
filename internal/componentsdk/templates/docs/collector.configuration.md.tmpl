@@ -5,7 +5,7 @@ Add to your `epack.yaml`:
 ```yaml
 collectors:
   {{.Name}}:
-    source: OWNER/{{.BinaryName}}@v1
+    source: {{.Repository}}@^0.1
     config:
       organization: your-org
     secrets:
@@ -17,7 +17,7 @@ collectors:
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
 | `organization` | string | Yes | The organization to collect from |
-| `level` | string | No | `trust` (the default), `audit`, or `internal`. `internal` adds the list of users. |
+| `level` | string | No | `trust` (the default), `audit`, or `internal`. See [levels.md](https://github.com/{{.Repository}}/blob/main/docs/levels.md). |
 
 ## Environment Variables
 

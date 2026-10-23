@@ -32,6 +32,8 @@ type templateData struct {
 	EpackCommit   string // Commit of that epack release, which collector CI pins; empty for a source build
 	VendorPackage string // Go package of a collector's vendor client (e.g., "github")
 	TokenEnv      string // Variable a collector reads its API token from (e.g., "GITHUB_API_TOKEN")
+	SandboxEnv    string // Variable a collector's record test reads its sandbox organization from (e.g., "SANDBOX_GITHUB_ORGANIZATION")
+	Repository    string // GitHub repository a collector's docs name as its source (e.g., "acme/epack-collector-github")
 }
 
 // newTemplateData creates template data from scaffold options.
@@ -52,7 +54,21 @@ func newTemplateData(name string, kind componenttypes.ComponentKind, modulePath 
 		EpackCommit:   epackReleaseCommit(version.Version, version.Commit),
 		VendorPackage: vendorPackage(name),
 		TokenEnv:      tokenEnv(name),
+		SandboxEnv:    "SANDBOX_" + envName(name) + "_ORGANIZATION",
+		Repository:    githubRepository(modulePath, binaryName),
 	}
+}
+
+// githubRepository is the repository, as owner/name, that holds a module
+// path on github.com. epack.yaml's source names it, and so do the links
+// between docs pages. For a module path elsewhere it is OWNER and the
+// binary's name, for the author to replace.
+func githubRepository(modulePath, binaryName string) string {
+	parts := strings.Split(modulePath, "/")
+	if len(parts) < 3 || parts[0] != "github.com" {
+		return "OWNER/" + binaryName
+	}
+	return parts[1] + "/" + parts[2]
 }
 
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -67,10 +83,13 @@ func epackReleaseCommit(v, commit string) string {
 	return commit
 }
 
-// takenPackageNames are the packages a collector scaffold's files name
-// alongside its vendor client, and Go's predeclared identifiers, which an
-// import of the same name would shadow.
-var takenPackageNames = strings.Fields(`collector main schema componentsdk collectortest context fmt math testing time
+// takenPackageNames are the names the vendor client's package must not have:
+// the packages a collector scaffold's files import alongside it and the
+// names internal/collector declares, which its import would clash with, and
+// Go's predeclared identifiers, which its import would shadow.
+var takenPackageNames = strings.Fields(`collector main schema componentsdk collectortest context errors filepath fmt fs
+	maps math os slices strings testing time
+	collect location percent
 	any append bool byte cap clear close comparable complex complex64 complex128 copy delete
 	error false float32 float64 imag int int8 int16 int32 int64 iota len make max min new nil
 	panic print println real recover rune string true uint uint8 uint16 uint32 uint64 uintptr`)
@@ -97,11 +116,17 @@ var shellVariable = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 // GOOGLE_WORKSPACE_API_TOKEN for google-workspace, or API_TOKEN when the
 // name makes no usable variable.
 func tokenEnv(name string) string {
-	env := strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToUpper(name)) + "_API_TOKEN"
+	env := envName(name) + "_API_TOKEN"
 	if !shellVariable.MatchString(env) || execsafe.ValidateSecretName(env) != nil {
 		return "API_TOKEN"
 	}
 	return env
+}
+
+// envName is the collector's name in the form its variable names use, such
+// as GOOGLE_WORKSPACE for google-workspace.
+func envName(name string) string {
+	return strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToUpper(name))
 }
 
 // releaseVersion matches the versions a release build of epack reports,

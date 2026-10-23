@@ -1,0 +1,65 @@
+# Publishes the draft releases of a commit's v* tags once the sandbox check
+# posts a successful "sandboxes" commit status on that commit. Only a status
+# from the account the repository variable SANDBOX_STATUS_SENDER names counts.
+# GitHub runs this workflow from the default branch for every status event.
+# A release whose check fails stays a draft, and a maintainer can still
+# publish it by hand.
+
+name: Publish
+
+on:
+  status:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish draft releases
+    if: >-
+      vars.SANDBOX_RELEASE_CHECK == 'true' &&
+      vars.SANDBOX_STATUS_SENDER != '' &&
+      github.event.context == 'sandboxes' &&
+      github.event.state == 'success' &&
+      github.event.sender.login == vars.SANDBOX_STATUS_SENDER
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # A draft is published only once it holds every file its checksums.txt
+      # lists. A status that arrives while release.yaml is still uploading
+      # leaves the draft to release.yaml, which publishes it when it finishes.
+      - name: Publish the drafts of the commit's tags
+        env:
+          GH_TOKEN: ${{"{{"}} github.token {{"}}"}}
+          SHA: ${{"{{"}} github.event.sha {{"}}"}}
+        run: |
+          tags="$(gh api --paginate "repos/$GITHUB_REPOSITORY/tags?per_page=100" \
+            --jq '.[] | select(.commit.sha == env.SHA) | .name | select(startswith("v"))')"
+          drafts="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft) | "\(.id) \(.tag_name)"')"
+          while read -r id tag; do
+            if [ -z "$id" ] || ! grep -Fxq -- "$tag" <<< "$tags"; then
+              continue
+            fi
+            release="$(gh api "repos/$GITHUB_REPOSITORY/releases/$id")"
+            checksums="$(jq -r '.assets[] | select(.name == "checksums.txt" and .state == "uploaded") | .id' <<< "$release")"
+            missing=" checksums.txt"
+            if [ -n "$checksums" ]; then
+              sums="$(gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$checksums")"
+              if [ -n "$sums" ]; then
+                missing=""
+              fi
+              while read -r _ name; do
+                if [ -n "$name" ] && ! jq -e --arg name "$name" '.assets | any(.name == $name and .state == "uploaded")' <<< "$release" > /dev/null; then
+                  missing="$missing $name"
+                fi
+              done <<< "$sums"
+            fi
+            if [ -n "$missing" ]; then
+              echo "The draft for $tag is missing:$missing, so release.yaml publishes it when its upload finishes." >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false > /dev/null
+            echo "Published $tag." >> "$GITHUB_STEP_SUMMARY"
+          done <<< "$drafts"

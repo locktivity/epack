@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-10-23
+
+### ENHANCEMENTS
+
+- `epack sdk new collector` writes a collector that can be tagged without
+  hand edits:
+  - go.mod has a `toolchain` line matching epack's, so CI and release builds
+    use that Go release instead of the older one the `go` line names. Tools,
+    remotes, and utilities get the same line
+  - `release.yaml` creates a draft when the repository variable
+    `SANDBOX_RELEASE_CHECK` is `true`. The new `publish.yaml` publishes the
+    draft once a passing `sandboxes` commit status arrives from the account
+    in `SANDBOX_STATUS_SENDER`. Without the variable, a tag publishes at once
+  - `TestRecord/<name>` records the sandbox organization in
+    `SANDBOX_<NAME>_ORGANIZATION` to
+    `internal/collector/testdata/recordings/<name>.json`, and replaces each
+    `SANDBOX_` value and the names in the responses with fakes. The kit runs
+    the recording once it exists, and `TestRecordingsScrubbed` checks the
+    committed file
+  - `TestConformanceListsEveryCredential` fails when `conformance-secrets` in
+    ci.yaml or `CONFORMANCE_SECRETS` in the Makefile leaves out a credential
+    the kit uses
+  - The docs give the source as `<owner>/epack-collector-<name>@^0.1`, taken
+    from the module path, and link between pages by full GitHub URL, since
+    registry.epack.dev resolves relative links from the repository root
+  - The project includes `docs/levels.md` and epack's Apache 2.0 `LICENSE`
+
+### BUG FIXES
+
+- `epack sdk new collector` puts the API client of a collector named
+  `collect`, `location`, or `percent` in `internal/api`. Its package used to
+  share the name of a function in `internal/collector`, so the scaffold did
+  not compile
+
 ## [0.9.7] - 2026-10-23
 
 ### ENHANCEMENTS

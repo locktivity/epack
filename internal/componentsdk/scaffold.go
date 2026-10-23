@@ -44,6 +44,11 @@ type ScaffoldResult struct {
 	// EpackVersion is the epack version go.mod requires, or "" when this
 	// epack is a source build and go.mod requires none.
 	EpackVersion string
+
+	// Repository is the GitHub repository, as owner/name, that a collector's
+	// docs name as its source. It starts with OWNER/ when the module path is
+	// not on github.com or has no owner yet.
+	Repository string
 }
 
 // scaffoldFile is one file a scaffold writes: its path in the project and
@@ -65,8 +70,10 @@ type scaffoldFile struct {
 // cmd/<binary>, its spec, handler, and gap records in internal/collector, a
 // vendor client in internal/<vendor package>, its artifact's schema and
 // trace map in docs/schema, a collectortest suite with a hand-written
-// scenario and a test that records one, and CI that calls epack's shared
-// collector workflow. Other kinds keep main.go at the project root.
+// scenario and the one a test records from a sandbox, CI that calls epack's
+// shared collector workflow, and release workflows that can hold a release
+// as a draft until the sandbox check passes. Other kinds keep main.go at the
+// project root.
 func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 	binaryName := fmt.Sprintf("epack-%s-%s", opts.Kind, opts.Name)
 	modulePath := opts.ModulePath
@@ -80,6 +87,7 @@ func Scaffold(opts ScaffoldOptions) (*ScaffoldResult, error) {
 		BinaryName:   binaryName,
 		MainPackage:  data.MainPackage,
 		EpackVersion: data.EpackVersion,
+		Repository:   data.Repository,
 	}
 
 	for _, file := range scaffoldFiles(opts.Kind, binaryName, data.VendorPackage) {
@@ -118,12 +126,16 @@ func scaffoldFiles(kind componenttypes.ComponentKind, binaryName, vendorPackage 
 			scaffoldFile{path: "internal/collector/collectortest_test.go", template: "collector.collectortest_test.go.tmpl"},
 			scaffoldFile{path: "internal/collector/fixtures_test.go", template: "collector.fixtures_test.go.tmpl"},
 			scaffoldFile{path: "internal/collector/record_test.go", template: "collector.record_test.go.tmpl"},
+			scaffoldFile{path: "internal/collector/recording_scrub_test.go", template: "collector.recording_scrub_test.go.tmpl"},
 			scaffoldFile{path: "internal/" + vendorPackage + "/client.go", template: "collector.client.go.tmpl"},
 			scaffoldFile{path: "docs/schema/v1.0.0.json", template: "collector.schema.json.tmpl"},
 			scaffoldFile{path: "docs/schema/embed.go", template: "collector.schema.embed.go.tmpl"},
 			scaffoldFile{path: "docs/schema/trace-map.json", template: "collector.trace-map.json.tmpl", traceMap: true},
+			scaffoldFile{path: "docs/levels.md", template: "docs/collector.levels.md.tmpl"},
 			scaffoldFile{path: "testdata/conformance.json", template: "collector.conformance.json.tmpl"},
 			scaffoldFile{path: "Makefile", template: "collector.makefile.tmpl"},
+			scaffoldFile{path: "LICENSE", template: "collector.license.tmpl"},
+			scaffoldFile{path: ".github/workflows/publish.yaml", template: "collector.publish.yaml.tmpl"},
 		)
 		readme, ci, release = "collector.readme.md.tmpl", "collector.ci.yaml.tmpl", "collector.release.yaml.tmpl"
 		configuration, examples = "docs/collector.configuration.md.tmpl", "docs/collector.examples.md.tmpl"

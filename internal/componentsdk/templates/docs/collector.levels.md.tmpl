@@ -1,0 +1,11 @@
+# Collection Levels
+
+The `level` config key sets how much detail the collector writes. The levels are cumulative: each one holds everything the level below it holds.
+
+| Level | What `artifacts/{{.Name}}.json` holds |
+|-------|---------------------------------------|
+| `trust` (the default) | The organization's ID and name, and whether it requires MFA. The number of users, and how many have an active MFA factor, as a count and a percentage. No user names. |
+| `audit` | The same as `trust`. |
+| `internal` | Adds every user, with their ID, their name, and whether they have an active MFA factor. |
+
+The level the collector ran at is the artifact's `collected_at_level`.

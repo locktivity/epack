@@ -2,7 +2,7 @@
 
 An epack collector built with the [Component SDK](https://github.com/locktivity/epack).
 
-See [docs/](docs/) for usage documentation.
+See [docs/](docs/) for setup and the output: [configuration](docs/configuration.md), [overview](docs/overview.md), [levels](docs/levels.md), and [examples](docs/examples.md).
 
 ## Layout
 
@@ -38,17 +38,17 @@ epack sdk run --watch .
 go test -race ./...
 ```
 
-`internal/collector/collectortest_test.go` runs the collector against canned API responses: an organization written by hand in `fixtures_test.go`, and one with no users. It then makes each API call fail in turn, with errors such as a 403, a timeout, or a malformed body, and checks that each value the collector could not read is left out with a gap. It also checks the output against `docs/schema/v1.0.0.json` at every collection level, and checks that the token never reaches another host or any output. Add a scenario for each state of an organization the collector has to handle.
+`internal/collector/collectortest_test.go` runs the collector against canned API responses: an organization written by hand in `fixtures_test.go`, one with no users, and the sandbox's recording once there is one. It then makes each API call fail in turn, with errors such as a 403, a timeout, or a malformed body, and checks that each value the collector could not read is left out with a gap. It also checks the output against `docs/schema/v1.0.0.json` at every collection level, and checks that the token never reaches another host or any output. Add a scenario for each state of an organization the collector has to handle.
 
-### Recording a scenario
+### Recording the sandbox
 
-`make record` runs the collector once against a real organization and writes the API's responses to `internal/collector/testdata/recordings/clean.json`, with the token, the organization's name, emails, and IP addresses scrubbed:
+`internal/collector/record_test.go` runs the collector once against a sandbox, an organization kept with known settings, and writes the responses to `internal/collector/testdata/recordings/{{.Name}}.json`, which the suite loads as one more scenario. It reads the organization from `{{.SandboxEnv}}` and the token from `{{.TokenEnv}}`:
 
 ```bash
-RECORD_ORGANIZATION=your-org {{.TokenEnv}}=your-token make record
+{{.SandboxEnv}}=your-org {{.TokenEnv}}=your-token make record
 ```
 
-To test against the recording, load it with `collectortest.LoadScenario` in place of the scenario in `fixtures_test.go`.
+The recording names the organization by the kit's fake, and `recordScrubPatterns` in `recording_scrub_test.go` replace the names of the organization and its users. Record also replaces emails, public IP addresses, and the token. It writes nothing while the token or the value of a `SANDBOX_` variable remains, and `TestRecordingsScrubbed` checks the committed recording again. Add a pattern for each field in the vendor's responses that holds a person's details or names the organization.
 
 ### Trace map
 
@@ -66,7 +66,7 @@ CI fails when the committed map is stale, and so does `go test` when the suite f
 make conformance
 ```
 
-This runs the conformance harness at the epack version `go.mod` pins, with `testdata/conformance.json` as the config and a canary value in each variable `CONFORMANCE_SECRETS` lists in the Makefile. Keep the config free of secrets. Conformance fails if any output prints a canary, and checks that a rejected token exits 3.
+This runs the conformance harness at the epack version `go.mod` pins, with `testdata/conformance.json` as the config and a canary value in each variable `CONFORMANCE_SECRETS` lists in the Makefile. Keep the config free of secrets. Conformance fails if any output prints a canary, and checks that a rejected token exits 3. `go test` fails when `CONFORMANCE_SECRETS` or `conformance-secrets` in `.github/workflows/ci.yaml` leaves out a credential the kit signs in with.
 
 ## CI
 
@@ -81,14 +81,8 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The GitHub Action will:
-1. Run CI
-2. Build multi-platform binaries (linux/darwin, amd64/arm64)
-3. Generate [SLSA Level 3](https://slsa.dev/spec/v1.0/levels#build-l3) provenance attestations
-4. Publish to GitHub Releases
-
-All release binaries include cryptographic provenance that proves they were built from this repository's CI pipeline.
+The workflow runs CI, builds binaries for linux and darwin on amd64 and arm64 with [SLSA Level 3](https://slsa.dev/spec/v1.0/levels#build-l3) provenance, and creates the GitHub release. When the repository variable `SANDBOX_RELEASE_CHECK` is `true`, the release starts as a draft, and `publish.yaml` publishes it once the sandbox check passes on the tag's commit. The repository variable `SANDBOX_STATUS_SENDER` names the account whose status counts.
 
 ## License
 
-TODO: Add license
+Apache 2.0. See [LICENSE](LICENSE).

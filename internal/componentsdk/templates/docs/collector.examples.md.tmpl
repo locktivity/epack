@@ -3,7 +3,7 @@
 ```yaml
 collectors:
   {{.Name}}:
-    source: OWNER/{{.BinaryName}}@v1
+    source: {{.Repository}}@^0.1
     config:
       organization: your-org
     secrets:
@@ -15,7 +15,7 @@ collectors:
 ```yaml
 collectors:
   {{.Name}}:
-    source: OWNER/{{.BinaryName}}@v1
+    source: {{.Repository}}@^0.1
     config:
       organization: your-org
       level: internal
@@ -36,7 +36,7 @@ At the `internal` level, `artifacts/{{.Name}}.json` holds:
   "users": {
     "total_count": 3,
     "mfa_enabled_count": 2,
-    "mfa_enabled_pct": 66.7,
+    "mfa_enabled_pct": 66,
     "inventory": [
       {"id": "u1", "name": "Avery", "mfa_enabled": true},
       {"id": "u2", "name": "Blake", "mfa_enabled": false},
