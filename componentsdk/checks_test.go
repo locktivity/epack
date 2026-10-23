@@ -267,6 +267,68 @@ func TestNormalizedSchemas(t *testing.T) {
 	}
 }
 
+func TestCloudPostureCountsAndWorkforceSignInAreOptional(t *testing.T) {
+	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/cloud-posture@v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		doc  string
+		bad  string
+	}{
+		{
+			"with the counts and workforce sign-in",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+			  "accounts": [
+			    {"account_id": "111111111111", "iam": {"user_count": 0, "root_mfa_enabled": true, "access_key_user_count": 0, "saml_provider_count": 0}},
+			    {"account_id": "222222222222", "iam": {"user_count": 4, "mfa_coverage_pct": 50, "access_key_user_count": 2, "access_key_rotation_compliant_pct": 100, "saml_provider_count": 1}}],
+			  "workforce_sign_in": {"in_use": true, "user_count": 12, "mfa_source": "sign_in_service"}}`,
+			"",
+		},
+		{
+			"with them null",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+			  "accounts": [{"account_id": "111111111111", "iam": {"user_count": null, "access_key_user_count": null, "saml_provider_count": null}}],
+			  "workforce_sign_in": {"in_use": null, "user_count": null, "mfa_source": null}}`,
+			"",
+		},
+		{
+			"without them",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+			  "accounts": [{"account_id": "111111111111", "iam": {"mfa_coverage_pct": 100, "access_key_rotation_compliant_pct": 95}}]}`,
+			"",
+		},
+		{
+			"a negative count",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+			  "accounts": [{"account_id": "111111111111", "iam": {"user_count": -1}}]}`,
+			"/accounts/0/iam/user_count",
+		},
+		{
+			"an unknown mfa source",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+			  "accounts": [], "workforce_sign_in": {"in_use": true, "mfa_source": "okta"}}`,
+			"/workforce_sign_in/mfa_source",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := outputcheck.Decode([]byte(tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := outputcheck.Validate(s, "a.json", doc)
+			switch {
+			case tc.bad == "" && len(got) != 0:
+				t.Errorf("findings %+v, want none", got)
+			case tc.bad != "" && (len(got) != 1 || got[0].Pointer != tc.bad):
+				t.Errorf("findings %+v, want one at %s", got, tc.bad)
+			}
+		})
+	}
+}
+
 const mfaSchema = `{
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"type": "object",

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-10-23
+
+### ENHANCEMENTS
+
+- componentsdk: the normalized cloud-posture schema lists the counts behind
+  two of each account's IAM percentages: `user_count` for `mfa_coverage_pct`
+  and `access_key_user_count` for `access_key_rotation_compliant_pct`. When a
+  count is 0, a collector leaves its percentage out. `saml_provider_count`
+  counts the SAML identity providers an account trusts directly for sign-in
+- componentsdk: the normalized cloud-posture schema has an optional
+  `workforce_sign_in` object for a central sign-in service such as AWS IAM
+  Identity Center, with `in_use`, `user_count`, and `mfa_source`
+  (`sign_in_service`, `external_idp`, or `unknown`)
+- componentsdk: the cloud-posture schema describes
+  `access_key_rotation_compliant_pct` as a share of the users
+  `access_key_user_count` counts, which is how the AWS collector computes it.
+  It used to describe a share of credentials
+
 ## [0.9.6] - 2026-10-22
 
 ### ENHANCEMENTS

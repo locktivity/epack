@@ -30,6 +30,11 @@
           "iam": {
             "type": ["object", "null"],
             "properties": {
+              "user_count": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "description": "Number of human user identities that can sign in to the account. mfa_coverage_pct counts these users"
+              },
               "mfa_coverage_pct": {
                 "type": ["number", "null"],
                 "minimum": 0,
@@ -44,11 +49,21 @@
                 "type": ["boolean", "null"],
                 "description": "Whether the account's highest-privilege owner identity (the AWS root user, a Google Cloud organization administrator, an Azure Global Administrator) is protected from password-only use, by MFA or by having no standing credentials"
               },
+              "access_key_user_count": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "description": "Number of users with an active long-lived programmatic credential (access keys, service account keys, client secrets). access_key_rotation_compliant_pct counts these users"
+              },
               "access_key_rotation_compliant_pct": {
                 "type": ["number", "null"],
                 "minimum": 0,
                 "maximum": 100,
-                "description": "Percentage of long-lived programmatic credentials (access keys, service account keys, client secrets) rotated within policy (typically 90 days)"
+                "description": "Percentage of users with an active long-lived programmatic credential (access keys, service account keys, client secrets) whose active credentials are all rotated within policy (typically 90 days)"
+              },
+              "saml_provider_count": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "description": "Number of SAML identity providers the account trusts directly for sign-in. A provider created by a workforce sign-in service such as AWS IAM Identity Center is not counted"
               }
             }
           },
@@ -134,6 +149,26 @@
               }
             }
           }
+        }
+      }
+    },
+    "workforce_sign_in": {
+      "type": ["object", "null"],
+      "description": "A central sign-in service that signs people in to the accounts, such as AWS IAM Identity Center. Left out when the collector does not report one",
+      "properties": {
+        "in_use": {
+          "type": ["boolean", "null"],
+          "description": "Whether people can sign in to any of the accounts through the workforce sign-in service"
+        },
+        "user_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of users in the workforce sign-in service's directory"
+        },
+        "mfa_source": {
+          "type": ["string", "null"],
+          "enum": ["sign_in_service", "external_idp", "unknown", null],
+          "description": "Where the workforce sign-in service's users have MFA set. It is sign_in_service when the service itself sets it, external_idp when an external identity provider that the users come from sets it, and unknown when the collector cannot tell"
         }
       }
     }
