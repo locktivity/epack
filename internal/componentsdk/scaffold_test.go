@@ -8,8 +8,10 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -287,6 +289,56 @@ func TestScaffold_CollectorPinsTheSharedWorkflowToTheRelease(t *testing.T) {
 	}
 	if !strings.Contains(unpinned, "    uses: locktivity/epack/.github/workflows/collector-ci.yaml@main\n") {
 		t.Errorf("a source build has no release commit to pin:\n%s", unpinned)
+	}
+}
+
+// TestScaffold_CollectorLintsAsCIDoes checks that make lint runs the
+// golangci-lint version collector-ci.yaml defaults to, under go.mod's
+// toolchain line, the Go release CI installs. golangci-lint panics on a Go
+// release newer than the one it was built with.
+func TestScaffold_CollectorLintsAsCIDoes(t *testing.T) {
+	var workflow struct {
+		On struct {
+			WorkflowCall struct {
+				Inputs map[string]struct {
+					Default string `yaml:"default"`
+				} `yaml:"inputs"`
+			} `yaml:"workflow_call"`
+		} `yaml:"on"`
+	}
+	if err := safeyaml.Unmarshal([]byte(readEpackFile(t, ".github/workflows/collector-ci.yaml")), limits.ConfigFile, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	version := workflow.On.WorkflowCall.Inputs["golangci-lint-version"].Default
+	if version == "" {
+		t.Fatal("collector-ci.yaml has no golangci-lint-version default")
+	}
+
+	dir := t.TempDir()
+	if _, err := Scaffold(ScaffoldOptions{TargetDir: dir, Name: "demo", Kind: componenttypes.KindCollector}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readFile(t, dir, "Makefile"), "\nGOLANGCI_LINT_VERSION := "+version+"\n") {
+		t.Errorf("the Makefile should install golangci-lint %s, as CI does", version)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("the Makefile's recipes run under sh")
+	}
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("make is not installed")
+	}
+	toolchain := regexp.MustCompile(`(?m)^toolchain (\S+)$`).FindStringSubmatch(readFile(t, dir, "go.mod"))
+	if toolchain == nil {
+		t.Fatal("the scaffold's go.mod has no toolchain line")
+	}
+	cmd := exec.Command("make", "-n", "lint")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("make -n lint: %v\n%s", err, out)
+	}
+	if want := "\nGOTOOLCHAIN=" + toolchain[1] + " ./bin/golangci-lint run ./...\n"; !strings.Contains(string(out), want) {
+		t.Errorf("make lint should run golangci-lint under %s:\n%s", toolchain[1], out)
 	}
 }
 

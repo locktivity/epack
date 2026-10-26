@@ -27,12 +27,15 @@ test:
 
 GOLANGCI_LINT_VERSION := v2.9.0
 GOLANGCI_LINT := ./bin/golangci-lint
+# golangci-lint panics on a Go release newer than the one it was built with,
+# so lint runs under go.mod's toolchain line, the Go release CI installs.
+GO_TOOLCHAIN = $(shell sed -n 's/^toolchain \([^[:space:]]*\).*/\1/p' go.mod)
 
 $(GOLANGCI_LINT):
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b ./bin $(GOLANGCI_LINT_VERSION)
 
 lint: $(GOLANGCI_LINT)
-	$(GOLANGCI_LINT) run ./...
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GOLANGCI_LINT) run ./...
 
 clean:
 	rm -f $(BINARY_NAME) $(BINARY_NAME)-*

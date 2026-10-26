@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-10-26
+
+### BUG FIXES
+
+- `make lint` in a project from `epack sdk new collector` runs golangci-lint
+  under the Go release in go.mod's `toolchain` line, which is the one CI
+  installs. With a newer Go installed, such as Go 1.27, golangci-lint v2.9.0
+  panicked with "file requires newer Go version"
+- epack-conformance fails C-020 and COL-040 when a collector given `--config`
+  and `--secret` exits 2 on the run that should collect: it rejected a config
+  it should collect with. The failure names the config file and quotes the
+  last line of the collector's stderr. The output checks used to skip, and
+  the run passed. Without `--secret`, exit 2 still skips them, since a
+  collector with no credentials can exit 2 too
+
+### UPGRADE NOTES
+
+- A collector whose credential must parse before it is used, such as a JSON
+  key, fails to parse the `--secret` canary. If it reports that as a config
+  error (exit 2), it now fails conformance when `--config` is given. As an
+  authentication error (exit 3), the output checks skip and COL-043 passes
+
 ## [0.9.8] - 2026-10-23
 
 ### ENHANCEMENTS

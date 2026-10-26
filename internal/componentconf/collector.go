@@ -60,7 +60,7 @@ func (r *Runner) uncollectedReason(exit int) string {
 	switch exit {
 	case 2:
 		if r.CollectorConfig != "" {
-			return "collector exited 2 with the --config file"
+			return "collector exited 2 with --config " + r.configName + ", which can mean it has no credentials; pass --secret for each variable it reads one from"
 		}
 		return "collector exited 2 without config; pass --config with a config it can collect with"
 	case 3:
@@ -75,9 +75,36 @@ func (r *Runner) uncollectedReason(exit int) string {
 	}
 }
 
+// lastLine is the last non-blank line of out, which for a failed run is
+// usually its error, cut to 200 characters.
+func lastLine(out []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	line := []rune(strings.TrimSpace(lines[len(lines)-1]))
+	if len(line) > 200 {
+		return string(line[:200]) + "..."
+	}
+	return string(line)
+}
+
 func (r *Runner) testCollectorOutput(ctx context.Context) {
 	result := r.exec(ctx, nil, nil, r.collectorEnv())
 	r.collectRun = result
+
+	// With --config and the --secret credentials the collector has what it
+	// needs to collect, so a config error fails the run that should succeed.
+	// Without credentials, exit 2 may only mean they are missing.
+	if result.ExitCode == 2 && r.CollectorConfig != "" && len(r.canaries) > 0 {
+		problem := "collector exited 2 (config error) with --config " + r.configName
+		if line := lastLine(result.Stderr); line != "" {
+			problem += "; stderr: " + line
+		}
+		r.fail("C-020", problem)
+		r.fail("COL-040", problem)
+		for _, id := range append([]string{"COL-001", "COL-002", "COL-006", "COL-005", "COL-034", "C-010", "COL-010", "COL-011"}, resultIDs...) {
+			r.skip(id, "depends on COL-040")
+		}
+		return
+	}
 
 	// A collector exits 2 when it needs config (COL-024), 3 when it needs
 	// credentials, and 4 when it cannot reach its API. It never reached
@@ -485,6 +512,8 @@ func (r *Runner) checkSecretHandling() {
 		r.fail("C-032", describeLeaks(inErrors))
 	case rejected || (r.CollectorConfig != "" && run.ExitCode != 0 && run.ExitCode != 2):
 		r.pass("C-032")
+	case r.CollectorConfig != "":
+		r.skip("C-032", "no run failed after reading its credentials")
 	default:
 		r.skip("C-032", "no run failed after reading its credentials: pass --config so the collector uses them")
 	}

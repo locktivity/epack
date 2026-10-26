@@ -570,7 +570,7 @@ Skipped (MUST/SHOULD):
 | `--json` | Output results as JSON |
 | `--level <level>` | Minimum required conformance level: `minimal`, `standard`, or `full` |
 | `--timeout <duration>` | Test timeout (default: 30s) |
-| `--config <file>` | Collector config the collector can collect with, passed as `EPACK_COLLECTOR_CONFIG` to the runs that check its output, signal handling, filesystem boundary, and `NO_COLOR` |
+| `--config <file>` | Collector config the collector can collect with, passed as `EPACK_COLLECTOR_CONFIG` to the runs that check its output, signal handling, filesystem boundary, and `NO_COLOR`. With `--secret`, a config error (exit 2) on the run that should collect fails C-020 and COL-040 |
 | `--secret <name>` | Variable the collector reads a credential from (repeatable). Every run sets it to a random canary value, overriding any real value in the environment |
 | `-v, --verbose` | List every result, including passes |
 
@@ -706,7 +706,7 @@ Some tests are skipped by default because they require specific conditions:
 | Collector: `--secret` without `--config`, so it never uses the credential | C-032, COL-043 |
 | Requires malformed input injection | C-033 |
 | Feature not supported | REM-020 to REM-061 (based on capabilities) |
-| Collector exits 2 (needs config), 3 (needs credentials), or 4 (cannot reach its API) on the run that should collect | C-010, C-020, COL-001, COL-002, COL-005, COL-006, COL-010, COL-011, COL-034, COL-040, COL-075 to COL-080 |
+| Collector exits 2 without `--config` or without `--secret` (needs config or credentials), 3 (needs credentials), or 4 (cannot reach its API) on the run that should collect | C-010, C-020, COL-001, COL-002, COL-005, COL-006, COL-010, COL-011, COL-034, COL-040, COL-075 to COL-080 |
 | Collector writes no collector result, as one built without the SDK does | COL-075 to COL-080 |
 | Collector result without call numbers on its rows, steps, gap calls, or a build file, as from an older SDK | COL-076, COL-077, COL-078, COL-079 |
 | The run that should collect asks for the audit or internal level | COL-080 |
@@ -717,7 +717,9 @@ Every collector run gets its own `EPACK_COLLECTOR_OUTPUT_DIR`, as under `epack c
 
 The canaries go to every run, so a collector that needs no config reaches its API in COL-020's run with a test config and COL-021's run without one; both accept exit 3 or 4 there, as well as 0 to 2.
 
-Name variables that hold a credential, not a path to one: a canary path printed in a "file not found" error would fail C-031. A credential that must parse before it is used, such as a JSON key, fails parsing with a canary value; the collector exits 2 and COL-043 skips.
+With `--config` and `--secret`, the collector has its config and its credentials, so exit 2 on the run that should collect means it rejected the config. C-020 and COL-040 fail with the config file's name and the last line of the collector's stderr, and the output checks skip. Without `--secret`, exit 2 there skips the output checks, since a collector that finds no credentials can exit 2 too.
+
+Name variables that hold a credential, not a path to one: a canary path printed in a "file not found" error would fail C-031. A credential that must parse before it is used, such as a JSON key, fails parsing with a canary value. Reported as an authentication error (exit 3), the output checks skip and COL-043 passes. Reported as a config error (exit 2), COL-043 skips, and with `--config`, C-020 and COL-040 fail.
 
 COL-031 sends SIGTERM at the collector's first `epack_progress` line, when it is mid-collection, or 5 seconds after start for a collector that reports no progress. It fails when SIGTERM kills the collector, which means it installed no handler, and when the collector is still running 5 seconds after the signal. COL-030 fails when any run is stopped at `--timeout`.
 

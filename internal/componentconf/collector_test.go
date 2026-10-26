@@ -124,7 +124,32 @@ func TestCollectorOutput_ConfigRunsTheOutputChecks(t *testing.T) {
 	}
 }
 
-func TestCollectorOutput_RejectedConfigSaysSo(t *testing.T) {
+// With the --secret credentials in place, exit 2 means the collector rejected
+// the config it should collect with.
+func TestCollectorOutput_RejectedConfigFails(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("config.json", []byte(`{"region":"eu"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(writeCollector(t, "needs-config", needsConfig), componenttypes.KindCollector)
+	runner.CollectorConfig = "config.json"
+	runner.CollectorSecrets = []string{"API_TOKEN"}
+	results := runCollectorConformance(t, runner)
+
+	for _, id := range []string{"C-020", "COL-040"} {
+		if got := results[id]; got.Status != StatusFail || got.Message != "collector exited 2 (config error) with --config config.json; stderr: invalid config" {
+			t.Errorf("%s = %s (%s), want a failure that names the config file", id, got.Status, got.Message)
+		}
+	}
+	for _, id := range append([]string{"COL-001", "COL-034"}, resultIDs...) {
+		if got := results[id]; got.Status != StatusSkip || got.Reason != "depends on COL-040" {
+			t.Errorf("%s = %s (%s), want a skip that depends on COL-040", id, got.Status, got.Reason)
+		}
+	}
+}
+
+// Without credentials, exit 2 may mean only that they are missing.
+func TestCollectorOutput_ExitTwoWithConfigAndNoSecretsSkips(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(`{"region":"eu"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -133,8 +158,10 @@ func TestCollectorOutput_RejectedConfigSaysSo(t *testing.T) {
 	runner.CollectorConfig = configPath
 	results := runCollectorConformance(t, runner)
 
-	if got := results["COL-001"]; got.Status != StatusSkip || got.Reason != "collector exited 2 with the --config file" {
-		t.Errorf("COL-001 = %s (%s)", got.Status, got.Reason)
+	for _, id := range outputChecks {
+		if got := results[id]; got.Status != StatusSkip || !strings.Contains(got.Reason, "with --config "+configPath+",") || !strings.Contains(got.Reason, "pass --secret") {
+			t.Errorf("%s = %s (%s), want a skip that names the config file and asks for --secret", id, got.Status, got.Reason)
+		}
 	}
 }
 

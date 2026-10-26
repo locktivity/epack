@@ -41,6 +41,7 @@ type Runner struct {
 	canaries         map[string]string // secret name to its canary value
 	leaks            []secretLeak
 	collectRun       execResult // the run with --config, which should collect
+	configName       string     // CollectorConfig as given, for messages
 	caps             map[string]interface{}
 	binaryName       string
 }
@@ -68,6 +69,7 @@ func (r *Runner) Run(ctx context.Context) (*Report, error) {
 		}
 		r.Binary = abs
 	}
+	r.configName = r.CollectorConfig
 	if r.CollectorConfig != "" && !filepath.IsAbs(r.CollectorConfig) {
 		abs, err := filepath.Abs(r.CollectorConfig)
 		if err != nil {
