@@ -198,7 +198,10 @@
         "reachable_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "x-epack-numerator": "reachable_count",
+          "x-epack-denominator": "total_endpoints",
+          "x-epack-rounding": "floor"
         },
         "certificate_valid_count": {
           "type": ["integer", "null"],
@@ -207,7 +210,10 @@
         "certificate_valid_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "x-epack-numerator": "certificate_valid_count",
+          "x-epack-denominator": "total_endpoints",
+          "x-epack-rounding": "floor"
         },
         "hostname_valid_count": {
           "type": ["integer", "null"],
@@ -216,7 +222,10 @@
         "hostname_valid_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "x-epack-numerator": "hostname_valid_count",
+          "x-epack-denominator": "total_endpoints",
+          "x-epack-rounding": "floor"
         },
         "modern_protocol_count": {
           "type": ["integer", "null"],
@@ -225,7 +234,10 @@
         "modern_protocol_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "x-epack-numerator": "modern_protocol_count",
+          "x-epack-denominator": "total_endpoints",
+          "x-epack-rounding": "floor"
         },
         "expiring_soon_count": {
           "type": ["integer", "null"],
@@ -234,7 +246,10 @@
         "expiring_soon_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "x-epack-numerator": "expiring_soon_count",
+          "x-epack-denominator": "total_endpoints",
+          "x-epack-rounding": "ceil"
         },
         "legacy_protocol_supported_count": {
           "type": ["integer", "null"],
@@ -243,13 +258,20 @@
         "legacy_protocol_supported_pct": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "x-epack-numerator": "legacy_protocol_supported_count",
+          "x-epack-denominator": "total_endpoints",
+          "x-epack-rounding": "ceil"
         },
         "all_certificates_valid": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-numerator": "certificate_valid_count",
+          "x-epack-denominator": "total_endpoints"
         },
         "all_modern_protocol": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-numerator": "modern_protocol_count",
+          "x-epack-denominator": "total_endpoints"
         }
       }
     },

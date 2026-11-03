@@ -129,6 +129,7 @@ func TestCodes(t *testing.T) {
 		CodeTimeout:          OwnerVendorOrRunner,
 		CodeInvalidResponse:  OwnerPublisher,
 		CodeInternal:         OwnerPublisher,
+		CodeNotShared:        OwnerNobody,
 	}
 	if len(Codes()) != len(owners) {
 		t.Fatalf("Codes() lists %d codes, want %d", len(Codes()), len(owners))

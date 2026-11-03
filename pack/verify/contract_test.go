@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 )
 
@@ -249,11 +250,12 @@ func TestSigstoreVerifier_RequiresIdentityPolicyOrExplicitSkip(t *testing.T) {
 	// Create verifier WITHOUT any identity options
 	verifier := mustCreateSigstoreVerifier(t, WithOffline())
 
-	// Create a minimal but structurally valid bundle
-	bundle := createMinimalBundle(t)
-	data, _ := json.Marshal(bundle)
+	data, err := os.ReadFile("testdata/sigstore-js-provenance.sigstore.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	_, err := verifier.Verify(context.Background(), data)
+	_, err = verifier.Verify(context.Background(), data)
 	if err == nil {
 		t.Error("Verify without identity policy should return error")
 	}
@@ -350,24 +352,6 @@ func TestCombinedOptions(t *testing.T) {
 // =============================================================================
 // Helper Functions
 // =============================================================================
-
-// createMinimalBundle creates a structurally valid but cryptographically invalid bundle.
-func createMinimalBundle(t *testing.T) map[string]interface{} {
-	t.Helper()
-	return map[string]interface{}{
-		"mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.1",
-		"verificationMaterial": map[string]interface{}{
-			"publicKey": map[string]interface{}{
-				"hint": "test",
-			},
-		},
-		"dsseEnvelope": map[string]interface{}{
-			"payloadType": "application/vnd.in-toto+json",
-			"payload":     "", // Base64-encoded payload
-			"signatures":  []interface{}{},
-		},
-	}
-}
 
 // containsAny checks if s contains any of the substrings.
 func containsAny(s string, substrs []string) bool {

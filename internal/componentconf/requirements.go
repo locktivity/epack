@@ -48,7 +48,7 @@ var Requirements = []Requirement{
 	{ID: "COL-077", Level: LevelShould, Description: "Run steps are each named once, listed in start order, end after they start, and count their calls consistently", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-078", Level: LevelShould, Description: "A gap's operation is one the result counts, its call has rows, and a missing permission is only on a permission_denied gap", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-079", Level: LevelMust, Description: "A build file matches evidencepack/collector-build@v1 and names the collector result's version and commit", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
-	{ID: "COL-080", Level: LevelMust, Description: "At the trust level, the collector result holds no request rows, gap warnings or error text, or principal ID", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-080", Level: LevelMust, Description: "At the trust level, the collector result holds no value its schema marks for a higher level, such as request rows, the principal's ID, or a gap's error text", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 
 	// Tool requirements
 	{ID: "TOOL-001", Level: LevelMust, Description: "Implement --capabilities flag returning JSON metadata", Types: []componenttypes.ComponentKind{componenttypes.KindTool}},

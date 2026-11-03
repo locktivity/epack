@@ -1,0 +1,800 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Normalized device management and endpoint security evidence. Every metric is optional. An absent metric has no usable reading, and availability records why. Below the audit level, counts that grow with the fleet are left out, and devices_present is written instead.",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "provider", "scope", "availability"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "collected_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "organization_id": {
+      "type": "string",
+      "x-epack-level": "audit",
+      "description": "The provider's organization identifier"
+    },
+    "scope": {
+      "type": "object",
+      "required": ["discovery_complete", "description", "max_observation_age_seconds"],
+      "properties": {
+        "discovery_complete": {
+          "type": "boolean",
+          "description": "Whether every device the provider lists was read. When false, fleet totals and percentages are left out"
+        },
+        "observed_devices_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Devices observed within max_observation_age_seconds"
+        },
+        "description": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$",
+          "description": "A fixed name for the scope, such as managed_devices"
+        },
+        "max_observation_age_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How recently a device must have reported to count"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fleet": {
+      "type": "object",
+      "properties": {
+        "devices_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether the fleet has any devices in scope. When false, the percentages have no devices to count"
+        },
+        "devices_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Devices in scope"
+        },
+        "managed_devices_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Devices in scope that the provider manages"
+        },
+        "mdm_enrolled_devices_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Devices in scope with affirmative evidence of MDM enrollment"
+        },
+        "mdm_enrolled_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "mdm_enrolled_devices_count",
+          "x-epack-denominator": "devices_count",
+          "x-epack-present": "devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices in scope with affirmative evidence of MDM enrollment. Null when there are no devices"
+        },
+        "devices_by_os": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/os_family"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/count"
+          },
+          "x-epack-level": "audit",
+          "description": "Devices in scope by operating system family"
+        }
+      },
+      "additionalProperties": false
+    },
+    "compliance": {
+      "type": "object",
+      "properties": {
+        "compliant_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where the provider's or a baseline's compliance verdict passes, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"compliance.compliant_pct\"] counts the devices by outcome"
+        },
+        "basis": {
+          "enum": ["provider_reported", "baseline_evaluation"]
+        },
+        "baseline_id": {
+          "type": "string"
+        },
+        "baseline_version": {
+          "type": "string"
+        }
+      },
+      "dependentRequired": {
+        "compliant_pct": ["basis"]
+      },
+      "additionalProperties": false
+    },
+    "hardening": {
+      "type": "object",
+      "properties": {
+        "disk_encryption_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where every volume is encrypted at rest, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.disk_encryption_pct\"] counts the devices by outcome"
+        },
+        "screen_lock_compliant_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where the screen lock setting meets policy, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.screen_lock_compliant_pct\"] counts the devices by outcome"
+        },
+        "firewall_enabled_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where the host firewall is on, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.firewall_enabled_pct\"] counts the devices by outcome"
+        }
+      },
+      "additionalProperties": false
+    },
+    "patching": {
+      "type": "object",
+      "properties": {
+        "os_supported_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where the operating system version still gets security updates, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"patching.os_supported_pct\"] counts the devices by outcome"
+        },
+        "os_baseline_compliant_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where the operating system meets the named baseline, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"patching.os_baseline_compliant_pct\"] counts the devices by outcome"
+        },
+        "unsupported_os_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Devices whose operating system version no longer gets security updates"
+        },
+        "baseline_id": {
+          "type": "string"
+        },
+        "baseline_version": {
+          "type": "string"
+        }
+      },
+      "dependentRequired": {
+        "os_baseline_compliant_pct": ["baseline_id"]
+      },
+      "additionalProperties": false
+    },
+    "protection": {
+      "type": "object",
+      "properties": {
+        "antimalware_installed_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where anti-malware is installed, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.antimalware_installed_pct\"] counts the devices by outcome"
+        },
+        "antimalware_healthy_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where anti-malware is installed, running, and current, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.antimalware_healthy_pct\"] counts the devices by outcome"
+        },
+        "edr_installed_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where an EDR agent is installed, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.edr_installed_pct\"] counts the devices by outcome"
+        },
+        "edr_healthy_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-present": "/fleet/devices_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of devices where an EDR agent is installed, running, and reporting, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.edr_healthy_pct\"] counts the devices by outcome"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metric_coverage": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/metric_path"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/coverage"
+      },
+      "x-epack-level": "audit",
+      "description": "Counts of devices for each percentage, by whether the device passed, failed, could not be read, or does not apply"
+    },
+    "availability": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "reason"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "enum": ["unsupported", "permission_denied", "not_configured", "stale", "partial", "source_error"]
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Why a metric has no reading, by path"
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/device"
+      },
+      "x-epack-level": "audit"
+    },
+    "policies": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/policy"
+      },
+      "x-epack-level": "audit"
+    },
+    "threat_events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/threat_event"
+      },
+      "x-epack-level": "audit"
+    },
+    "device_actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/device_action"
+      },
+      "x-epack-level": "audit"
+    },
+    "history": {
+      "type": "object",
+      "required": ["window_start", "window_end"],
+      "properties": {
+        "window_start": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "window_end": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false,
+      "x-epack-level": "audit"
+    },
+    "inventories": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/inventory_meta"
+      },
+      "x-epack-level": "audit"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "scope": {
+            "properties": {
+              "discovery_complete": {
+                "const": false
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "maxProperties": 0
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": ["fleet"]
+            },
+            {
+              "required": ["hardening"]
+            },
+            {
+              "required": ["protection"]
+            },
+            {
+              "required": ["patching"]
+            },
+            {
+              "required": ["compliance"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["compliance", "metric_coverage"],
+        "properties": {
+          "compliance": {
+            "required": ["compliant_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["compliance.compliant_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["hardening", "metric_coverage"],
+        "properties": {
+          "hardening": {
+            "required": ["disk_encryption_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["hardening.disk_encryption_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["hardening", "metric_coverage"],
+        "properties": {
+          "hardening": {
+            "required": ["screen_lock_compliant_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["hardening.screen_lock_compliant_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["hardening", "metric_coverage"],
+        "properties": {
+          "hardening": {
+            "required": ["firewall_enabled_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["hardening.firewall_enabled_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["patching", "metric_coverage"],
+        "properties": {
+          "patching": {
+            "required": ["os_supported_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["patching.os_supported_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["patching", "metric_coverage"],
+        "properties": {
+          "patching": {
+            "required": ["os_baseline_compliant_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["patching.os_baseline_compliant_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["protection", "metric_coverage"],
+        "properties": {
+          "protection": {
+            "required": ["antimalware_installed_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["protection.antimalware_installed_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["protection", "metric_coverage"],
+        "properties": {
+          "protection": {
+            "required": ["antimalware_healthy_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["protection.antimalware_healthy_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["protection", "metric_coverage"],
+        "properties": {
+          "protection": {
+            "required": ["edr_installed_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["protection.edr_installed_pct"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["protection", "metric_coverage"],
+        "properties": {
+          "protection": {
+            "required": ["edr_healthy_pct"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metric_coverage": {
+            "required": ["protection.edr_healthy_pct"]
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "count": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "pct": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 100
+    },
+    "os_family": {
+      "enum": ["windows", "macos", "linux", "ios", "ipados", "android", "chromeos", "other", "unknown"]
+    },
+    "metric_path": {
+      "enum": ["compliance.compliant_pct", "hardening.disk_encryption_pct", "hardening.screen_lock_compliant_pct", "hardening.firewall_enabled_pct", "patching.os_supported_pct", "patching.os_baseline_compliant_pct", "protection.antimalware_installed_pct", "protection.antimalware_healthy_pct", "protection.edr_installed_pct", "protection.edr_healthy_pct"]
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["passing_devices_count", "failing_devices_count", "unknown_devices_count", "not_applicable_devices_count"],
+      "properties": {
+        "passing_devices_count": {
+          "$ref": "#/$defs/count"
+        },
+        "failing_devices_count": {
+          "$ref": "#/$defs/count"
+        },
+        "unknown_devices_count": {
+          "$ref": "#/$defs/count"
+        },
+        "not_applicable_devices_count": {
+          "$ref": "#/$defs/count"
+        }
+      },
+      "additionalProperties": false
+    },
+    "control_key": {
+      "enum": ["disk_encryption", "screen_lock", "firewall", "os_supported", "os_baseline", "compliance", "antimalware_installed", "antimalware_healthy", "edr_installed", "edr_healthy"]
+    },
+    "control": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "enum": ["pass", "fail", "unknown", "not_applicable"]
+        },
+        "observed_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "device": {
+      "type": "object",
+      "required": ["device_id", "os_family", "in_scope"],
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "os_family": {
+          "$ref": "#/$defs/os_family"
+        },
+        "os_name": {
+          "type": "string"
+        },
+        "os_version": {
+          "type": "string"
+        },
+        "assigned_user": {
+          "type": "object",
+          "required": ["user_id"],
+          "properties": {
+            "user_id": {
+              "type": "string"
+            },
+            "login": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "management_state": {
+          "enum": ["managed", "unmanaged", "retired", "unknown"]
+        },
+        "in_scope": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "last_seen_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "controls": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/control_key"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/control"
+          }
+        },
+        "local_admin_accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "account_id": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "x-epack-level": "internal"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["control", "status"],
+            "properties": {
+              "finding_id": {
+                "type": "string"
+              },
+              "control": {
+                "$ref": "#/$defs/control_key"
+              },
+              "status": {
+                "enum": ["open", "resolved", "unknown"]
+              },
+              "first_seen_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "last_seen_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "resolved_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "reason_code": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "protection_modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "enum": ["antimalware", "edr", "firewall", "device_control"]
+              },
+              "installed": {
+                "type": "boolean"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "healthy": {
+                "type": "boolean"
+              },
+              "observed_at": {
+                "$ref": "#/$defs/timestamp"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "prohibited_apps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "policy_id": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": ["policy_id", "name", "control_categories"],
+      "properties": {
+        "policy_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "control_categories": {
+          "type": "array",
+          "items": {
+            "enum": ["disk_encryption", "screen_lock", "firewall", "os_patching", "antimalware", "edr", "device_control"]
+          },
+          "uniqueItems": true
+        },
+        "assigned_devices_count": {
+          "$ref": "#/$defs/count"
+        }
+      },
+      "additionalProperties": false
+    },
+    "threat_event": {
+      "type": "object",
+      "required": ["event_id", "device_id", "category", "detected_at"],
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "category": {
+          "enum": ["malware", "ransomware", "exploit", "behavioral", "policy_violation", "other", "unknown"]
+        },
+        "threat_name": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": ["informational", "low", "medium", "high", "critical", "unknown"]
+        },
+        "action": {
+          "type": "string"
+        },
+        "detected_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "device_action": {
+      "type": "object",
+      "required": ["device_id", "action_type", "status"],
+      "properties": {
+        "action_id": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "action_type": {
+          "type": "string"
+        },
+        "status": {
+          "enum": ["requested", "succeeded", "failed", "unknown"]
+        },
+        "requested_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inventory_meta": {
+      "type": "object",
+      "required": ["collection_complete", "output_truncated", "returned_rows_count"],
+      "properties": {
+        "collection_complete": {
+          "type": "boolean"
+        },
+        "output_truncated": {
+          "type": "boolean"
+        },
+        "returned_rows_count": {
+          "$ref": "#/$defs/count"
+        },
+        "total_rows_count": {
+          "$ref": "#/$defs/count"
+        },
+        "dropped_rows_count": {
+          "$ref": "#/$defs/count"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

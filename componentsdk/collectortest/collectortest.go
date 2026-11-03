@@ -46,8 +46,8 @@ import (
 	"time"
 
 	"github.com/locktivity/epack/componentsdk"
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
 	"github.com/locktivity/epack/internal/limits"
+	"github.com/locktivity/epack/internal/outputcheck"
 	"github.com/locktivity/epack/internal/safefile"
 	"github.com/locktivity/epack/internal/tracemap"
 )
@@ -124,9 +124,52 @@ type Suite struct {
 	// fault on one need not leave a gap.
 	Insensitive []string
 
-	// SkipChecks turns off checks by name: "determinism", "coverage",
-	// "levels", "population", "nulls", "rollups", "ratios", "credentials",
-	// "faults", "sensitivity", or "tracemap".
+	// Capped lists operations that may leave a next page unread, which the
+	// pages check otherwise reports. Such an operation is a list the
+	// collector cuts short on purpose, or a polling API that always offers
+	// another page, such as Okta's System Log. A list cut short must leave a
+	// partial gap where it stops.
+	Capped []string
+
+	// Paged lists operations that page by Link header although the
+	// scenarios do not show it. Some vendors, such as GitHub, send the header
+	// only when another page exists. The pages check adds a next page to the
+	// last answer of each listed operation, as it does for operations whose
+	// answers show they page.
+	Paged []string
+
+	// Ordered lists operations whose answers come in an order the vendor
+	// documents, such as a list sorted by a parameter the collector sends.
+	// The order check does not reverse them.
+	Ordered []string
+
+	// Variants hold the clean scenario rewritten for other deployments of
+	// the vendor, such as AWS GovCloud or China. See Variant.
+	Variants []Variant
+
+	// FieldSensitivity turns on the fields check. The check changes one
+	// state field at a time in each operation's answers and reports each
+	// field whose change moves no value. A state field is a status, state,
+	// enabled flag, operator, condition, or effect. The check needs answers
+	// as the vendor sends them, so turn it on once the suite replays a
+	// recording.
+	FieldSensitivity bool
+
+	// IgnoredFields lists, by operation, the state fields the collector may
+	// ignore, written as the fields check reports them. Each is a JSON
+	// pointer with "*" for each array index, such as "/value/*/state", or an
+	// XML element's name.
+	IgnoredFields map[string][]string
+
+	// ResponseSchemas maps an operation to the JSON Schema of its
+	// successful answer as the vendor's API spec defines it, such as a
+	// schema taken from the vendor's OpenAPI document. The responses check
+	// validates every scenario's canned answers against it. An answer with a
+	// field the schema does not define fails.
+	ResponseSchemas map[string][]byte
+
+	// SkipChecks turns off checks by name, such as "determinism" or
+	// "faults". CheckNames lists the names.
 	SkipChecks []string
 
 	// SkipFaults leaves faults out of the matrix by name. A name such as
@@ -184,14 +227,17 @@ type Report struct {
 	// Unmutated lists operations whose responses the sensitivity check could
 	// not change, such as XML bodies, so it proved nothing for them.
 	Unmutated []string
+	// IgnoredFields lists, as "operation pattern", each state field whose
+	// change moved no value in the fields check. It includes the fields
+	// Suite.IgnoredFields lists.
+	IgnoredFields []string
 }
 
 // Violation is one broken rule.
 type Violation struct {
-	// Check names the check: "scenario", "secrets", "schema",
-	// "schema_unusable", "population", "nulls", "rollups", "ratios",
-	// "determinism", "coverage", "levels", "credentials", "faults",
-	// "sensitivity", "tracemap", "recording", or "export".
+	// Check is the name of the check. It is one of CheckNames, or
+	// "scenario", "secrets", "schema", "schema_unusable", "recording", or
+	// "export".
 	Check string
 	// Case names the run within the check, such as
 	// "graph.users.list/500/first" for a fault.
@@ -235,6 +281,33 @@ func Run(t *testing.T, s Suite) {
 // Check runs the suite and returns what it found. It returns an error only
 // for a suite it cannot run.
 func Check(s Suite) (*Report, error) {
+	responseSchemas, err := validateSuite(s)
+	if err != nil {
+		return nil, err
+	}
+	k, err := newKit(s, responseSchemas)
+	if err != nil {
+		return nil, err
+	}
+	k.runScenarios()
+	if k.baseline == nil {
+		return k.report, nil
+	}
+	for _, op := range k.baseline.Result.Calls.Operations {
+		k.report.Operations = append(k.report.Operations, op.Name)
+	}
+	k.runAfterBaseline()
+	if dir := os.Getenv(tracemap.Env); dir != "" && k.trace != nil {
+		if err := k.writeTrace(dir); err != nil {
+			k.violate("export", "", "writing the suite's trace under %s: %v", tracemap.Env, err)
+		}
+	}
+	return k.report, nil
+}
+
+// validateSuite returns an error for a suite the kit cannot run. Otherwise
+// it returns the suite's response schemas, compiled and made strict.
+func validateSuite(s Suite) (map[string]*outputcheck.Schema, error) {
 	if s.Run == nil {
 		return nil, errors.New("Suite.Run is required")
 	}
@@ -250,6 +323,18 @@ func Check(s Suite) (*Report, error) {
 	for _, sc := range s.Scenarios {
 		if sc.ExpectFailure != "" && len(sc.Expect) > 0 {
 			return nil, fmt.Errorf("scenario %q expects a failure, which emits nothing for Expect to pin", sc.Name)
+		}
+	}
+	if err := checkVariantSpecs(s.Variants); err != nil {
+		return nil, err
+	}
+	responseSchemas, err := compileResponseSchemas(s.ResponseSchemas)
+	if err != nil {
+		return nil, err
+	}
+	if len(s.Spec.ConfigSchema) > 0 {
+		if _, err := outputcheck.Compile(s.Spec.ConfigSchema); err != nil {
+			return nil, fmt.Errorf("Suite.Spec.ConfigSchema does not compile, so real runs would leave the config unchecked: %w", err)
 		}
 	}
 	for _, f := range s.Faults {
@@ -278,7 +363,14 @@ func Check(s Suite) (*Report, error) {
 			}
 		}
 	}
-	k := &kit{suite: s, report: &Report{}, seen: map[string]bool{}, reported: map[Violation]bool{}, canaries: canariesOf(s), ignore: newIgnoreSet(s.Ignore)}
+	return responseSchemas, nil
+}
+
+// newKit builds the kit for a suite that validateSuite accepted. It sets up
+// the schemas, the clock, the scrub check on recordings, and the CA the
+// endpoints chain to.
+func newKit(s Suite, responseSchemas map[string]*outputcheck.Schema) (*kit, error) {
+	k := &kit{suite: s, report: &Report{}, seen: map[string]bool{}, reported: map[Violation]bool{}, canaries: canariesOf(s), ignore: newIgnoreSet(s.Ignore), responseSchemas: responseSchemas}
 	if tracing(s) {
 		k.trace = newTracer()
 	}
@@ -298,41 +390,7 @@ func Check(s Suite) (*Report, error) {
 		return nil, fmt.Errorf("test CA: %w", err)
 	}
 	k.ca = ca
-	k.runScenarios()
-	if k.baseline == nil {
-		return k.report, nil
-	}
-	for _, op := range k.baseline.Result.Calls.Operations {
-		k.report.Operations = append(k.report.Operations, op.Name)
-	}
-	if !k.skipped("determinism") {
-		k.checkDeterminism()
-	}
-	if !k.skipped("coverage") {
-		k.checkCoverage()
-	}
-	if !k.skipped("levels") {
-		k.checkLevels()
-	}
-	if !k.skipped("credentials") {
-		k.checkCredentials()
-	}
-	if !k.skipped("faults") {
-		k.runFaultMatrix()
-	}
-	if !k.skipped("sensitivity") {
-		k.checkSensitivity()
-	}
-	if k.trace != nil {
-		if dir := os.Getenv(tracemap.Env); dir != "" {
-			if err := k.writeTrace(dir); err != nil {
-				k.violate("export", "", "writing the suite's trace under %s: %v", tracemap.Env, err)
-			}
-		} else if !k.skipped("tracemap") {
-			k.checkTraceMap()
-		}
-	}
-	return k.report, nil
+	return k, nil
 }
 
 type kit struct {
@@ -350,6 +408,15 @@ type kit struct {
 	ignore       ignoreSet
 	export       *exporter
 	trace        *tracer
+	// responseSchemas holds Suite.ResponseSchemas by operation, compiled
+	// and made strict.
+	responseSchemas map[string]*outputcheck.Schema
+	// baselineOps and cleanSorted cache what the altered-scenario checks
+	// compare against. baselineOps holds the operations that consumed each
+	// clean response. cleanSorted holds the clean run's artifacts with
+	// their lists sorted.
+	baselineOps map[int][]string
+	cleanSorted map[string]map[string]any
 	// checkedBuild is the build file checkSchemas validated. Every run of a
 	// suite emits the same one, so it is validated once.
 	checkedBuild []byte
@@ -510,11 +577,14 @@ func (k *kit) runWith(check, name string, scenario Scenario, wrap func(*network)
 		}
 	}
 	k.checkSecrets(check, name, res, outputDir)
-	k.checkSchemas(check, name, res)
-	k.checkOutput(check, name, res, componentsdk.LevelOf(config))
-	if !k.skipped("credentials") {
-		k.checkHostLists(res)
+	if check != "fields" {
+		// The collector can copy a changed state into a field whose schema
+		// lists the allowed states. A schema failure in a fields check run
+		// is then not a bug in the collector.
+		k.checkSchemas(check, name, res)
 	}
+	k.checkOutput(check, name, res, componentsdk.LevelOf(config))
+	k.runEachRun(check, name, res)
 	if res.Result != nil {
 		for _, op := range res.Result.Calls.Operations {
 			k.seen[op.Name] = true
@@ -546,6 +616,7 @@ func (k *kit) runScenarios() {
 		for _, miss := range n.unmatched() {
 			k.violate("scenario", label, "%s", miss)
 		}
+		k.runEachScenario(label, sc, res, n)
 		if sc.ExpectFailure != "" {
 			switch {
 			case res.ExitCode == 0:
@@ -562,6 +633,7 @@ func (k *kit) runScenarios() {
 		if res.Result == nil || len(res.Result.Calls.Operations) == 0 {
 			k.violate("scenario", label, "the collector made no calls through the SDK; make them with componentsdk.NewHTTPClient, NewResolver, or NewDialer")
 		}
+		k.runEachSuccess(label, sc, res, n)
 		for _, p := range pinned(res.Artifacts, sc.Expect) {
 			k.violate("scenario", label, "%s", p)
 		}
@@ -577,6 +649,21 @@ func (k *kit) runScenarios() {
 		default:
 			k.trace.addFields(res)
 		}
+	}
+}
+
+// checkUnrecognized reports the values a scenario's run read that are not
+// in the collector's vocabularies.
+func (k *kit) checkUnrecognized(label string, res componentsdk.InProcessResult) {
+	if res.Result == nil {
+		return
+	}
+	for _, u := range res.Result.Unrecognized {
+		such := ""
+		if len(u.Values) > 0 {
+			such = fmt.Sprintf(", such as %q", u.Values[0])
+		}
+		k.violate("vocabulary", label, "the run read %d values that are not in the %s vocabulary%s. Refresh the vocabulary from the vendor's catalog, or handle the values", u.Count, u.Vocabulary, such)
 	}
 }
 
@@ -772,10 +859,8 @@ func (k *kit) checkCredentials() {
 		k.violate("credentials", op, "%s sent a credential through a client built without HTTPOptions.CredentialHosts, so no host check guards it; list the hosts that may receive it", op)
 	}
 	var ops []string
-	for _, op := range k.baseline.Result.Calls.Operations {
-		if op.Name != componentsdk.UnnamedOperation && op.Calls > 0 && k.baselineNet.kindOf(op.Name) == kindHTTP {
-			ops = append(ops, op.Name)
-		}
+	for _, op := range k.pickOps(opPick{}) {
+		ops = append(ops, op.Name)
 	}
 	if len(ops) == 0 {
 		return
@@ -807,10 +892,10 @@ func (k *kit) checkCredentials() {
 
 func (k *kit) runFaultMatrix() {
 	faults := append(Faults(), k.suite.Faults...)
-	for _, op := range k.baseline.Result.Calls.Operations {
-		if op.Name == componentsdk.UnnamedOperation || op.Calls == 0 {
-			continue
-		}
+	p := perturber{k: k, check: "faults", unapplied: func(label, op string) {
+		k.violate("faults", label, "the fault never reached %s: no call in the run matched it, so this case proves nothing", op)
+	}}
+	for _, op := range k.pickOps(opPick{anyKind: true}) {
 		kind := k.baselineNet.kindOf(op.Name)
 		for _, f := range faults {
 			if f.kind() != kind || k.faultSkipped(f.Name) || (len(f.Operations) > 0 && !containsString(f.Operations, op.Name)) {
@@ -819,14 +904,13 @@ func (k *kit) runFaultMatrix() {
 			for _, pos := range positionsFor(op.Calls, f.Transient) {
 				label := op.Name + "/" + f.Name + "/" + pos
 				in := &injector{op: op.Name, fault: f, position: pos, total: op.Calls}
-				res, _ := k.runOnce("faults", label, k.suite.Scenarios[0], in.install)
-				if in.hitCount() == 0 {
-					k.violate("faults", label, "the fault never reached %s: no call in the run matched it, so this case proves nothing", op.Name)
+				run, ok := p.run(perturbation{label: label, op: op.Name, wrap: in.install, reached: func() bool { return in.hitCount() > 0 }})
+				if !ok {
 					continue
 				}
-				k.judgeFault(label, op.Name, pos, f, res, in.changedCalls())
+				k.judgeFault(label, op.Name, pos, f, run.res, in.changedCalls())
 				if k.trace != nil {
-					k.trace.addFault(op.Name, res)
+					k.trace.addFault(op.Name, run.res)
 				}
 			}
 		}
@@ -955,43 +1039,22 @@ func (k *kit) checkSemantic(label string, sem Semantic, res componentsdk.InProce
 	}
 }
 
+// checkSensitivity changes each operation's answers as mutateJSON and
+// mutateCBOR do. It reports an operation whose change moves no value and
+// leaves the result's signed_in_as as it was.
 func (k *kit) checkSensitivity() {
-	ops := k.baselineNet.replay.operationsFor()
-	for _, op := range k.baseline.Result.Calls.Operations {
-		if op.Name == componentsdk.UnnamedOperation || k.insensitive(op.Name) || k.baselineNet.kindOf(op.Name) != kindHTTP {
+	p := perturber{k: k, check: "sensitivity",
+		unapplied: func(_, op string) { k.report.Unmutated = append(k.report.Unmutated, op) },
+		unreadable: func(_, op string, err error) {
+			k.violate("sensitivity", op, "the check cannot change %s's responses: %v", op, err)
+		},
+	}
+	for _, op := range k.pickOps(opPick{fromResult: true, uncalled: true, skipInsensitive: true}) {
+		run, ok := p.run(perturbation{label: op.Name, op: op.Name, text: mutateJSON, cbor: mutateCBOR})
+		if !ok || run.failed() {
 			continue
 		}
-		mutated := k.suite.Scenarios[0]
-		mutated.Responses = append([]Response(nil), mutated.Responses...)
-		changed := false
-		var failure error
-		for i := range mutated.Responses {
-			if !containsString(ops[i], op.Name) {
-				continue
-			}
-			body, ok, err := k.mutateBody(op.Name, mutated.Responses[i])
-			if err != nil {
-				failure = fmt.Errorf("response %d: %w", i, err)
-				break
-			}
-			if ok {
-				mutated.Responses[i].Body = body
-				changed = true
-			}
-		}
-		if failure != nil {
-			k.violate("sensitivity", op.Name, "the check cannot change %s's responses: %v", op.Name, failure)
-			continue
-		}
-		if !changed {
-			k.report.Unmutated = append(k.report.Unmutated, op.Name)
-			continue
-		}
-		res, _ := k.runOnce("sensitivity", op.Name, mutated, nil)
-		if res.ExitCode != 0 {
-			continue
-		}
-		if len(compareRuns(k.baseline.Artifacts, res.Artifacts, nil, k.ignore)) == 0 && reflect.DeepEqual(signedInAs(k.baseline), signedInAs(&res)) {
+		if len(compareRuns(k.baseline.Artifacts, run.res.Artifacts, nil, k.ignore)) == 0 && reflect.DeepEqual(signedInAs(k.baseline), signedInAs(&run.res)) {
 			k.violate("sensitivity", op.Name, "changing %s's responses changed no value and not the result's signed_in_as, so the faults injected into it prove nothing; check that its data is used, or list it in Suite.Insensitive", op.Name)
 		}
 	}
@@ -1077,49 +1140,30 @@ func copyConfig(cfg map[string]any) map[string]any {
 // number in body, and reports whether anything changed. Strings stay, so IDs
 // and next-page links keep working.
 func mutateJSON(body string) (string, bool) {
-	dec := json.NewDecoder(strings.NewReader(body))
-	dec.UseNumber()
-	var doc any
-	if dec.Decode(&doc) != nil {
+	out, ok := editJSON(body, json.Marshal, mutateValue)
+	if !ok {
 		return body, false
 	}
-	changed := false
-	var walk func(v any) any
-	walk = func(v any) any {
-		switch node := v.(type) {
-		case map[string]any:
-			for key, child := range node {
-				node[key] = walk(child)
-			}
-			return node
-		case []any:
-			if len(node) > 0 {
-				changed = true
-			}
-			return []any{}
-		case bool:
-			changed = true
-			return !node
-		case json.Number:
-			changed = true
-			if i, err := node.Int64(); err == nil {
-				return json.Number(strconv.FormatInt(i+1, 10))
-			}
-			if f, err := node.Float64(); err == nil {
-				return json.Number(strconv.FormatFloat(f+1, 'f', -1, 64))
-			}
-			return node
-		default:
-			return node
+	return out, true
+}
+
+// mutateValue is the jsonEdit mutateJSON makes. An array is emptied and not
+// walked into. A number that is too large to read counts as changed but
+// stays as it is.
+func mutateValue(_ place, v any) (any, bool, bool) {
+	switch node := v.(type) {
+	case []any:
+		return []any{}, len(node) > 0, false
+	case bool:
+		return !node, true, false
+	case json.Number:
+		if i, err := node.Int64(); err == nil {
+			return json.Number(strconv.FormatInt(i+1, 10)), true, false
 		}
+		if f, err := node.Float64(); err == nil {
+			return json.Number(strconv.FormatFloat(f+1, 'f', -1, 64)), true, false
+		}
+		return node, true, false
 	}
-	doc = walk(doc)
-	if !changed {
-		return body, false
-	}
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		return body, false
-	}
-	return string(raw), true
+	return v, false, true
 }

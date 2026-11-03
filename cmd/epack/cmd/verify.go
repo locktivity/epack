@@ -28,6 +28,7 @@ var (
 	verifyInsecureSkipEmbeddedVerify bool
 	verifyTrustRoot                  string
 	verifyPublicKeys                 []string
+	verifyInsecureSkipTlog           bool
 )
 
 func init() {
@@ -46,6 +47,8 @@ func init() {
 		"INSECURE: skip verification of embedded attestations in merged pack provenance")
 	verifyCmd.Flags().StringArrayVar(&verifyPublicKeys, "public-key", nil,
 		"PEM public key a signer used instead of a certificate (repeatable); the matching key names the signer")
+	verifyCmd.Flags().BoolVar(&verifyInsecureSkipTlog, "insecure-skip-tlog", false,
+		"INSECURE: accept key signatures not recorded in the transparency log (signed with --no-tlog); requires --public-key")
 	verifyCmd.Flags().StringVar(&verifyTrustRoot, "trust-root", "",
 		"path to Sigstore trust root JSON file (default: fetch from Sigstore TUF)")
 }
@@ -62,8 +65,9 @@ By default, verifies:
   - Attestation signatures are valid (if present)
 
 When verifying attestations, specify an identity policy (--issuer and/or
---subject) to ensure the pack was signed by an authorized identity. Without
-this, verification will fail unless you use --insecure-skip-identity-check.
+--subject) to ensure the pack was signed by an authorized identity, or
+--public-key for a pack signed with a key. Without one, verification will
+fail unless you use --insecure-skip-identity-check.
 
 For CI environments, use --trust-root to pin a specific Sigstore trust root
 instead of fetching from TUF. This avoids network dependencies and ensures
@@ -87,6 +91,12 @@ Examples:
 
   # Require at least one attestation
   epack verify --require-attestation evidence.epack --issuer "https://accounts.google.com"
+
+  # Verify a pack signed with a key
+  epack verify evidence.epack --public-key key.pub
+
+  # INSECURE: Verify a pack signed with a key and --no-tlog
+  epack verify evidence.epack --public-key key.pub --insecure-skip-tlog
 
   # Offline verification using embedded Rekor/TSA timestamps only
   epack verify --offline --trust-root trusted_root.json evidence.epack --subject "ci@example.com"
@@ -136,6 +146,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	// Build options from flags
 	opts := verify.PackOpts{
 		PublicKeys:                 publicKeys,
+		InsecureSkipTlog:           verifyInsecureSkipTlog,
 		Issuer:                     verifyIssuer,
 		IssuerRegexp:               verifyIssuerRegexp,
 		Subject:                    verifySubject,
@@ -202,7 +213,7 @@ func loadVerifyPublicKeys(paths []string) ([]crypto.PublicKey, error) {
 }
 
 func validateVerifyFlags() error {
-	hasUnsafeOverrides := verifyInsecureSkipIdentityCheck || verifyInsecureSkipEmbeddedVerify
+	hasUnsafeOverrides := verifyInsecureSkipIdentityCheck || verifyInsecureSkipEmbeddedVerify || verifyInsecureSkipTlog
 	if err := securitypolicy.EnforceStrictProduction("verify_cli", hasUnsafeOverrides); err != nil {
 		return err
 	}
@@ -215,11 +226,15 @@ func validateVerifyFlags() error {
 			Attrs: map[string]string{
 				"skip_identity_check":  fmt.Sprintf("%t", verifyInsecureSkipIdentityCheck),
 				"skip_embedded_verify": fmt.Sprintf("%t", verifyInsecureSkipEmbeddedVerify),
+				"skip_tlog":            fmt.Sprintf("%t", verifyInsecureSkipTlog),
 			},
 		})
 	}
 	if verifyOffline && verifyTrustRoot == "" {
 		return exitError("--offline requires --trust-root")
+	}
+	if verifyInsecureSkipTlog && len(verifyPublicKeys) == 0 {
+		return exitError("--insecure-skip-tlog requires --public-key: it applies only to key signatures")
 	}
 	return nil
 }

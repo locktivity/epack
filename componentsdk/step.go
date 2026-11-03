@@ -1,12 +1,15 @@
 package componentsdk
 
-import "context"
+import (
+	"context"
+)
 
 // Step is a named part of a collector's run, such as reading users and
 // their sign-in methods. The calls made with the context StartStep returns
-// belong to the step, and the result artifact lists each step with its
-// times and counts, at every level. A step's name is part of the
-// collector's contract, as an operation's name is.
+// belong to the step, and the result artifact lists each step at every
+// level, with its times and counts at the audit and internal levels. A
+// step's name is part of the collector's contract, as an operation's name
+// is.
 type Step struct {
 	run   *run
 	state *stepState
@@ -27,7 +30,9 @@ type stepState struct {
 // ResultStep is one step in the result artifact. Requests, Calls, Retries,
 // and Failed count every request made in the step, including rows left out
 // past the limit: the requests sent, the calls they belong to, the retries
-// among them, and the attempts that failed.
+// among them, and the attempts that failed. AnyFailed says, at every level,
+// whether an attempt failed. The times and counts appear at the audit and
+// internal levels only.
 type ResultStep struct {
 	Name       string          `json:"name"`
 	Title      string          `json:"title"`
@@ -37,10 +42,12 @@ type ResultStep struct {
 	Calls      int             `json:"calls"`
 	Retries    int             `json:"retries"`
 	Failed     int             `json:"failed"`
+	AnyFailed  bool            `json:"any_failed"`
 	Operations []StepOperation `json:"operations,omitempty"`
 }
 
-// StepOperation counts one operation's calls in a step.
+// StepOperation counts one operation's calls in a step. The count appears at
+// the audit and internal levels only.
 type StepOperation struct {
 	Name  string `json:"name"`
 	Calls int    `json:"calls"`
@@ -206,6 +213,7 @@ func (l *ledger) resultSteps() []ResultStep {
 			Calls:      st.calls,
 			Retries:    st.retries,
 			Failed:     st.failed,
+			AnyFailed:  st.failed > 0,
 			Operations: append([]StepOperation(nil), st.ops...),
 		})
 	}

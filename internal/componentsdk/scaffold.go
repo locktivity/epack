@@ -129,6 +129,7 @@ func scaffoldFiles(kind componenttypes.ComponentKind, binaryName, vendorPackage 
 			scaffoldFile{path: "internal/collector/recording_scrub_test.go", template: "collector.recording_scrub_test.go.tmpl"},
 			scaffoldFile{path: "internal/" + vendorPackage + "/client.go", template: "collector.client.go.tmpl"},
 			scaffoldFile{path: "docs/schema/v1.0.0.json", template: "collector.schema.json.tmpl"},
+			scaffoldFile{path: "docs/schema/config.json", template: "collector.config.schema.json.tmpl"},
 			scaffoldFile{path: "docs/schema/embed.go", template: "collector.schema.embed.go.tmpl"},
 			scaffoldFile{path: "docs/schema/trace-map.json", template: "collector.trace-map.json.tmpl", traceMap: true},
 			scaffoldFile{path: "docs/levels.md", template: "docs/collector.levels.md.tmpl"},

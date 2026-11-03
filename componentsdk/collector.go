@@ -9,10 +9,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/outputcheck"
 	"github.com/locktivity/epack/internal/redact"
 	"github.com/locktivity/epack/internal/safefile"
 	"github.com/locktivity/epack/internal/stagedartifact"
@@ -52,6 +55,28 @@ type CollectorSpec struct {
 	// it, and the collector commits it beside its schemas and embeds it with
 	// go:embed. Emit writes it, with Schemas, into the build file.
 	TraceMap []byte
+
+	// ConfigSchema is a JSON Schema for the collector's config, such as its
+	// docs/schema/config.json embedded with go:embed. The SDK checks the
+	// config against it before the handler runs. The check skips keys the SDK
+	// reads itself, such as level, so the schema does not need to list them.
+	// If the config does not match, the run fails with config_invalid. The
+	// error message lists the JSON pointer of each value that does not match,
+	// and the details go to stderr. This keeps a bad value from being read as
+	// a default, such as a port that is not a number being read as 443. If the
+	// schema does not compile, the SDK writes a warning and does not check the
+	// config.
+	ConfigSchema []byte
+
+	// Writes lists the schema IDs of the artifacts the collector can write,
+	// such as evidencepack/vcs-posture@v1. --capabilities and the build file
+	// publish it, so a reader can learn what a release writes without
+	// running it. A collector's own detailed file is left out when it has no
+	// schema ID. A collector whose kinds come from what it reads, such as one
+	// that writes documents, lists the ones it always writes. The test kit's
+	// writes check fails a collector that writes a schema ID this does not
+	// list.
+	Writes []string
 }
 
 // CollectorHandler is the function signature for collector implementations.
@@ -128,32 +153,23 @@ func Staging(ctx CollectorContext) (StagingContext, bool) {
 // Unknown values must downgrade to LevelTrust rather than fail open: a typo
 // or future-level value in config must never silently promote collection to
 // data the customer didn't ask to gather.
-type Level string
+//
+// AtLeast reports whether a level is at or above another in the
+// trust < audit < internal ordering.
+type Level = componenttypes.Level
 
 const (
-	LevelTrust    Level = "trust"
-	LevelAudit    Level = "audit"
-	LevelInternal Level = "internal"
+	LevelTrust    = componenttypes.LevelTrust
+	LevelAudit    = componenttypes.LevelAudit
+	LevelInternal = componenttypes.LevelInternal
 )
-
-var levelRank = map[Level]int{
-	LevelTrust:    0,
-	LevelAudit:    1,
-	LevelInternal: 2,
-}
-
-// AtLeast returns true if the receiver is at or above the given level in the
-// trust < audit < internal ordering.
-func (l Level) AtLeast(other Level) bool {
-	return levelRank[l] >= levelRank[other]
-}
 
 // LevelOf returns the collection level a collector's config asks for in its
 // "level" key, as the SDK reads it for CollectorContext.Level. An absent,
 // empty, non-string, or unrecognized value is LevelTrust.
 func LevelOf(config map[string]any) Level {
 	s, _ := config["level"].(string)
-	if _, known := levelRank[Level(s)]; !known {
+	if _, known := Level(s).Rank(); !known {
 		return LevelTrust
 	}
 	return Level(s)
@@ -249,6 +265,10 @@ func runCollectorInternal(spec CollectorSpec, handler CollectorHandler) int {
 // runCollectorWith runs handler and returns the exit code. A failure prints
 // a coded record as a progress line before the exit.
 func runCollectorWith(c *collectorContext, handler CollectorHandler) int {
+	if err := c.checkConfig(); err != nil {
+		c.reportFailure(err)
+		return exitCodeFor(c.stderr(), err)
+	}
 	if err := handler(c); err != nil {
 		c.reportFailure(err)
 		return exitCodeFor(c.stderr(), err)
@@ -510,8 +530,16 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 	if c.emitted {
 		return fmt.Errorf("Emit can only be called once")
 	}
-	if len(artifacts) == 0 {
+	if len(artifacts) == 0 && !c.runState().collect.leftAnyOut() {
 		return fmt.Errorf("at least one artifact is required")
+	}
+	artifacts, err := c.runState().share(artifacts, c.config)
+	if err != nil {
+		return err
+	}
+	artifacts, trimmed, err := c.runState().trimAbove(artifacts, c.Level())
+	if err != nil {
+		return err
 	}
 	// Validate before marking emitted, so callers can retry after a rejected artifact.
 	artifactEntries := make([]map[string]any, 0, len(artifacts)+1)
@@ -526,7 +554,7 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 	if err != nil {
 		return err
 	}
-	resultEntry, err := c.resultArtifactEntry(artifacts)
+	resultEntry, err := c.resultArtifactEntry(artifacts, trimmed)
 	if err != nil {
 		return err
 	}
@@ -567,11 +595,13 @@ func (c *collectorContext) buildArtifactEntry(artifacts []CollectedArtifact) (ma
 
 // resultArtifactEntry builds the run's result artifact from the recorder and
 // the call ledger.
-func (c *collectorContext) resultArtifactEntry(artifacts []CollectedArtifact) (map[string]any, error) {
-	result, err := buildResult(resultInput{
+func (c *collectorContext) resultArtifactEntry(artifacts []CollectedArtifact, trimmed []CheckFinding) (map[string]any, error) {
+	result, err := resultData(resultInput{
 		run:       c.runState(),
 		level:     c.Level(),
 		artifacts: artifacts,
+		trimmed:   trimmed,
+		config:    c.config,
 		getenv:    c.env,
 		finished:  c.runState().now(),
 	})
@@ -653,6 +683,11 @@ func (c *collectorContext) stagedFileRel(a CollectedArtifact) (string, error) {
 
 // outputCollectorCapabilities outputs the collector's capabilities as JSON.
 func outputCollectorCapabilities(spec CollectorSpec) int {
+	return writeCollectorCapabilities(os.Stdout, os.Stderr, spec)
+}
+
+// writeCollectorCapabilities writes the --capabilities answer to out.
+func writeCollectorCapabilities(out, errOut io.Writer, spec CollectorSpec) int {
 	caps := map[string]any{
 		"kind":             "collector",
 		"name":             spec.Name,
@@ -664,12 +699,65 @@ func outputCollectorCapabilities(spec CollectorSpec) int {
 	if spec.Commit != "" {
 		caps["commit"] = spec.Commit
 	}
+	if writes := sortedWrites(spec.Writes); len(writes) > 0 {
+		caps["writes"] = writes
+	}
 
-	enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(caps); err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding capabilities: %v\n", err)
+		_, _ = fmt.Fprintf(errOut, "error encoding capabilities: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// sdkConfigKeys are the config keys the SDK reads itself. A collector's
+// ConfigSchema does not need to list them.
+var sdkConfigKeys = []string{"level", collectKey}
+
+// checkConfig checks the config against the spec's ConfigSchema. It returns a
+// ConfigError that lists the pointer of each value that does not match. The
+// details can quote a value, so they go only to stderr.
+func (c *collectorContext) checkConfig() error {
+	if err := c.checkCollect(); err != nil {
+		return err
+	}
+	if len(c.spec.ConfigSchema) == 0 {
+		return nil
+	}
+	schema, err := outputcheck.Compile(c.spec.ConfigSchema)
+	if err != nil {
+		_, _ = fmt.Fprintf(c.stderr(), "warning: the collector's config schema does not compile, so the config is not checked: %v\n", err)
+		return nil
+	}
+	own := map[string]any{}
+	for key, value := range c.config {
+		if !slices.Contains(sdkConfigKeys, key) {
+			own[key] = value
+		}
+	}
+	raw, err := json.Marshal(own)
+	if err != nil {
+		return NewConfigError("the config cannot be read as JSON: %v", err)
+	}
+	doc, err := outputcheck.Decode(raw)
+	if err != nil {
+		return NewConfigError("the config cannot be read as JSON: %v", err)
+	}
+	var at []string
+	for _, f := range outputcheck.Validate(schema, "config", doc) {
+		where := f.Pointer
+		if where == "" {
+			where = "the top level"
+		}
+		_, _ = fmt.Fprintf(c.stderr(), "config %s: %s\n", where, f.Message)
+		if !slices.Contains(at, where) {
+			at = append(at, where)
+		}
+	}
+	if len(at) == 0 {
+		return nil
+	}
+	return NewConfigError("the config does not match the collector's config schema at %s", strings.Join(at, ", "))
 }

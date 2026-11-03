@@ -81,6 +81,9 @@ type InProcessResult struct {
 	Artifacts []EmittedArtifact
 	// Result is the decoded result artifact, or nil when nothing was emitted.
 	Result *CollectorResult
+	// Operations counts each operation's calls at every level, which the
+	// result artifact does at the audit and internal levels only.
+	Operations []OperationCalls
 	// Build is the decoded build file, or nil when nothing was emitted.
 	Build *CollectorBuild
 	// Mirrors lists the run's Recorder.Mirror calls, each pair once, in the
@@ -169,6 +172,7 @@ func RunInProcess(spec CollectorSpec, handler CollectorHandler, opts InProcessOp
 		res.recordFiles(opts.OutputDir)
 		res.CredentialHosts = c.run.credentialHostLists()
 		res.UnlistedCredentials = c.run.unlistedCredentialOps()
+		res.Operations = c.run.calls.operations()
 		res.Mirrors = c.run.records.mirrored()
 	}()
 	res.ExitCode = runCollectorWith(c, handler)

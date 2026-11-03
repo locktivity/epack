@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/locktivity/epack/componentsdk"
+	"github.com/locktivity/epack/internal/jsonpointer"
+	"github.com/locktivity/epack/internal/outputcheck"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -78,7 +81,7 @@ func (r *Runner) testCollectorResult(output []byte) {
 		r.report(c.id, problem, applies, c.skip)
 	}
 	r.testBuildFile(buildRaw, result)
-	r.testTrustLevelResult(result)
+	r.testTrustLevelResult(resultRaw)
 }
 
 // report skips id with skip when its check does not apply, since the
@@ -265,27 +268,128 @@ func (r *Runner) testBuildFile(raw json.RawMessage, result componentsdk.Collecto
 }
 
 // testTrustLevelResult checks that a run at the trust level kept out of its
-// result what only the audit and internal levels hold: request rows, the
-// gaps' warnings and error text, and the principal's ID (COL-080).
-func (r *Runner) testTrustLevelResult(result componentsdk.CollectorResult) {
+// result each value the result schema marks for a higher level (COL-080).
+func (r *Runner) testTrustLevelResult(raw json.RawMessage) {
 	if level := r.collectLevel(); level != componentsdk.LevelTrust {
 		r.skip("COL-080", "the --config file collects at "+string(level))
 		return
 	}
-	switch {
-	case len(result.Calls.Requests) > 0:
-		r.fail("COL-080", fmt.Sprintf("the result holds %d request rows at the trust level", len(result.Calls.Requests)))
-	case result.SignedInAs != nil && result.SignedInAs.ID != "":
-		r.fail("COL-080", "the result holds the principal's ID at the trust level")
-	default:
-		for _, g := range result.Gaps {
-			if g.Warning != "" || g.Detail != "" {
-				r.fail("COL-080", "the gap at "+g.Path+" "+g.Pointer+" holds its warning or error text at the trust level")
-				return
-			}
-		}
-		r.pass("COL-080")
+	held, err := heldAboveTrust(raw)
+	if err != nil {
+		r.skip("COL-080", "the collector result cannot be checked against its schema: "+err.Error())
+		return
 	}
+	if len(held) > 0 {
+		problem := "the result holds " + held[0] + " at the trust level, which its schema marks for a higher level"
+		if len(held) > 1 {
+			problem += fmt.Sprintf(", and %d more such values", len(held)-1)
+		}
+		r.fail("COL-080", problem)
+		return
+	}
+	r.pass("COL-080")
+}
+
+// heldAboveTrust returns the pointer of each value in a trust-level result
+// that the result schema marks for a higher level. It passes over an empty
+// value. For a result from an SDK that did not trim counts, it also passes
+// over the values in keptByOlderSDKs.
+func heldAboveTrust(raw json.RawMessage) ([]string, error) {
+	schema, err := outputcheck.Compile(componentsdk.ResultSchemaJSON())
+	if err != nil {
+		return nil, err
+	}
+	doc, err := outputcheck.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	older := !trimsCounts(raw)
+	var held []string
+	for _, f := range outputcheck.AboveLevel(schema, "", doc, string(componentsdk.LevelTrust)) {
+		if v, _ := outputcheck.Resolve(doc, f.Pointer); isEmpty(v) {
+			continue
+		}
+		if older && slices.Contains(keptByOlderSDKs, indexPattern(f.Pointer)) {
+			continue
+		}
+		held = append(held, f.Pointer)
+	}
+	return held, nil
+}
+
+// keptByOlderSDKs lists, by pattern, the values that an SDK from before
+// counts were trimmed writes at every level. The list is fixed. A value the
+// result schema marks for a higher level later is checked in every result.
+var keptByOlderSDKs = []string{
+	"/signed_in_as/tenant_id",
+	"/calls/operations/*/calls",
+	"/calls/operations/*/attempts",
+	"/calls/operations/*/retries",
+	"/calls/operations/*/statuses",
+	"/calls/operations/*/errors",
+	"/calls/requests_dropped",
+	"/calls/problem_requests_dropped",
+	"/steps/*/start_ms",
+	"/steps/*/end_ms",
+	"/steps/*/requests",
+	"/steps/*/calls",
+	"/steps/*/retries",
+	"/steps/*/failed",
+	"/steps/*/operations/*/calls",
+	"/gaps/*/call",
+	"/gaps/*/unmeasured",
+}
+
+// indexPattern returns pointer with each array index replaced by *.
+func indexPattern(pointer string) string {
+	tokens := jsonpointer.Tokens(pointer)
+	for i, t := range tokens {
+		if _, ok := jsonpointer.Index(t); ok {
+			tokens[i] = "*"
+		}
+	}
+	return jsonpointer.Format(tokens)
+}
+
+// isEmpty reports whether v holds nothing: null, false, zero, "", or an
+// empty list or object.
+func isEmpty(v any) bool {
+	switch v := v.(type) {
+	case nil:
+		return true
+	case bool:
+		return !v
+	case string:
+		return v == ""
+	case json.Number:
+		f, err := v.Float64()
+		return err == nil && f == 0
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	}
+	return false
+}
+
+// trimsCounts reports whether the result comes from an SDK that leaves
+// counts out below the audit level. Such an SDK marks each operation
+// retried or not. A result from an older SDK counts calls at every level.
+func trimsCounts(raw json.RawMessage) bool {
+	var shape struct {
+		Calls struct {
+			Operations []map[string]json.RawMessage `json:"operations"`
+		} `json:"calls"`
+	}
+	if json.Unmarshal(raw, &shape) != nil {
+		return false
+	}
+	for _, op := range shape.Calls.Operations {
+		if _, ok := op["retried"]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // collectLevel is the level the run that collects asks for: the --config

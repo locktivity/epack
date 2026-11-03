@@ -27,8 +27,19 @@ import (
 // It verifies attestations stored as Sigstore bundles.
 type SigstoreVerifier struct {
 	keyVerifiers []keyVerifier
-	verifier     *verify.Verifier
-	cfg          *config
+	// verifier checks certificate signatures. It is nil when the config
+	// accepts no certificate signer, and buildIdentityPolicy fails first.
+	verifier *verify.Verifier
+	cfg      *config
+}
+
+// liveTrustedRoot fetches the Sigstore Public Good trusted root over TUF.
+var liveTrustedRoot = func() (root.TrustedMaterial, error) {
+	tr, err := root.NewLiveTrustedRoot(tuf.DefaultOptions())
+	if err != nil {
+		return nil, err
+	}
+	return tr, nil
 }
 
 // NewStrictVerifier creates a Verifier that requires identity verification.
@@ -60,7 +71,10 @@ func NewStrictVerifier(issuer, subject string, opts ...Option) (*SigstoreVerifie
 
 // NewSigstoreVerifier creates a new Verifier backed by sigstore-go.
 // By default, it uses the Sigstore Public Good instance for trust material
-// and requires online verification against the transparency log.
+// and requires online verification against the transparency log. The trust
+// material is fetched only when a certificate, log entry, or signed timestamp
+// needs it, so a verifier that accepts only key signatures without a log
+// entry makes no network calls.
 //
 // For production use, prefer NewStrictVerifier which enforces identity checks.
 // This constructor requires explicit identity configuration or opt-in to
@@ -72,43 +86,35 @@ func NewSigstoreVerifier(opts ...Option) (*SigstoreVerifier, error) {
 	if cfg.offline && trustedMaterial == nil {
 		return nil, fmt.Errorf("offline verification requires a trusted root; use WithTrustedRoot")
 	}
-	if trustedMaterial == nil {
-		// Use Sigstore Public Good instance via LiveTrustedRoot
-		liveTrustedRoot, err := root.NewLiveTrustedRoot(tuf.DefaultOptions())
+	if trustedMaterial == nil && cfg.needsTrustedRoot() {
+		live, err := liveTrustedRoot()
 		if err != nil {
 			return nil, wrapTrustedRootError(err)
 		}
-		trustedMaterial = liveTrustedRoot
+		trustedMaterial = live
 	}
 
-	// Build verifier options.
-	//
 	// Offline mode means "do not rely on live services", not "ignore all timestamp
 	// evidence". Certificate-signed Sigstore bundles still need observer timestamps
 	// to establish certificate validity. For the normal Fulcio+Rekor path, those
 	// timestamps come from the embedded Rekor entry in the bundle.
-	var verifierOpts []verify.VerifierOption
-	if cfg.tlogThreshold > 0 {
-		verifierOpts = append(verifierOpts, verify.WithTransparencyLog(cfg.tlogThreshold))
-		verifierOpts = append(verifierOpts, verify.WithIntegratedTimestamps(cfg.tlogThreshold))
-	}
-	if cfg.tsaThreshold > 0 {
-		verifierOpts = append(verifierOpts, verify.WithSignedTimestamps(cfg.tsaThreshold))
-	}
-
-	// With no transparency log or timestamp requirement, certificates are
-	// checked against the current time; only a caller that zeroed both
-	// thresholds gets here.
-	certOpts := verifierOpts
-	if len(certOpts) == 0 {
-		certOpts = []verify.VerifierOption{verify.WithCurrentTime()}
-	}
-	v, err := verify.NewVerifier(trustedMaterial, certOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create verifier: %w", err)
+	var v *verify.Verifier
+	if cfg.acceptsCertificates() {
+		// With no transparency log or timestamp requirement, certificates are
+		// checked against the current time; only a caller that zeroed both
+		// thresholds gets here.
+		certOpts := observerOptions(cfg.tlogThreshold, cfg.tsaThreshold)
+		if len(certOpts) == 0 {
+			certOpts = []verify.VerifierOption{verify.WithCurrentTime()}
+		}
+		var err error
+		v, err = verify.NewVerifier(trustedMaterial, certOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create verifier: %w", err)
+		}
 	}
 
-	keyVerifiers, err := buildKeyVerifiers(cfg.publicKeys, trustedMaterial, verifierOpts)
+	keyVerifiers, err := buildKeyVerifiers(cfg.publicKeys, trustedMaterial, observerOptions(cfg.keyTlogThreshold(), cfg.tsaThreshold))
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +126,19 @@ func NewSigstoreVerifier(opts ...Option) (*SigstoreVerifier, error) {
 	}, nil
 }
 
+// observerOptions require the transparency log entries and signed timestamps
+// that record when a signature was made.
+func observerOptions(tlogThreshold, tsaThreshold int) []verify.VerifierOption {
+	var opts []verify.VerifierOption
+	if tlogThreshold > 0 {
+		opts = append(opts, verify.WithTransparencyLog(tlogThreshold), verify.WithIntegratedTimestamps(tlogThreshold))
+	}
+	if tsaThreshold > 0 {
+		opts = append(opts, verify.WithSignedTimestamps(tsaThreshold))
+	}
+	return opts
+}
+
 // keyVerifier verifies signatures made with one provided public key.
 type keyVerifier struct {
 	fingerprint string
@@ -129,7 +148,8 @@ type keyVerifier struct {
 // buildKeyVerifiers makes one verifier per provided key. A key signature has
 // no certificate, so the trusted root cannot vouch for it; the key itself is
 // what the caller trusts. A bundle without transparency log or timestamp
-// evidence is only acceptable when the caller required none.
+// evidence is only acceptable when the caller required none, and then
+// trustedMaterial may be nil.
 func buildKeyVerifiers(keys []crypto.PublicKey, trustedMaterial root.TrustedMaterial, verifierOpts []verify.VerifierOption) ([]keyVerifier, error) {
 	verifiers := make([]keyVerifier, 0, len(keys))
 	for _, key := range keys {
@@ -141,11 +161,11 @@ func buildKeyVerifiers(keys []crypto.PublicKey, trustedMaterial root.TrustedMate
 		if err != nil {
 			return nil, fmt.Errorf("loading public key %s: %w", fingerprint, err)
 		}
-		material := root.TrustedMaterialCollection{
-			trustedMaterial,
-			root.NewTrustedPublicKeyMaterial(func(string) (root.TimeConstrainedVerifier, error) {
-				return root.NewExpiringKey(sv, time.Time{}, time.Time{}), nil
-			}),
+		var material root.TrustedMaterial = root.NewTrustedPublicKeyMaterial(func(string) (root.TimeConstrainedVerifier, error) {
+			return root.NewExpiringKey(sv, time.Time{}, time.Time{}), nil
+		})
+		if trustedMaterial != nil {
+			material = root.TrustedMaterialCollection{trustedMaterial, material}
 		}
 		opts := verifierOpts
 		if len(opts) == 0 {
@@ -192,14 +212,15 @@ func (v *SigstoreVerifier) Verify(ctx context.Context, attestation []byte) (*Res
 		return nil, fmt.Errorf("failed to parse sigstore bundle: %w", err)
 	}
 
-	// Build identity policy
+	// A provided key is the identity policy for a key signature, so the
+	// certificate identity policy below only applies to certificates.
+	if signedWithKey(b) {
+		return v.verifyWithKeys(b)
+	}
+
 	identityOpts, err := v.buildIdentityPolicy()
 	if err != nil {
 		return nil, err
-	}
-
-	if signedWithKey(b) {
-		return v.verifyWithKeys(b)
 	}
 
 	artifactOpt, err := artifactPolicy(b)
@@ -212,7 +233,7 @@ func (v *SigstoreVerifier) Verify(ctx context.Context, attestation []byte) (*Res
 	// Verify the bundle
 	result, err := v.verifier.Verify(b, policy)
 	if err != nil {
-		return nil, fmt.Errorf("verification failed: %w", err)
+		return nil, err
 	}
 
 	return v.toResult(result, b)
@@ -234,8 +255,13 @@ func (v *SigstoreVerifier) verifyWithKeys(b *bundle.Bundle) (*Result, error) {
 	if len(v.keyVerifiers) == 0 {
 		return nil, fmt.Errorf("attestation was signed with a key, not a certificate; pass the signer's public key to verify it")
 	}
-	if v.cfg.issuer != "" || v.cfg.issuerRegexp != nil || v.cfg.subject != "" || v.cfg.subjectRegexp != nil {
+	if v.cfg.hasIdentityPolicy() {
 		return nil, fmt.Errorf("attestation was signed with a key, which cannot satisfy an issuer or subject policy")
+	}
+	// Without this, every key fails the log requirement and the error says
+	// none of them signed, even when one did.
+	if entries, err := b.TlogEntries(); err == nil && len(entries) == 0 && v.cfg.keyTlogThreshold() > 0 {
+		return nil, fmt.Errorf("attestation was signed with a key and not recorded in a transparency log; it verifies only when no log entry is required")
 	}
 	artifactOpt, err := artifactPolicy(b)
 	if err != nil {
@@ -257,7 +283,7 @@ func (v *SigstoreVerifier) verifyWithKeys(b *bundle.Bundle) (*Result, error) {
 		out.Identity = &Identity{Subject: kv.fingerprint, Method: "key"}
 		return out, nil
 	}
-	return nil, fmt.Errorf("verification failed: none of the %d provided public keys signed this attestation: %w", len(v.keyVerifiers), lastErr)
+	return nil, fmt.Errorf("none of the %d provided public keys signed this attestation: %w", len(v.keyVerifiers), lastErr)
 }
 
 // artifactPolicy decides what the signature must cover based on the bundle type.
@@ -285,11 +311,8 @@ func artifactPolicy(b *bundle.Bundle) (verify.ArtifactPolicyOption, error) {
 func (v *SigstoreVerifier) buildIdentityPolicy() ([]verify.PolicyOption, error) {
 	var opts []verify.PolicyOption
 
-	hasIdentityPolicy := v.cfg.issuer != "" || v.cfg.issuerRegexp != nil ||
-		v.cfg.subject != "" || v.cfg.subjectRegexp != nil
-
 	// If no identity requirements, require explicit opt-in to unsafe mode
-	if !hasIdentityPolicy {
+	if !v.cfg.hasIdentityPolicy() {
 		if !v.cfg.insecureSkipIdentityCheck {
 			return nil, fmt.Errorf("identity policy required: use WithIssuer/WithSubject to specify allowed signers, or WithInsecureSkipIdentityCheck() to explicitly allow any signer (not recommended)")
 		}

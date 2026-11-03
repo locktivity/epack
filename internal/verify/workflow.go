@@ -41,6 +41,11 @@ type PackOpts struct {
 	// PublicKeys are keys attestations may have been signed with instead of
 	// a certificate. The key that verifies names the signer.
 	PublicKeys []crypto.PublicKey
+
+	// InsecureSkipTlog accepts key signatures that were not recorded in a
+	// transparency log, such as one made with SignPackOptions.SkipTlog.
+	// Certificate signatures still need their log entry.
+	InsecureSkipTlog bool
 }
 
 // PackResult contains the outcomes of pack verification.
@@ -228,6 +233,9 @@ func buildVerifierOptions(opts PackOpts) ([]verify.Option, error) {
 	}
 	if len(opts.PublicKeys) > 0 {
 		vopts = append(vopts, verify.WithPublicKeys(opts.PublicKeys...))
+	}
+	if opts.InsecureSkipTlog {
+		vopts = append(vopts, verify.WithInsecureSkipTlogForKeys())
 	}
 
 	return vopts, nil

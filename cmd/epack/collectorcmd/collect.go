@@ -167,18 +167,27 @@ func printCollectProgress(out *output.Writer, result *collector.CollectWorkflowR
 		}
 	}
 
-	// Print collector results
-	for _, r := range result.CollectorResults {
-		if !r.Success {
-			out.Print("  FAILED %s: %v\n", r.Collector, r.Error)
-		} else {
-			out.Print("  collected %s\n", r.Collector)
-		}
-	}
+	printCollectorResults(out, result.CollectorResults)
 
 	// Remind user to commit lockfile if it was updated
 	if result.LockfileUpdated {
 		out.Print("\nLockfile was updated. Remember to commit %s\n", lockfile.FileName)
+	}
+}
+
+// printCollectorResults prints how each collector's run ended. For a run
+// whose collect config key lists a kind it never wrote, it adds a warning,
+// since that kind is usually a typo or one the collector does not write.
+func printCollectorResults(out *output.Writer, results []collector.RunResult) {
+	for _, r := range results {
+		if !r.Success {
+			out.Print("  FAILED %s: %v\n", r.Collector, r.Error)
+			continue
+		}
+		out.Print("  collected %s\n", r.Collector)
+		for _, kind := range collector.UnmatchedKinds(r) {
+			out.Print("    warning: collect lists %s, which %s never wrote\n", kind, r.Collector)
+		}
 	}
 }
 

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 // fakeDial connects every dial to a pipe, except that an address in errs

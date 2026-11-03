@@ -38,7 +38,7 @@ func TestGapOperationsCheckNamesTheFaultedOperation(t *testing.T) {
 }
 
 func TestMisnamedGap(t *testing.T) {
-	g := componentsdk.Gap{Path: "artifacts/okta.json", Pointer: "/system_log", Operation: "okta.users.list"}
+	g := componentsdk.Gap{Location: componentsdk.Location{Path: "artifacts/okta.json", Pointer: "/system_log"}, Operation: "okta.users.list"}
 	if got := misnamedGap(g, "okta.logs.list"); got != "the gap at artifacts/okta.json /system_log names operation okta.users.list, want okta.logs.list, whose fault left it" {
 		t.Errorf("message = %q", got)
 	}

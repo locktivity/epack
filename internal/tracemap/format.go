@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/locktivity/epack/internal/jsonpointer"
 )
 
 // Env names the directory a collectortest suite writes its SuiteTrace
@@ -183,7 +185,7 @@ func walkPattern(doc any, tokens []string) (string, bool) {
 		switch node := cur.(type) {
 		case map[string]any:
 			out[i] = t
-			cur = node[unescapeToken(t)]
+			cur = node[jsonpointer.Unescape(t)]
 		case []any:
 			idx, err := strconv.Atoi(t)
 			if err != nil || idx < 0 {

@@ -441,6 +441,22 @@ func sdkResult() map[string]any {
 	}
 }
 
+// trimmedResult is sdkResult as an SDK that trims counts below the audit
+// level writes it at the trust level.
+func trimmedResult() map[string]any {
+	r := sdkResult()
+	delete(r["gaps"].([]any)[0].(map[string]any), "call")
+	r["steps"] = []any{
+		map[string]any{"name": "people", "title": "People", "any_failed": true, "operations": []any{map[string]any{"name": "okta.users.list"}}},
+		map[string]any{"name": "system_log", "title": "Activity log", "any_failed": true, "operations": []any{map[string]any{"name": "okta.logs.list"}}},
+	}
+	r["calls"] = map[string]any{"operations": []any{
+		map[string]any{"name": "okta.users.list", "retried": true, "status_codes": []any{"200", "429"}},
+		map[string]any{"name": "okta.logs.list", "retried": false, "status_codes": []any{"403"}, "error_codes": []any{"permission_denied"}},
+	}}
+	return r
+}
+
 func sdkBuild() map[string]any {
 	return map[string]any{
 		"collector": map[string]any{"name": "okta", "version": "v0.4.0", "commit": "abc123"},
@@ -495,6 +511,11 @@ func TestCollectorResultChecks_PassANewResult(t *testing.T) {
 	results = resultChecks(t, audit, sdkBuild(), `{"level": "audit"}`)
 	expectStatuses(t, results, map[string]TestStatus{
 		"COL-075": StatusPass, "COL-076": StatusPass, "COL-077": StatusPass, "COL-078": StatusPass, "COL-079": StatusPass, "COL-080": StatusSkip,
+	})
+
+	results = resultChecks(t, trimmedResult(), sdkBuild(), "")
+	expectStatuses(t, results, map[string]TestStatus{
+		"COL-075": StatusPass, "COL-076": StatusSkip, "COL-077": StatusPass, "COL-078": StatusPass, "COL-079": StatusPass, "COL-080": StatusPass,
 	})
 }
 
@@ -552,10 +573,16 @@ func TestCollectorResultChecks_FailWhatDisagrees(t *testing.T) {
 			b["collector"].(map[string]any)["commit"] = "def456"
 		}, "", "COL-079", `names version "v0.4.0" and commit "def456"`},
 		"a build file the schema rejects": {func(_, b map[string]any) { b["run_id"] = "r1" }, "", "COL-079", "does not match evidencepack/collector-build@v1"},
-		"rows at trust":                   {func(r, _ map[string]any) { r["calls"].(map[string]any)["requests"] = auditRows() }, "", "COL-080", "holds 4 request rows at the trust level"},
+		"rows at trust":                   {func(r, _ map[string]any) { r["calls"].(map[string]any)["requests"] = auditRows() }, "", "COL-080", "holds /calls/requests at the trust level"},
 		"a warning at trust": {func(r, _ map[string]any) {
 			r["gaps"].([]any)[0].(map[string]any)["warning"] = "user 00u1 cannot read the log"
-		}, "", "COL-080", "holds its warning or error text at the trust level"},
+		}, "", "COL-080", "holds /gaps/0/warning at the trust level"},
+		"a gap's scope at trust": {func(r, _ map[string]any) {
+			r["gaps"].([]any)[0].(map[string]any)["scope"] = "account 111122223333"
+		}, "", "COL-080", "holds /gaps/0/scope at the trust level"},
+		"a run warning's message at trust": {func(r, _ map[string]any) {
+			r["warnings"] = []any{map[string]any{"message": "bucket northwind-logs is in another account", "fix": "Enroll the log archive account."}}
+		}, "", "COL-080", "holds /warnings/0/message at the trust level"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -566,5 +593,42 @@ func TestCollectorResultChecks_FailWhatDisagrees(t *testing.T) {
 				t.Errorf("%s = %s (%s%s), want a failure saying %q", tc.id, got.Status, got.Message, got.Reason, tc.want)
 			}
 		})
+	}
+}
+
+func TestCollectorResultChecks_FailCountsAtTrustFromATrimmingSDK(t *testing.T) {
+	cases := map[string]struct {
+		change func(result map[string]any)
+		want   string
+	}{
+		"a tenant": {func(r map[string]any) { r["signed_in_as"].(map[string]any)["tenant_id"] = "acme" }, "holds /signed_in_as/tenant_id"},
+		"an operation's calls": {func(r map[string]any) {
+			r["calls"].(map[string]any)["operations"].([]any)[0].(map[string]any)["calls"] = 2
+		}, "holds /calls/operations/0/calls"},
+		"a step's times": {func(r map[string]any) {
+			r["steps"].([]any)[1].(map[string]any)["start_ms"] = 900
+		}, "holds /steps/1/start_ms"},
+		"a gap's call": {func(r map[string]any) { r["gaps"].([]any)[0].(map[string]any)["call"] = 3 }, "holds /gaps/0/call"},
+		"a count of dropped requests": {func(r map[string]any) {
+			r["calls"].(map[string]any)["requests_dropped"] = 3
+		}, "holds /calls/requests_dropped"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			result := trimmedResult()
+			tc.change(result)
+			got := resultChecks(t, result, sdkBuild(), "")["COL-080"]
+			if got.Status != StatusFail || !strings.Contains(got.Message, tc.want) {
+				t.Errorf("COL-080 = %s (%s%s), want a failure saying %q", got.Status, got.Message, got.Reason, tc.want)
+			}
+		})
+	}
+}
+
+func TestCollectorResultChecks_PassCountsAtTrustFromAnOlderSDK(t *testing.T) {
+	result := sdkResult()
+	result["signed_in_as"].(map[string]any)["tenant_id"] = "acme"
+	if got := resultChecks(t, result, sdkBuild(), "")["COL-080"]; got.Status != StatusPass {
+		t.Errorf("COL-080 = %s (%s%s), want a pass for a result whose SDK counted calls at every level", got.Status, got.Message, got.Reason)
 	}
 }

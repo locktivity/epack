@@ -3,10 +3,11 @@ package componentsdk
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 const annotatedSchema = `{
@@ -228,7 +229,7 @@ func TestNormalizedSchemas(t *testing.T) {
 			"evidencepack/cloud-posture@v1",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "azure",
 			  "accounts": [{"account_id": "sub-1", "iam": {"mfa_coverage_pct": null}, "storage": null}]}`,
-			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "azure", "accounts": [{"iam": {}}]}`,
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "accounts": [{"iam": {}}]}`,
 		},
 		{
 			"evidencepack/vcs-posture@v1",
@@ -247,6 +248,13 @@ func TestNormalizedSchemas(t *testing.T) {
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z",
 			  "endpoints": [{"host": "example.test", "port": 443, "reachable": null, "tls": {"protocol_support": {"tls_1_3": true}}}]}`,
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "endpoints": [{"host": "example.test", "port": null}]}`,
+		},
+		{
+			"evidencepack/endpoint-posture@v1",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "jumpcloud",
+			  "scope": {"discovery_complete": true, "description": "provider_visible_devices", "max_observation_age_seconds": 604800},
+			  "hardening": {"disk_encryption_pct": null}, "availability": []}`,
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "jumpcloud", "availability": []}`,
 		},
 	}
 	for _, tc := range cases {
@@ -267,6 +275,150 @@ func TestNormalizedSchemas(t *testing.T) {
 	}
 }
 
+// TestNormalizedPercentagesRoundTowardTheGap checks that every percentage in
+// the normalized schemas rounds in the direction that keeps a shortfall
+// visible. A percentage where more is better rounds down, so 996 of 1,000 is
+// 99 and not 100. A percentage where more is worse rounds up, so 1 open rule
+// of 201 is 1 and not 0.
+func TestNormalizedPercentagesRoundTowardTheGap(t *testing.T) {
+	for id := range normalizedFiles {
+		var doc any
+		if err := json.Unmarshal(NormalizedSchemaJSON(id), &doc); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		var walk func(node any, at string)
+		walk = func(node any, at string) {
+			switch n := node.(type) {
+			case map[string]any:
+				if strings.HasSuffix(at, "_pct") {
+					if r := n["x-epack-rounding"]; r != "floor" && r != "ceil" {
+						t.Errorf("%s %s: x-epack-rounding is %v, want floor or ceil", id, at, r)
+					}
+				}
+				for key, child := range n {
+					walk(child, at+"/"+key)
+				}
+			case []any:
+				for i, child := range n {
+					walk(child, fmt.Sprintf("%s/%d", at, i))
+				}
+			}
+		}
+		walk(doc, "")
+	}
+}
+
+func TestNormalizedSummariesCheckTheirPercentages(t *testing.T) {
+	cases := []struct {
+		id, doc string
+		check   string
+		pointer string
+	}{
+		{
+			"evidencepack/tls@v1",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "endpoints": [],
+			  "summary": {"total_endpoints": 201, "legacy_protocol_supported_count": 1, "legacy_protocol_supported_pct": 0}}`,
+			outputcheck.CheckRatios, "/summary/legacy_protocol_supported_pct",
+		},
+		{
+			"evidencepack/tls@v1",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "endpoints": [],
+			  "summary": {"total_endpoints": 4, "certificate_valid_count": 3, "all_certificates_valid": true}}`,
+			outputcheck.CheckRatios, "/summary/all_certificates_valid",
+		},
+		{
+			"evidencepack/email-dns@v1",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "domains": [],
+			  "summary": {"total_domains": 1000, "with_dmarc_count": 996, "with_dmarc_pct": 100}}`,
+			outputcheck.CheckRatios, "/summary/with_dmarc_pct",
+		},
+		{
+			"evidencepack/cloud-posture@v1",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+			  "accounts": [{"iam": {"users_present": false, "mfa_coverage_pct": 100}}]}`,
+			outputcheck.CheckPopulation, "/accounts/0/iam/mfa_coverage_pct",
+		},
+		{
+			"evidencepack/idp-posture@v1",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "entra", "org_domain": "example.test",
+			  "privileged_access": {"privileged_users_count": 0, "privileged_mfa_coverage_pct": 100, "privileged_phishing_resistant_pct": null}}`,
+			outputcheck.CheckPopulation, "/privileged_access/privileged_mfa_coverage_pct",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.pointer, func(t *testing.T) {
+			s, err := outputcheck.Compile(NormalizedSchemaJSON(tc.id))
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, err := outputcheck.Decode([]byte(tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := outputcheck.Validate(s, "a.json", doc); len(got) != 0 {
+				t.Fatalf("the artifact should match its schema: %+v", got)
+			}
+			got := outputcheck.Check(s, "a.json", doc, nil, "trust")
+			if len(got) != 1 || got[0].Check != tc.check || got[0].Pointer != tc.pointer {
+				t.Errorf("findings %+v, want one %s finding at %s", got, tc.check, tc.pointer)
+			}
+		})
+	}
+}
+
+func TestCloudPostureTrustLevelLeavesOutCountsAndAccountIDs(t *testing.T) {
+	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/cloud-posture@v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+	  "accounts_expected": 2, "all_accounts_collected": true,
+	  "accounts": [{"account_id": "111111111111", "account_label": "production",
+	    "iam": {"users_present": true, "user_count": 4, "mfa_coverage_pct": 50, "access_keys_present": true, "access_key_user_count": 2,
+	            "saml_providers_present": false, "saml_provider_count": 0}}],
+	  "workforce_sign_in": {"in_use": true, "user_count": 12, "mfa_source": "sign_in_service"}}`
+	doc, err := outputcheck.Decode([]byte(full))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outputcheck.Validate(s, "a.json", doc); len(got) != 0 {
+		t.Fatalf("findings %+v, want none", got)
+	}
+	if got := outputcheck.AboveLevel(s, "a.json", doc, "audit"); len(got) != 0 {
+		t.Errorf("at audit: %+v, want none", got)
+	}
+	var pointers []string
+	for _, f := range outputcheck.AboveLevel(s, "a.json", doc, "trust") {
+		pointers = append(pointers, f.Pointer)
+	}
+	want := []string{
+		"/accounts/0/account_id",
+		"/accounts/0/iam/access_key_user_count",
+		"/accounts/0/iam/saml_provider_count",
+		"/accounts/0/iam/user_count",
+		"/accounts_expected",
+		"/workforce_sign_in/user_count",
+	}
+	if !reflect.DeepEqual(pointers, want) {
+		t.Errorf("above trust = %q, want %q", pointers, want)
+	}
+
+	trust := `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+	  "all_accounts_collected": true,
+	  "accounts": [{"account_label": "production", "iam": {"users_present": true, "mfa_coverage_pct": 50, "access_keys_present": true, "saml_providers_present": false}}],
+	  "workforce_sign_in": {"in_use": true, "mfa_source": "sign_in_service"}}`
+	doc, err = outputcheck.Decode([]byte(trust))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outputcheck.Validate(s, "a.json", doc); len(got) != 0 {
+		t.Errorf("a trust artifact without account IDs or counts should match: %+v", got)
+	}
+	if got := outputcheck.AboveLevel(s, "a.json", doc, "trust"); len(got) != 0 {
+		t.Errorf("trust artifact: %+v, want nothing above trust", got)
+	}
+}
+
 func TestCloudPostureCountsAndWorkforceSignInAreOptional(t *testing.T) {
 	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/cloud-posture@v1"))
 	if err != nil {
@@ -281,8 +433,8 @@ func TestCloudPostureCountsAndWorkforceSignInAreOptional(t *testing.T) {
 			"with the counts and workforce sign-in",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
 			  "accounts": [
-			    {"account_id": "111111111111", "iam": {"user_count": 0, "root_mfa_enabled": true, "access_key_user_count": 0, "saml_provider_count": 0}},
-			    {"account_id": "222222222222", "iam": {"user_count": 4, "mfa_coverage_pct": 50, "access_key_user_count": 2, "access_key_rotation_compliant_pct": 100, "saml_provider_count": 1}}],
+			    {"account_id": "111111111111", "iam": {"users_present": false, "user_count": 0, "root_mfa_enabled": true, "access_keys_present": false, "access_key_user_count": 0, "saml_providers_present": false, "saml_provider_count": 0}},
+			    {"account_id": "222222222222", "iam": {"users_present": true, "user_count": 4, "mfa_coverage_pct": 50, "access_keys_present": true, "access_key_user_count": 2, "access_key_rotation_compliant_pct": 100, "saml_providers_present": true, "saml_provider_count": 1}}],
 			  "workforce_sign_in": {"in_use": true, "user_count": 12, "mfa_source": "sign_in_service"}}`,
 			"",
 		},
@@ -371,5 +523,225 @@ func TestEmitChecksRatiosAndLevelAwareRollups(t *testing.T) {
 	}
 	if got := checksOf(emitAt(LevelAudit, 67)); strings.Join(got, ",") != "ratios artifacts/demo.json /mfa_coverage" {
 		t.Errorf("checks = %v, want a ratios finding for 67", got)
+	}
+}
+
+func TestEndpointPostureKeepsFleetCountsAtTheAuditLevel(t *testing.T) {
+	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/endpoint-posture@v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(raw string) any {
+		doc, err := outputcheck.Decode([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	scope := `"scope": {"discovery_complete": true, "observed_devices_count": 4, "description": "provider_visible_devices", "max_observation_age_seconds": 604800}`
+	audit := decode(`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "jumpcloud", ` + scope + `,
+	  "fleet": {"devices_present": true, "devices_count": 4, "managed_devices_count": 4, "mdm_enrolled_devices_count": 3, "mdm_enrolled_pct": 75, "devices_by_os": {"macos": 3, "windows": 1}},
+	  "hardening": {"disk_encryption_pct": 50},
+	  "metric_coverage": {"hardening.disk_encryption_pct": {"passing_devices_count": 1, "failing_devices_count": 1, "unknown_devices_count": 2, "not_applicable_devices_count": 0}},
+	  "availability": [], "devices": [{"device_id": "d1", "os_family": "macos", "in_scope": true}]}`)
+	if got := outputcheck.Validate(s, "a.json", audit); len(got) != 0 {
+		t.Fatalf("an audit artifact should match: %+v", got)
+	}
+	if got := outputcheck.Check(s, "a.json", audit, nil, "audit"); len(got) != 0 {
+		t.Errorf("3 of 4 devices enrolled is 75: %+v", got)
+	}
+	var above []string
+	for _, f := range outputcheck.AboveLevel(s, "a.json", audit, "trust") {
+		above = append(above, f.Pointer)
+	}
+	want := []string{"/devices", "/fleet/devices_by_os", "/fleet/devices_count", "/fleet/managed_devices_count",
+		"/fleet/mdm_enrolled_devices_count", "/metric_coverage", "/scope/observed_devices_count"}
+	if !reflect.DeepEqual(above, want) {
+		t.Errorf("above trust = %q, want %q", above, want)
+	}
+
+	trust := decode(`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "jumpcloud",
+	  "scope": {"discovery_complete": true, "description": "provider_visible_devices", "max_observation_age_seconds": 604800},
+	  "fleet": {"devices_present": true, "mdm_enrolled_pct": 75}, "hardening": {"disk_encryption_pct": 50}, "availability": []}`)
+	if got := outputcheck.Validate(s, "a.json", trust); len(got) != 0 {
+		t.Errorf("a trust artifact without counts or coverage should match: %+v", got)
+	}
+	if got := outputcheck.AboveLevel(s, "a.json", trust, "trust"); len(got) != 0 {
+		t.Errorf("trust artifact: %+v, want nothing above trust", got)
+	}
+
+	empty := decode(`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "jumpcloud",
+	  "scope": {"discovery_complete": true, "description": "provider_visible_devices", "max_observation_age_seconds": 604800},
+	  "fleet": {"devices_present": false, "mdm_enrolled_pct": null},
+	  "hardening": {"disk_encryption_pct": 100, "screen_lock_compliant_pct": null, "firewall_enabled_pct": null}, "availability": []}`)
+	got := outputcheck.Check(s, "a.json", empty, nil, "trust")
+	if len(got) != 1 || got[0].Check != outputcheck.CheckPopulation || got[0].Pointer != "/hardening/disk_encryption_pct" {
+		t.Errorf("a percentage over a fleet with no devices: %+v, want one population finding", got)
+	}
+
+	wrong := decode(strings.Replace(string(mustJSONText(t, audit)), `"mdm_enrolled_pct":75`, `"mdm_enrolled_pct":76`, 1))
+	if got := outputcheck.Check(s, "a.json", wrong, nil, "audit"); len(got) != 1 || got[0].Check != outputcheck.CheckRatios {
+		t.Errorf("76 for 3 of 4 enrolled: %+v, want one ratios finding", got)
+	}
+}
+
+func mustJSONText(t *testing.T, doc any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestCloudPostureDatabaseFields(t *testing.T) {
+	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/cloud-posture@v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := func(database string) any {
+		d, err := outputcheck.Decode([]byte(`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+		  "accounts": [{"database": ` + database + `, "threat_detection": {"enabled": true}}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	audit := doc(`{"databases_present": true, "database_count": 3, "encrypted_database_count": 2, "encryption_pct": 66,
+	  "public_access_blocked_database_count": 3, "public_access_blocked_pct": 100, "multi_az_database_count": 1, "multi_az_pct": 33}`)
+	if got := outputcheck.Validate(s, "a.json", audit); len(got) != 0 {
+		t.Fatalf("schema: %+v", got)
+	}
+	if got := outputcheck.Check(s, "a.json", audit, nil, "audit"); len(got) != 0 {
+		t.Errorf("2 of 3 encrypted rounds down to 66: %+v", got)
+	}
+	var above []string
+	for _, f := range outputcheck.AboveLevel(s, "a.json", audit, "trust") {
+		above = append(above, f.Pointer)
+	}
+	want := []string{"/accounts/0/database/database_count", "/accounts/0/database/encrypted_database_count",
+		"/accounts/0/database/multi_az_database_count", "/accounts/0/database/multi_az_pct", "/accounts/0/database/public_access_blocked_database_count"}
+	if !reflect.DeepEqual(above, want) {
+		t.Errorf("above trust = %q, want %q", above, want)
+	}
+	none := doc(`{"databases_present": false, "encryption_pct": 100, "public_access_blocked_pct": null}`)
+	got := outputcheck.Check(s, "a.json", none, nil, "trust")
+	if len(got) != 1 || got[0].Check != outputcheck.CheckPopulation || got[0].Pointer != "/accounts/0/database/encryption_pct" {
+		t.Errorf("an account with no databases: %+v, want one population finding for the percentage it set", got)
+	}
+}
+
+// TestNormalizedPercentagesNameTheirCounts checks that every normalized
+// percentage has x-epack-numerator and x-epack-denominator, so the ratio and
+// population checks run on it. It also checks that each reference points to a
+// property the schema defines. Endpoint posture's control percentages may
+// leave the references out. Each is taken over the devices that passed or
+// failed, and metric_coverage holds those counts.
+func TestNormalizedPercentagesNameTheirCounts(t *testing.T) {
+	for id := range normalizedFiles {
+		var doc map[string]any
+		if err := json.Unmarshal(NormalizedSchemaJSON(id), &doc); err != nil {
+			t.Fatal(err)
+		}
+		// defined reports whether ref points to a property the schema
+		// defines. A relative ref names a key in siblings. An absolute ref is
+		// a pointer through properties from the root.
+		defined := func(siblings map[string]any, ref string) bool {
+			if !strings.HasPrefix(ref, "/") {
+				_, ok := siblings[ref]
+				return ok
+			}
+			node := doc
+			for _, token := range strings.Split(strings.TrimPrefix(ref, "/"), "/") {
+				props, _ := node["properties"].(map[string]any)
+				next, ok := props[token].(map[string]any)
+				if !ok {
+					return false
+				}
+				node = next
+			}
+			return true
+		}
+		var walk func(node map[string]any, at string)
+		walk = func(node map[string]any, at string) {
+			props, _ := node["properties"].(map[string]any)
+			for name, raw := range props {
+				child, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				path := at + "/" + name
+				if strings.HasSuffix(name, "_pct") {
+					endpointControl := id == "evidencepack/endpoint-posture@v1" && name != "mdm_enrolled_pct"
+					for _, keyword := range []string{"x-epack-numerator", "x-epack-denominator"} {
+						ref, _ := child[keyword].(string)
+						switch {
+						case ref == "" && !endpointControl:
+							t.Errorf("%s %s has no %s", id, path, keyword)
+						case ref != "" && !defined(props, ref):
+							t.Errorf("%s %s: %s %q points to no property", id, path, keyword, ref)
+						}
+					}
+					if ref, _ := child["x-epack-present"].(string); ref != "" && !defined(props, ref) {
+						t.Errorf("%s %s: x-epack-present %q points to no property", id, path, ref)
+					}
+				}
+				walk(child, path)
+				if items, ok := child["items"].(map[string]any); ok {
+					walk(items, path+"/*")
+				}
+			}
+		}
+		walk(doc, "")
+	}
+}
+
+func TestIdentityPercentagesCheckAgainstTheirCounts(t *testing.T) {
+	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/idp-posture@v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := outputcheck.Decode([]byte(`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "okta", "org_domain": "example.test",
+	  "user_security": {"users_present": true, "user_count": 400, "mfa_user_count": 398, "mfa_coverage_pct": 100},
+	  "policy": {"mfa_required_user_count": 398, "mfa_required_coverage_pct": 99}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := outputcheck.Check(s, "a.json", doc, nil, "audit")
+	if len(got) != 1 || got[0].Check != outputcheck.CheckRatios || got[0].Pointer != "/user_security/mfa_coverage_pct" {
+		t.Errorf("398 of 400 should round down to 99: %+v", got)
+	}
+}
+
+func TestIdentityCountsAreLeftOutAtTrust(t *testing.T) {
+	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/idp-posture@v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(raw string) any {
+		doc, err := outputcheck.Decode([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	audit := decode(`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "entra", "org_domain": "example.test",
+	  "app_security": {"authorized_third_party_apps_count": 12},
+	  "privileged_access": {"privileged_users_present": true, "privileged_users_count": 4, "super_admin_count": 2,
+	    "standing_privileged_users_present": true, "standing_privileged_users_count": 1, "privileged_mfa_coverage_pct": 100}}`)
+	var above []string
+	for _, f := range outputcheck.AboveLevel(s, "a.json", audit, "trust") {
+		above = append(above, f.Pointer)
+	}
+	want := []string{"/app_security/authorized_third_party_apps_count", "/privileged_access/privileged_users_count",
+		"/privileged_access/standing_privileged_users_count", "/privileged_access/super_admin_count"}
+	if !reflect.DeepEqual(above, want) {
+		t.Errorf("above trust = %q, want %q", above, want)
+	}
+	none := decode(`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "entra", "org_domain": "example.test",
+	  "privileged_access": {"privileged_users_present": false, "privileged_mfa_coverage_pct": 100, "privileged_phishing_resistant_pct": null}}`)
+	got := outputcheck.Check(s, "a.json", none, nil, "trust")
+	if len(got) != 1 || got[0].Check != outputcheck.CheckPopulation || got[0].Pointer != "/privileged_access/privileged_mfa_coverage_pct" {
+		t.Errorf("a tenant with no privileged users at trust: %+v, want one population finding", got)
 	}
 }

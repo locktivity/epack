@@ -12,13 +12,14 @@ import (
 	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
+
+	"github.com/locktivity/epack/internal/jsonpointer"
 )
 
 // Check names.
@@ -149,7 +150,7 @@ func Validate(s *Schema, path string, doc any) []Finding {
 			}
 			return
 		}
-		f := Finding{Check: CheckSchema, Path: path, Pointer: pointer(e.InstanceLocation), Message: e.ErrorKind.LocalizedString(printer)}
+		f := Finding{Check: CheckSchema, Path: path, Pointer: jsonpointer.Format(e.InstanceLocation), Message: e.ErrorKind.LocalizedString(printer)}
 		if !seen[f] {
 			seen[f] = true
 			out = append(out, f)
@@ -175,8 +176,7 @@ func Resolve(doc any, ptr string) (any, bool) {
 		return nil, false
 	}
 	cur := doc
-	for _, token := range strings.Split(ptr[1:], "/") {
-		token = unescape(token)
+	for _, token := range jsonpointer.Tokens(ptr) {
 		switch node := cur.(type) {
 		case map[string]any:
 			next, ok := node[token]
@@ -185,8 +185,8 @@ func Resolve(doc any, ptr string) (any, bool) {
 			}
 			cur = next
 		case []any:
-			idx, err := strconv.Atoi(token)
-			if err != nil || idx < 0 || idx >= len(node) || (len(token) > 1 && token[0] == '0') {
+			idx, ok := jsonpointer.Index(token)
+			if !ok || idx >= len(node) {
 				return nil, false
 			}
 			cur = node[idx]
@@ -195,23 +195,6 @@ func Resolve(doc any, ptr string) (any, bool) {
 		}
 	}
 	return cur, true
-}
-
-func pointer(tokens []string) string {
-	var sb strings.Builder
-	for _, t := range tokens {
-		sb.WriteByte('/')
-		sb.WriteString(escape(t))
-	}
-	return sb.String()
-}
-
-func escape(token string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(token, "~", "~0"), "/", "~1")
-}
-
-func unescape(token string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(token, "~1", "/"), "~0", "~")
 }
 
 // pattern compiles a patternProperties key once per schema. A pattern Go

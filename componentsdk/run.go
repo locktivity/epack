@@ -33,6 +33,17 @@ type run struct {
 	// step's title.
 	status func(string)
 
+	// unrecognized holds the values the run read that are not in its
+	// vocabularies. See Vocabulary.Seen.
+	unrecognized unrecognizedLog
+
+	// collector is the collector's published name, CollectorSpec.Name,
+	// which may differ from the name it is configured under.
+	collector string
+
+	// collect is what the collect config key did in the run.
+	collect collectState
+
 	mu        sync.Mutex
 	rng       *rand.Rand
 	hostLists [][]string
@@ -45,17 +56,18 @@ func newRun(spec CollectorSpec, name, runID string, base http.RoundTripper, seed
 		name = spec.Name
 	}
 	return &run{
-		name:    name,
-		version: spec.Version,
-		commit:  spec.Commit,
-		runID:   runID,
-		started: time.Now(),
-		base:    base,
-		calls:   newLedger(),
-		records: &Recorder{},
-		secrets: &secretSet{},
-		clock:   time.Now,
-		rng:     rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
+		name:      name,
+		version:   spec.Version,
+		collector: spec.Name,
+		commit:    spec.Commit,
+		runID:     runID,
+		started:   time.Now(),
+		base:      base,
+		calls:     newLedger(),
+		records:   &Recorder{},
+		secrets:   &secretSet{},
+		clock:     time.Now,
+		rng:       rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
 	}
 }
 

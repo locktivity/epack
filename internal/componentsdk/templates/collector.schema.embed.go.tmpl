@@ -1,6 +1,7 @@
 // Package schema embeds the JSON Schema of the collector's artifact, which
-// the collector checks its output against when it emits, and its trace map,
-// which the SDK writes into the build file of every pack.
+// the collector checks its output against when it emits, the schema of its
+// config, which the SDK checks the config against before Run, and its trace
+// map, which the SDK writes into the build file of every pack.
 package schema
 
 import _ "embed"
@@ -9,6 +10,12 @@ import _ "embed"
 //
 //go:embed v1.0.0.json
 var Artifact []byte
+
+// Config is the schema in config.json, which the SDK checks the collector's
+// config against before Run.
+//
+//go:embed config.json
+var Config []byte
 
 // TraceMap is the map in trace-map.json, which links each field of the
 // artifact to the calls and the code behind it. `make trace-map` rewrites it.

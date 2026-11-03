@@ -17,7 +17,7 @@ type gapLog struct {
 
 // notCollected records the value at pointer as left out because of err.
 // opts add details, such as the permission a permission_denied gap lacks.
-func (l gapLog) notCollected(err error, pointer string, opts ...componentsdk.GapOption) {
+func (l gapLog) notCollected(err error, pointer string, opts ...componentsdk.AdviceOption) {
 	l.rec.Helper()
 	l.rec.NotCollected(location(pointer), err, opts...)
 }

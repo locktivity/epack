@@ -81,6 +81,7 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		"internal/collector/recording_scrub_test.go",
 		"internal/demo/client.go",
 		"docs/schema/v1.0.0.json",
+		"docs/schema/config.json",
 		"docs/schema/embed.go",
 		"docs/schema/trace-map.json",
 		"docs/levels.md",
@@ -107,9 +108,10 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		`"github.com/acme/epack-collector-demo/docs/schema"`,
 		`"github.com/acme/epack-collector-demo/internal/demo"`,
 		`tokenEnv = "DEMO_API_TOKEN"`,
-		"Timeout:     5 * time.Minute,",
-		"Schemas:     map[string][]byte{artifactPath: schema.Artifact},",
-		"TraceMap:    schema.TraceMap,",
+		"Timeout:      5 * time.Minute,",
+		"Schemas:      map[string][]byte{artifactPath: schema.Artifact},",
+		"TraceMap:     schema.TraceMap,",
+		"ConfigSchema: schema.Config,",
 		"CredentialHosts: []string{demo.Host},",
 		"VendorCode:      demo.VendorCode,",
 	} {
@@ -118,7 +120,7 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 		}
 	}
 	client := readFile(t, dir, "internal/demo/client.go")
-	if !strings.Contains(client, "package demo\n") || !strings.Contains(client, "componentsdk.WithOperation(ctx, componentsdk.Operation{Name: op})") {
+	if !strings.Contains(client, "package demo\n") || !strings.Contains(client, "componentsdk.WithOperation(ctx, componentsdk.Operation{Name: op, Permission: permissions[op]})") {
 		t.Error("client.go should name each call it makes")
 	}
 	if !strings.Contains(client, "componentsdk.ResponseError(resp, &APIError{") || !strings.Contains(client, "func VendorCode(_ *http.Response, body []byte) string {") {

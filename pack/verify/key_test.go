@@ -8,10 +8,12 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/locktivity/epack/sign/sigstore"
+	"github.com/sigstore/sigstore-go/pkg/root"
 )
 
 func keySignedBundle(t *testing.T, key *ecdsa.PrivateKey) []byte {
@@ -52,7 +54,6 @@ func TestSigstoreVerifier_VerifiesAKeySignatureWithTheProvidedKey(t *testing.T) 
 		WithOffline(),
 		WithTrustedRoot(mustLoadTestTrustedRoot(t)),
 		WithTransparencyLogThreshold(0),
-		WithInsecureSkipIdentityCheck(),
 		WithPublicKeys(other.Public(), key.Public()),
 	)
 	if err != nil {
@@ -85,7 +86,6 @@ func TestSigstoreVerifier_RejectsAKeySignatureFromAnUnknownKey(t *testing.T) {
 		WithOffline(),
 		WithTrustedRoot(mustLoadTestTrustedRoot(t)),
 		WithTransparencyLogThreshold(0),
-		WithInsecureSkipIdentityCheck(),
 		WithPublicKeys(newTestKey(t).Public()),
 	)
 	if err != nil {
@@ -106,7 +106,6 @@ func TestSigstoreVerifier_NamesTheMissingKeyForAKeySignature(t *testing.T) {
 		WithOffline(),
 		WithTrustedRoot(mustLoadTestTrustedRoot(t)),
 		WithTransparencyLogThreshold(0),
-		WithInsecureSkipIdentityCheck(),
 	)
 	if err != nil {
 		t.Fatalf("NewSigstoreVerifier: %v", err)
@@ -137,5 +136,117 @@ func TestSigstoreVerifier_KeySignatureCannotMeetAnIssuerPolicy(t *testing.T) {
 	_, err = verifier.Verify(context.Background(), bundleJSON)
 	if err == nil || !strings.Contains(err.Error(), "cannot satisfy an issuer or subject policy") {
 		t.Fatalf("Verify = %v", err)
+	}
+}
+
+func TestSigstoreVerifier_NamesTheMissingLogEntryForAKeySignature(t *testing.T) {
+	t.Parallel()
+
+	key := newTestKey(t)
+	bundleJSON := keySignedBundle(t, key)
+
+	verifier, err := NewSigstoreVerifier(
+		WithOffline(),
+		WithTrustedRoot(mustLoadTestTrustedRoot(t)),
+		WithPublicKeys(key.Public()),
+	)
+	if err != nil {
+		t.Fatalf("NewSigstoreVerifier: %v", err)
+	}
+	_, err = verifier.Verify(context.Background(), bundleJSON)
+	if err == nil || !strings.Contains(err.Error(), "not recorded in a transparency log") {
+		t.Fatalf("Verify = %v, want it to name the missing log entry", err)
+	}
+}
+
+func TestSigstoreVerifier_PublicKeysAreNoPolicyForACertificate(t *testing.T) {
+	t.Parallel()
+
+	bundleJSON, err := os.ReadFile("testdata/sigstore-js-provenance.sigstore.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifier, err := NewSigstoreVerifier(
+		WithOffline(),
+		WithTrustedRoot(mustLoadTestTrustedRoot(t)),
+		WithPublicKeys(newTestKey(t).Public()),
+	)
+	if err != nil {
+		t.Fatalf("NewSigstoreVerifier: %v", err)
+	}
+	_, err = verifier.Verify(context.Background(), bundleJSON)
+	if err == nil || !strings.Contains(err.Error(), "identity policy required") {
+		t.Fatalf("Verify = %v, want a certificate to still need an issuer or subject", err)
+	}
+}
+
+func TestSigstoreVerifier_SkipsTheLogForKeySignaturesOnly(t *testing.T) {
+	t.Parallel()
+
+	key := newTestKey(t)
+	certBundle, err := os.ReadFile("testdata/sigstore-js-provenance.sigstore.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifier, err := NewSigstoreVerifier(
+		WithOffline(),
+		WithTrustedRoot(mustLoadTestTrustedRoot(t)),
+		WithInsecureSkipIdentityCheck(),
+		WithPublicKeys(key.Public()),
+		WithInsecureSkipTlogForKeys(),
+	)
+	if err != nil {
+		t.Fatalf("NewSigstoreVerifier: %v", err)
+	}
+	if _, err := verifier.Verify(context.Background(), keySignedBundle(t, key)); err != nil {
+		t.Fatalf("Verify(key signature without a log entry): %v", err)
+	}
+	result, err := verifier.Verify(context.Background(), certBundle)
+	if err != nil {
+		t.Fatalf("Verify(certificate signature): %v", err)
+	}
+	if len(result.Timestamps) == 0 {
+		t.Fatal("certificate verified without its log timestamp, want the log still required")
+	}
+}
+
+func TestNewSigstoreVerifier_FetchesTheTrustedRootOnlyWhenNeeded(t *testing.T) {
+	orig := liveTrustedRoot
+	t.Cleanup(func() { liveTrustedRoot = orig })
+	var fetches int
+	liveTrustedRoot = func() (root.TrustedMaterial, error) {
+		fetches++
+		return mustLoadTestTrustedRoot(t), nil
+	}
+
+	key := newTestKey(t)
+	tests := []struct {
+		name string
+		opts []Option
+		want int
+	}{
+		{name: "key, skipping the log", opts: []Option{WithPublicKeys(key.Public()), WithInsecureSkipTlogForKeys()}, want: 0},
+		{name: "key, requiring the log", opts: []Option{WithPublicKeys(key.Public())}, want: 1},
+		{name: "key, requiring a signed timestamp", opts: []Option{WithPublicKeys(key.Public()), WithInsecureSkipTlogForKeys(), WithTimestampAuthorityThreshold(1)}, want: 1},
+		{name: "certificate identity", opts: []Option{WithIssuer("https://accounts.google.com"), WithPublicKeys(key.Public()), WithInsecureSkipTlogForKeys()}, want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fetches = 0
+			verifier, err := NewSigstoreVerifier(tt.opts...)
+			if err != nil {
+				t.Fatalf("NewSigstoreVerifier: %v", err)
+			}
+			if fetches != tt.want {
+				t.Fatalf("fetched the trusted root %d times, want %d", fetches, tt.want)
+			}
+			if tt.want == 0 {
+				if _, err := verifier.Verify(context.Background(), keySignedBundle(t, key)); err != nil {
+					t.Fatalf("Verify: %v", err)
+				}
+			}
+		})
 	}
 }

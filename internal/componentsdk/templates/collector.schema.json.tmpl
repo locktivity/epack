@@ -5,7 +5,7 @@
   "description": "The artifact {{.BinaryName}} emits at artifacts/{{.Name}}.json. The x-epack keywords say what each value means. The collector checks its output against this schema when it emits.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "collected_at", "collected_at_level", "organization"],
+  "required": ["schema_version", "collected_at", "organization"],
   "properties": {
     "schema_version": {
       "type": "string",
@@ -14,10 +14,6 @@
     "collected_at": {
       "type": "string",
       "format": "date-time"
-    },
-    "collected_at_level": {
-      "type": "string",
-      "enum": ["trust", "audit", "internal"]
     },
     "organization": {
       "type": "object",
@@ -32,7 +28,8 @@
         },
         "mfa_required": {
           "type": "boolean",
-          "description": "Whether the organization requires every user to enroll an MFA factor."
+          "description": "Whether the organization requires every user to enroll an MFA factor.",
+          "x-epack-method": "Reads the organization's MFA enrollment setting."
         }
       }
     },
@@ -45,12 +42,14 @@
         "total_count": {
           "type": "integer",
           "minimum": 0,
+          "x-epack-method": "Counts the users the user list returns, every page included.",
           "x-epack-rollup": {"rows": "inventory", "as": "count"}
         },
         "mfa_enabled_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "description": "Users with an active MFA factor. Null, with a partial gap, when some user's factors could not be read.",
+          "x-epack-method": "Counts the users whose factor list has at least one active factor.",
           "x-epack-rollup": {"rows": "inventory", "where": "/mfa_enabled", "as": "count"}
         },
         "mfa_enabled_pct": {
@@ -58,6 +57,7 @@
           "minimum": 0,
           "maximum": 100,
           "description": "Percentage of users with an active MFA factor, rounded down. Null when there are no users, or, with a partial gap, when some user's factors could not be read.",
+          "x-epack-method": "Divides mfa_enabled_count by total_count.",
           "x-epack-denominator": "total_count",
           "x-epack-numerator": "mfa_enabled_count",
           "x-epack-rounding": "floor",
@@ -80,7 +80,8 @@
               },
               "mfa_enabled": {
                 "type": ["boolean", "null"],
-                "description": "Whether the user has an active MFA factor. Null, with a gap, when the user's factors could not be read."
+                "description": "Whether the user has an active MFA factor. Null, with a gap, when the user's factors could not be read.",
+                "x-epack-method": "Reads the user's factor list and checks for an active factor."
               }
             }
           }

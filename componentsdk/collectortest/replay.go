@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/locktivity/epack/componentsdk"
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 // Scenario is one state of a tenant, as canned responses, DNS records, and
@@ -127,6 +127,8 @@ type Replay struct {
 	unmatched []string
 	answers   *answerLog
 	codec     BodyCodec
+	// pages keeps the run's requests and the next pages its answers offered.
+	pages pageLog
 }
 
 // NewReplay returns a Replay of s's responses. It fails when a response has
@@ -189,6 +191,8 @@ func (r *Replay) RoundTrip(req *http.Request) (*http.Response, error) {
 	op, _ := componentsdk.OperationOf(req.Context())
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	raw := readRequestBody(req)
+	r.pages.ask(op.Name, req.URL, raw)
 	var body any
 	bodyRead, bodyOK := false, false
 	for _, e := range r.entries {
@@ -201,7 +205,7 @@ func (r *Replay) RoundTrip(req *http.Request) (*http.Response, error) {
 		if e.hasBody {
 			if !bodyRead {
 				bodyRead = true
-				body, bodyOK = requestBody(req, op.Name, r.codec)
+				body, bodyOK = requestBody(raw, req.Header, op.Name, r.codec)
 			}
 			if !bodyOK || !containsJSON(body, e.body) {
 				continue
@@ -212,6 +216,7 @@ func (r *Replay) RoundTrip(req *http.Request) (*http.Response, error) {
 		e.hosts[strings.ToLower(req.URL.Hostname())] = true
 		resp := e.response(req)
 		r.answers.note(req.Context(), componentsdk.ClassifyResponse(resp))
+		r.pages.answer(op.Name, resp, e.resp.Body)
 		return resp, nil
 	}
 	r.unmatched = append(r.unmatched, fmt.Sprintf("%s %s (operation %s)", req.Method, describeURL(req.URL), opName(op)))
@@ -245,19 +250,28 @@ func (e *replayEntry) matches(req *http.Request, op string) bool {
 	return !e.hasQuery || sameQuery(e.target.Query(), u.Query())
 }
 
-// requestBody reads req's body as the JSON codec decodes it to, as JSON, or,
-// for a form-encoded request, as an object of its fields. The replay is the
-// last transport the request reaches, so it may consume the body.
-func requestBody(req *http.Request, op string, codec BodyCodec) (any, bool) {
+// readRequestBody reads req's body. The replay is the last transport the
+// request reaches, so it may consume the body.
+func readRequestBody(req *http.Request) []byte {
 	if req.Body == nil || req.Body == http.NoBody {
-		return nil, false
+		return nil
 	}
 	raw, err := io.ReadAll(req.Body)
 	_ = req.Body.Close()
 	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// requestBody decodes a request's body. It reads the JSON the codec decodes
+// the body to, or the body itself as JSON. A form-encoded body becomes an
+// object of its fields.
+func requestBody(raw []byte, header http.Header, op string, codec BodyCodec) (any, bool) {
+	if raw == nil {
 		return nil, false
 	}
-	decoded, err := decodeRequest(codec, op, req.Header, raw)
+	decoded, err := decodeRequest(codec, op, header, raw)
 	if err != nil {
 		return nil, false
 	}
@@ -267,7 +281,7 @@ func requestBody(req *http.Request, op string, codec BodyCodec) (any, bool) {
 	if doc, err := outputcheck.Decode(raw); err == nil {
 		return doc, true
 	}
-	if !strings.HasPrefix(req.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+	if !strings.HasPrefix(header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 		return nil, false
 	}
 	form, err := url.ParseQuery(string(raw))

@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	"github.com/locktivity/epack/componentsdk"
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 // checkLevels runs the clean scenario at each collection level. What one

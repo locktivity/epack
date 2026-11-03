@@ -9,8 +9,10 @@ type Config struct {
 	Organization string
 }
 
-// ParseConfig reads Config from the collector's config. A missing or
-// malformed field is an error, which Run reports as a config error (exit 2).
+// ParseConfig reads Config from the collector's config. The SDK has already
+// checked the config against docs/schema/config.json, so a config that
+// reaches it matches. A missing or malformed field is still an error, which
+// Run reports as a config error (exit 2).
 func ParseConfig(raw map[string]any) (Config, error) {
 	organization, ok := raw["organization"].(string)
 	if !ok || organization == "" {

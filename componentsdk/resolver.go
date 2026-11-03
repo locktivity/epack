@@ -96,7 +96,7 @@ func lookup[T any](ctx context.Context, r *Resolver, defaultOp, qtype, name stri
 	host := strings.TrimSuffix(strings.ToLower(name), ".")
 	r.run.calls.addCall(call, "DNS "+qtype, host, rcode, code, r.run.now().Sub(call.started))
 	if err != nil && rcode != rcodeNXDomain {
-		return answer, &callError{err: err, operation: op.Name, call: call.number}
+		return answer, &callError{err: err, responseCall: responseCall{operation: op.Name, call: call.number}}
 	}
 	return answer, err
 }

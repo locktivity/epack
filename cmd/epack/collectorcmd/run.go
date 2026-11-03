@@ -140,13 +140,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	// Print collector results regardless of error
 	if result != nil {
-		for _, r := range result.CollectorResults {
-			if !r.Success {
-				out.Print("  FAILED %s: %v\n", r.Collector, r.Error)
-			} else {
-				out.Print("  collected %s\n", r.Collector)
-			}
-		}
+		printCollectorResults(out, result.CollectorResults)
 	}
 
 	if err != nil {

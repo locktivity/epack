@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/locktivity/epack/internal/jsonpointer"
 )
 
 // sdkPackage is the SDK collectors emit their artifacts through.
@@ -270,7 +272,7 @@ func (a *analysis) fieldsAt(root types.Type, pattern string) []*types.Var {
 		}
 		switch u := t.Underlying().(type) {
 		case *types.Struct:
-			f := jsonField(u, unescapeToken(token))
+			f := jsonField(u, jsonpointer.Unescape(token))
 			if f == nil {
 				return nil
 			}
@@ -656,10 +658,6 @@ func callsBuiltin(info *types.Info, call *ast.CallExpr, name string) bool {
 	}
 	b, ok := info.Uses[id].(*types.Builtin)
 	return ok && b.Name() == name
-}
-
-func unescapeToken(t string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(t, "~1", "/"), "~0", "~")
 }
 
 // marshalsItself reports whether t, or a pointer to it, encodes itself, so

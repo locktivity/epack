@@ -5,10 +5,11 @@
   "required": ["org"],
   "properties": {
     "org": { "type": "string" },
-    "mfa_enforced": { "type": ["boolean", "null"] },
+    "mfa_enforced": { "type": ["boolean", "null"], "x-epack-method": "Reads the organization's MFA requirement." },
     "users": {
       "type": ["integer", "null"],
       "minimum": 0,
+      "x-epack-method": "Counts the users the user list returns, every page included.",
       "x-epack-rollup": { "rows": "user_mfa", "as": "count" }
     },
     "mfa_pct": {
@@ -16,9 +17,10 @@
       "minimum": 0,
       "maximum": 100,
       "x-epack-denominator": "users",
+      "x-epack-method": "Divides the users with MFA on by users.",
       "x-epack-rollup": { "rows": "user_mfa", "where": "/mfa", "as": "pct" }
     },
-    "score": { "type": ["integer", "null"] },
+    "score": { "type": ["integer", "null"], "x-epack-method": "Reads the organization's security score." },
     "user_mfa": {
       "type": "array",
       "x-epack-level": "audit",

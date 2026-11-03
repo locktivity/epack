@@ -32,6 +32,11 @@
       "additionalProperties": { "type": ["object", "boolean"] },
       "description": "The JSON Schema each data artifact was checked against, keyed as the collector's spec keys them, by artifact path or schema ID. An artifact of a normalized type with no schema here was checked against the SDK's own schema for its type."
     },
+    "writes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The schema IDs of the artifacts the collector can write, sorted, such as evidencepack/vcs-posture@v1. Absent for a collector that lists none."
+    },
     "trace_map": {
       "$ref": "#/$defs/trace_map",
       "description": "The collector's trace map, which links each field to the calls and the code behind it. Absent for a collector without one."

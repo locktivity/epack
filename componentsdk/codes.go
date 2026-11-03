@@ -3,7 +3,7 @@ package componentsdk
 import "github.com/locktivity/epack/internal/componenttypes"
 
 // Code says why a value could not be collected. Every collector uses the same
-// nine codes, so a reader can tell whose move it is without knowing the
+// ten codes, so a reader can tell whose move it is without knowing the
 // collector.
 type Code string
 
@@ -29,6 +29,10 @@ const (
 	CodeInvalidResponse Code = "invalid_response"
 	// CodeInternal means a bug in the collector.
 	CodeInternal Code = "internal"
+	// CodeNotShared means the customer left the value out of this pack with
+	// the collect config key. Only the SDK records it, and it never fails
+	// a run.
+	CodeNotShared Code = "not_shared"
 )
 
 // Owner is the party that can act on a code.
@@ -58,17 +62,18 @@ var codeOwners = map[Code]Owner{
 	CodeTimeout:          OwnerVendorOrRunner,
 	CodeInvalidResponse:  OwnerPublisher,
 	CodeInternal:         OwnerPublisher,
+	CodeNotShared:        OwnerNobody,
 }
 
 // Codes lists every code, in the order the protocol documents them.
 func Codes() []Code {
 	return []Code{
 		CodeAuthFailed, CodePermissionDenied, CodeConfigInvalid, CodeNotLicensed,
-		CodeRateLimited, CodeVendorError, CodeTimeout, CodeInvalidResponse, CodeInternal,
+		CodeRateLimited, CodeVendorError, CodeTimeout, CodeInvalidResponse, CodeInternal, CodeNotShared,
 	}
 }
 
-// Valid reports whether c is one of the nine codes.
+// Valid reports whether c is one of the ten codes.
 func (c Code) Valid() bool {
 	_, ok := codeOwners[c]
 	return ok

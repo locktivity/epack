@@ -99,7 +99,7 @@ Collectors gather evidence from external systems and output structured JSON.
 | COL-077 | SHOULD | Run steps be named once each, listed in start order, end no earlier than they start, and count their calls consistently |
 | COL-078 | SHOULD | A gap's operation be one the result counts, its call have rows when no failed row was dropped, and a missing permission sit only on a `permission_denied` gap |
 | COL-079 | MUST | A build file (`evidencepack/collector-build@v1`) match its schema and name the collector result's version and commit |
-| COL-080 | MUST | At the trust level, the collector result hold no request rows, gap warnings or error text, or principal ID |
+| COL-080 | MUST | At the trust level, the collector result hold no request rows or principal ID, no gap warning, error text, or scope, and no run warning message or scope. When its operations carry `retried`, the result must also hold no tenant, no call or step counts, no step times, and no gap call number or unmeasured count. Fixes, choices, no-action flags, and missing permissions may appear |
 
 **Protocol envelope format:**
 ```json

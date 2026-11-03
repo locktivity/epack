@@ -291,7 +291,6 @@ func TestPopulation(t *testing.T) {
 	}
 	quiet := []string{
 		`{"users": 0, "mfa_pct": null}`,
-		`{"users": 0}`,
 		`{"users": 3, "mfa_pct": 100}`,
 		`{"mfa_pct": 100}`,
 	}
@@ -305,6 +304,108 @@ func TestPopulation(t *testing.T) {
 	}
 	if got := findingsOf(t, metricsSchema, `{"users": 0, "mfa_pct": 100}`, Gap{Path: "other.json", Pointer: "/users"}); len(got) != 1 {
 		t.Errorf("a gap in another artifact covers nothing here, got %+v", got)
+	}
+}
+
+// presentSchema stands in for a trust-level artifact. The artifact leaves
+// the count out and uses a boolean to show whether there is anyone to count.
+const presentSchema = `{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"users_present": {"type": ["boolean", "null"]},
+		"users": {"type": ["integer", "null"], "x-epack-level": "audit"},
+		"mfa_pct": {"type": ["integer", "null"], "x-epack-denominator": "users", "x-epack-present": "users_present"}
+	}
+}`
+
+func TestPresentStandsInForTheDenominator(t *testing.T) {
+	got := findingsOf(t, presentSchema, `{"users_present": false, "mfa_pct": 100}`)
+	if len(got) != 1 || got[0].Check != CheckPopulation || got[0].Pointer != "/mfa_pct" {
+		t.Fatalf("findings = %+v, want one population finding at /mfa_pct", got)
+	}
+	if !strings.Contains(got[0].Message, "value 100") || !strings.Contains(got[0].Message, "/users_present") {
+		t.Errorf("message = %q", got[0].Message)
+	}
+	quiet := []string{
+		`{"users_present": false, "mfa_pct": null}`,
+		`{"users_present": true, "mfa_pct": 100}`,
+		`{"mfa_pct": 100}`,
+	}
+	for _, doc := range quiet {
+		if got := findingsOf(t, presentSchema, doc); len(got) != 0 {
+			t.Errorf("%s: findings %+v", doc, got)
+		}
+	}
+	if got := findingsOf(t, presentSchema, `{"users_present": true, "mfa_pct": null}`); strings.Join(pointersOf(got, CheckNulls), ",") != "/mfa_pct" {
+		t.Errorf("a population that is there does not explain a null, got %+v", got)
+	}
+	if got := findingsOf(t, presentSchema, `{"users_present": false, "mfa_pct": 100}`, Gap{Path: "a.json", Pointer: "/users_present"}); len(got) != 0 {
+		t.Errorf("a present flag a gap covers is skipped, got %+v", got)
+	}
+}
+
+func TestAValueOverAnUnreadPopulationIsLeftOut(t *testing.T) {
+	usersGap := Gap{Path: "a.json", Pointer: "/users"}
+	cases := []struct {
+		name, schema, doc string
+		gaps              []Gap
+		want              string
+	}{
+		{"a null denominator", metricsSchema, `{"users": null, "mfa_pct": 0}`, []Gap{usersGap}, "/mfa_pct"},
+		{"a denominator a gap left out", metricsSchema, `{"mfa_pct": 0}`, []Gap{usersGap}, "/mfa_pct"},
+		{"a null present flag", presentSchema, `{"users_present": null, "mfa_pct": 100}`, []Gap{{Path: "a.json", Pointer: "/users_present"}}, "/mfa_pct"},
+	}
+	for _, tc := range cases {
+		got := findingsOf(t, tc.schema, tc.doc, tc.gaps...)
+		if strings.Join(pointersOf(got, CheckPopulation), ",") != tc.want || len(got) != 1 {
+			t.Errorf("%s: findings %+v, want one population finding at %s", tc.name, got, tc.want)
+			continue
+		}
+		if !strings.Contains(got[0].Message, "was not read") {
+			t.Errorf("%s: message = %q", tc.name, got[0].Message)
+		}
+	}
+	quiet := []struct {
+		name, schema, doc string
+		gaps              []Gap
+	}{
+		{"the value left out too", metricsSchema, `{"users": null}`, []Gap{usersGap}},
+		{"the value null, explained by its denominator", metricsSchema, `{"users": null, "mfa_pct": null}`, []Gap{usersGap}},
+		{"the value under a gap of its own", metricsSchema, `{"users": null, "mfa_pct": 0}`, []Gap{usersGap, {Path: "a.json", Pointer: "/mfa_pct"}}},
+		{"a denominator the level leaves out", presentSchema, `{"users_present": true, "mfa_pct": 100}`, nil},
+	}
+	for _, tc := range quiet {
+		if got := findingsOf(t, tc.schema, tc.doc, tc.gaps...); len(got) != 0 {
+			t.Errorf("%s: findings %+v, want none", tc.name, got)
+		}
+	}
+}
+
+func TestAValueOverNoPopulationIsWrittenAsNull(t *testing.T) {
+	cases := []struct {
+		name, schema, doc string
+		gaps              []Gap
+		want              string
+	}{
+		{"a denominator of 0", metricsSchema, `{"users": 0}`, nil, "/mfa_pct"},
+		{"a present flag of false", presentSchema, `{"users_present": false}`, nil, "/mfa_pct"},
+		{"a nested denominator of 0", metricsSchema, `{"summary": {"weak_pct": 5}, "totals": {"weak": 0}, "admins_total": 0}`, nil, "/summary/weak_pct,/summary/admins_pct"},
+		{"a gap at the value", metricsSchema, `{"users": 0}`, []Gap{{Path: "a.json", Pointer: "/mfa_pct"}}, ""},
+		{"a gap covers the denominator", metricsSchema, `{"users": 0}`, []Gap{{Path: "a.json", Pointer: "/users"}}, ""},
+		{"the population is there", metricsSchema, `{"users": 4}`, nil, ""},
+		{"the denominator is not written", metricsSchema, `{}`, nil, ""},
+		{"the denominator is unknown", metricsSchema, `{"users": null}`, []Gap{{Path: "a.json", Pointer: "/users"}}, ""},
+	}
+	for _, tc := range cases {
+		got := strings.Join(pointersOf(findingsOf(t, tc.schema, tc.doc, tc.gaps...), CheckPopulation), ",")
+		if got != tc.want {
+			t.Errorf("%s: population findings %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	trust := Check(mustCompile(t, presentSchema), "a.json", mustDecode(t, `{"users_present": true}`), nil, "trust")
+	if len(trust) != 0 {
+		t.Errorf("a value left out where the population is there is not a population finding: %+v", trust)
 	}
 }
 

@@ -213,7 +213,7 @@ Levels are **cumulative**: `audit` is a strict superset of `trust`, and `interna
 
 ### Artifact convention
 
-Collectors that honor `level` should record the level they ran at on their top-level output as `collected_at_level: "<level>"`. Downstream tools rely on this to interpret missing fields: a profile evaluator needs to know whether the absence of `iam_users` means "no IAM users exist" or "this pack was collected at trust level."
+The collector result records the level the run collected at as `run.level`, at every level. Downstream tools rely on it to interpret missing fields: a profile evaluator needs to know whether the absence of `iam_users` means "no IAM users exist" or "this pack was collected at trust level." It covers every artifact the run wrote, including a run that wrote no artifact of its own, so a collector's files do not need to record the level. Older collectors wrote `collected_at_level` on their top-level output, and a reader may fall back to it for results from SDKs before `run.level`.
 
 ### SDK helpers
 
@@ -230,6 +230,37 @@ if level.AtLeast(componentsdk.LevelInternal) {
 ```
 
 `componentsdk.Level` is a string type with constants `LevelTrust`, `LevelAudit`, and `LevelInternal`. `Level.AtLeast(other)` implements the ordinal `trust < audit < internal` comparison. The SDK's `ctx.Level()` reader applies the default-and-downgrade rules above so individual collectors do not reimplement them.
+
+### A whole artifact's level
+
+A collector's schema can set `x-epack-level` at its root to mark the whole artifact for a level. A collector whose normalized artifact carries what profiles read marks its detailed schema `audit`, so a trust run leaves the detailed file out. The normalized values copied from it stay. The SDK leaves such an artifact out of a run below its level, as it would a field, and drops the gaps inside it. A gap that `Recorder.Mirror` copied to a normalized value stays with that value. A collector with no normalized artifact keeps its detailed artifact at trust, and each field's level decides what appears.
+
+## Choosing What to Collect
+
+A second reserved config key, `collect`, lists the kinds of evidence a collector collects, so `epack.yaml` says what each tool contributes. A kind is the name in a schema ID, such as `cloud-posture` for `evidencepack/cloud-posture@v1`. A collector's own detailed file has no schema ID and goes by the collector's name.
+
+```yaml
+collectors:
+  aws:
+    source: locktivity/epack-collector-aws@^1
+    config:
+      level: trust
+      collect: [cloud-posture]
+  github:
+    source: locktivity/epack-collector-github@^0.4
+    config:
+      level: audit
+      collect: [vcs-posture, github]
+```
+
+- The key is **optional**. Without it, a collector collects every kind its level allows. The app always writes it, so a kind a collector upgrade adds is not collected until someone lists it.
+- It applies at every level, and the level still decides what a kind holds. Listing a detailed file that its schema marks `audit` does not put it in a `trust` pack.
+- A key that is not a list of kinds fails the run with `config_invalid` and exit 2. The SDK does not check that the collector writes each kind listed, since some collectors learn their kinds only as they run. The result artifact's `collect` lists each kind the run never wrote as `unmatched`, which shows a misspelled kind, and `epack collect` prints a warning for each. An empty list collects nothing, and the run writes only the build file and the result artifact.
+- Each kind the key leaves out gets a gap on the whole file with the code `not_shared`. The result artifact's `collect` lists what the key named and what it left out.
+- When the key leaves out a normalized kind, each value `Recorder.Mirror` copied from it into a file the run writes is removed too, with a `not_shared` gap. Leaving out a collector's detailed file leaves out only that file, and the normalized values copied from it stay.
+- A `not_shared` gap does not make a run partial, since the customer chose it.
+
+Collectors call `componentsdk.Selected(ctx, at)` before the calls that feed only one kind. It is false for a kind the key leaves out, and the SDK then records that kind as not shared. It is also false for a file whose schema marks it for a higher level than the run. `Emit` leaves out such a file even when the collector passes it, and keeps each remaining file at the path it would have had. `componentsdk.KindOf` gives the kind of a schema ID.
 
 ## Output Convention
 
@@ -434,13 +465,13 @@ epack collect --timeout 5m
 
 A collector that signed in collects what it can. When it cannot read a value, it leaves the value out of the artifact, as an absent field or `null`, and records a gap for it. It never writes a default such as `0`, `false`, or an empty list in place of a value it could not read, because a reader cannot tell that default from a real answer. A rollup over items it read only in part, such as a percentage across users when one page of users failed, is left out the same way, with a `partial` gap that counts the items left unmeasured. The list itself may stay, holding the items that were read, with a `partial` gap of its own.
 
-A list that was read and found empty is `[]` where the schema allows it. A list that is absent with no gap means there are none, unless the schema places it above the level the collector ran at (see Collection Levels). A collector's own artifacts write a percentage over an empty population as `null`, with the count of 0 that its `x-epack-denominator` names (see Output Checks). In a normalized artifact such a percentage is absent. When a normalized schema lists the count behind a percentage, the collector writes the count, 0 for an empty population.
+A list that was read and found empty is `[]` where the schema allows it. A list that is absent with no gap means there are none, unless the schema marks it for a higher level than the collector ran at (see Collection Levels). A percentage over an empty population is `null`, in a collector's own artifacts and in a normalized one alike. The count its `x-epack-denominator` points to is then 0. Below the audit level, the field its `x-epack-present` points to is `false` instead (see Output Checks). A percentage left out with a gap is one the collector could not read. A reader can then tell an empty population from a failed read. When a normalized schema lists the count behind a percentage, the collector writes the count, and writes 0 for an empty population.
 
 A collection with gaps succeeds: the collector emits its artifacts and exits 0. A failure fails the run only when nothing collected would be worth emitting, such as invalid configuration or a rejected sign-in.
 
 ### Codes
 
-Every gap and every failure carries one of nine codes. The owner says whose move it is. The exit code is the one a collector exits with when that code fails the run.
+Every gap and every failure carries one of these codes. The owner says whose move it is. The exit code is the one a collector exits with when that code fails the run. A run never fails with `not_shared`.
 
 | Code | Owner | Exit | Meaning |
 |------|-------|------|---------|
@@ -453,10 +484,11 @@ Every gap and every failure carries one of nine codes. The owner says whose move
 | `timeout` | `vendor_or_runner` | `4` | A call, or the collection as a whole, ran out of time |
 | `invalid_response` | `publisher` | `1` | The response was not what the collector expects: an unexpected status, malformed or truncated JSON, or a missing field |
 | `internal` | `publisher` | `1` | A bug in the collector |
+| `not_shared` | `nobody` | none | The customer left the value out of this pack with the `collect` config key. Only the SDK records it |
 
 ### Collector Result
 
-SDK collectors add one artifact when they emit, at `artifacts/{collector}.collector-result.json` with schema `evidencepack/collector-result@v1`. It records what the collector left out and how it called its APIs, so a reader can tell a value that could not be read from a value that does not exist.
+SDK collectors add one artifact when they emit, at `artifacts/{collector}.collector-result.json` with schema `evidencepack/collector-result@v1`. It records what the collector left out and how it called its APIs. A reader can then tell a value that could not be read from a value that does not exist. Below the `audit` level, the result leaves out the tenant signed in to and every count and time. The number of calls a collector makes grows with what the account holds. The SDK leaves out every value that the result's schema marks with an `x-epack-level` above the level the collector ran at. When the config sets the `collect` key, the result's `collect` records it at every level (see Choosing What to Collect). The example is an `audit` result.
 
 ```json
 {
@@ -479,14 +511,14 @@ SDK collectors add one artifact when they emit, at `artifacts/{collector}.collec
   ],
   "steps": [
     {"name": "people", "title": "People and sign-in methods", "start_ms": 300, "end_ms": 2100,
-     "requests": 3, "calls": 2, "retries": 1, "failed": 1, "operations": [{"name": "users.list", "calls": 2}]},
+     "requests": 3, "calls": 2, "retries": 1, "failed": 1, "any_failed": true, "operations": [{"name": "users.list", "calls": 2}]},
     {"name": "system_log", "title": "Activity log", "start_ms": 2100, "end_ms": 2200,
-     "requests": 1, "calls": 1, "retries": 0, "failed": 1, "operations": [{"name": "logs.list", "calls": 1}]}
+     "requests": 1, "calls": 1, "retries": 0, "failed": 1, "any_failed": true, "operations": [{"name": "logs.list", "calls": 1}]}
   ],
   "calls": {
     "operations": [
-      {"name": "logs.list", "calls": 1, "attempts": 1, "retries": 0, "statuses": {"403": 1}},
-      {"name": "users.list", "calls": 2, "attempts": 3, "retries": 1, "statuses": {"200": 2, "429": 1}}
+      {"name": "logs.list", "calls": 1, "attempts": 1, "retries": 0, "retried": false, "statuses": {"403": 1}, "status_codes": ["403"]},
+      {"name": "users.list", "calls": 2, "attempts": 3, "retries": 1, "retried": true, "statuses": {"200": 2, "429": 1}, "status_codes": ["200", "429"]}
     ],
     "requests": [
       {"call": 1, "operation": "users.list", "step": "people", "method": "GET", "host": "api.example.com", "route": "/users",
@@ -503,11 +535,11 @@ SDK collectors add one artifact when they emit, at `artifacts/{collector}.collec
 ```
 
 - `outcome.status` is `collected`, or `partial` when there is a gap, with the first gap's code and owner.
-- Each gap names a value by a JSON pointer into the artifact at `path`. Its `status` is `not_collected` for a value that could not be read, or `partial` for a rollup over items read in part, or a list or object that holds only the items that were read, with `unmeasured` counting the items left out. A gap recorded from an error the SDK's client returned, or from one built with `componentsdk.ResponseError`, names the `operation` whose failed call left the value out and the call's number in `call`, matching the call on its rows. So does a gap recorded from a failed DNS lookup or dial, or from a timeout or reset on a dialed connection. A partial gap names the first failed call it counts. `source` is the line of the collector's own code that recorded the gap, relative to its module root (see `Recorder.Helper`), and `missing_permission`, on a `permission_denied` gap, is the permission to grant in the vendor's own terms. At the `audit` and `internal` levels a gap also has a redacted `detail`, the error's text, and a redacted `warning`, the collector's message to the operator. A gap `Mirror` copies keeps all of these.
-- `steps` lists the run's steps (see Calling APIs and Recording Gaps), in the order they started, at every level: each one's `name` and `title`, its `start_ms` and `end_ms` after the run's `started_at`, the `requests` sent in it, the `calls` they belong to, the `retries` among them, and the attempts that `failed`, counting rows left out of `calls.requests`, and the calls of each operation, in the order first called.
-- `calls.operations` counts each named operation's calls, attempts, retries, statuses, and error codes, with any `Deprecation` or `Sunset` header the vendor sent. A response that `HTTPOptions.ClassifyResponse` gave a code counts under its status and under that code.
+- Each gap names a value by a JSON pointer into the artifact at `path`. Its `status` is `not_collected` for a value that could not be read, or `partial` for a rollup over items read in part, or a list or object that holds only the items that were read, with `unmeasured` counting the items left out. A gap recorded from an error the SDK's client returned, or from one built with `componentsdk.ResponseError`, names the `operation` whose failed call left the value out and the call's number in `call`, matching the call on its rows. So does a gap recorded from a failed DNS lookup or dial, or from a timeout or reset on a dialed connection. A partial gap names the first failed call it counts. `source` is the line of the collector's own code that recorded the gap, relative to its module root (see `Recorder.Helper`), and `missing_permission`, on a `permission_denied` gap, is the permission to grant in the vendor's own terms. At the `audit` and `internal` levels a gap also has `unmeasured`, its `call`, a redacted `detail`, the error's text, and a redacted `warning`, the collector's message to the operator. A gap `Mirror` copies keeps all of these.
+- `steps` lists the run's steps (see Calling APIs and Recording Gaps), in the order they started, at every level: each one's `name` and `title`, `any_failed`, true when an attempt in it failed, and the operations called in it, in the order first called. At the `audit` and `internal` levels a step also has its `start_ms` and `end_ms` after the run's `started_at`, the `requests` sent in it, the `calls` they belong to, the `retries` among them, and the attempts that `failed`, counting rows left out of `calls.requests`, and each operation's calls.
+- `calls.operations` lists each named operation with `retried`, true when one of its requests was a retry, the `status_codes` and `error_codes` its attempts got, and any `Deprecation` or `Sunset` header the vendor sent. At the `audit` and `internal` levels it also counts the operation's calls, attempts, retries, statuses, and error codes. A response that `HTTPOptions.ClassifyResponse` gave a code counts under its status and under that code.
 - At the `audit` and `internal` levels, `calls.requests` adds a row per request: the number of its `call`, from 1 in the order calls start and the same for each attempt of one call; its operation and `step`; its route with IDs replaced by `{id}` and its query keys without values; its `attempt`; `start_ms`, when it was sent after the run's `started_at`; on a retry, `waited_ms`, how long the SDK waited for a `Retry-After`, a rate limit reset, or its own backoff; its status and error code; the vendor's own error code, as `HTTPOptions.VendorCode` reads it, and never the vendor's message, which can name a resource; its duration; and the vendor's request ID. The first 1,000 rows are kept, and after them up to 1,000 more whose attempt failed, with an error code or a status of 400 or more, or was a retry. `requests_dropped` counts every row left out and `problem_requests_dropped` the failed and retried rows among them, so a 0 there means every problem in the run has a row. DNS lookups and dials count the same way, with a call, start, and step of their own (see DNS Lookups and Connections). Times come from the run's clock and waits from its jitter, which the test kit fixes and seeds, so two kit runs of one scenario match byte for byte.
-- `signed_in_as` is the principal the collector signed in as. `auth_method` says how it proved its identity, `requested_scopes` lists the scopes it asked for, of which one missing from `scopes` was not granted, and `read_only` is true when the collector can show that its credential could only read. Its `id` is included at the `audit` and `internal` levels.
+- `signed_in_as` is the principal the collector signed in as. `auth_method` says how it proved its identity, `requested_scopes` lists the scopes it asked for, of which one missing from `scopes` was not granted, and `read_only` is true when the collector can show that its credential could only read. Its `tenant_id` and `id` are included at the `audit` and `internal` levels.
 - `run.proxy` and `run.custom_ca` say whether a proxy or a custom CA bundle was configured.
 - `checks` lists what the output checks found in the collector's artifacts (see Output Checks). It is left out when they found nothing.
 
@@ -571,6 +603,26 @@ var TraceMap []byte
 
 `CollectorSpec.TraceMap` takes it. `epack sdk map` writes it to `docs/schema/trace-map.json`, or the path `--out` names relative to the module root. It runs the module's tests with `COLLECTORTEST_MAP` set, so each collectortest suite writes what its fault matrix found, merges the suites, such as one per sign-in method, and adds what static analysis finds. It fails when the tests fail, and when an operation a suite lists in `Operations` feeds no field in any suite's runs, unless a suite lists it in `Insensitive` or `Required`. `epack sdk map --check` writes nothing, and fails when the committed map differs from the one the code gives, naming the command to run; collector CI runs it (see Collector CI in [Component Rules](component-rules.md)). Between runs of the command, each suite checks the committed map against its own runs and fails when they find a field or an operation the map lacks.
 
+## Shadow Runs
+
+`epack shadow <collector>` previews what a new version of a collector would change before you upgrade. It runs the locked version, then the candidate, then the locked version again, each with the collector's config and secrets from `epack.yaml`. The candidate is a release of the collector's source (`--version v0.7.0`) or a local build (`--binary ./bin/epack-collector-aws`). It is locked, installed, and verified in a throwaway project under `.epack`, with the same Sigstore and digest checks as `epack lock` and `epack sync`. The project's lockfile does not change, and no pack is built. A local build runs with the collector's credentials but is not pinned in the project's lockfile, so strict production mode refuses it, as it refuses an unpinned binary in `epack collect`. A custom credential broker gets the same check as in `epack collect`.
+
+A field that also differs between the two locked runs, such as a timestamp, is noise. The report lists noise apart and leaves it out of the changes. For each kind of evidence, the report lists:
+
+- each field that was added, removed, changed, or reordered, with the candidate schema's level for a field it no longer writes at the run's level
+- each gap the candidate records that the locked version does not, or the reverse, by code and missing permission
+- each API operation the candidate calls that the locked version does not, or the reverse, and each one that now fails with a new error code
+- each version's total calls as a range, at the audit and internal levels, where results record call counts
+- each control whose result would change, such as from pass to unknown, which the app shows as Met to Not collected
+
+For the controls, shadow builds a pack from each run, with the project's profiles, and runs the project's validate tool on all three: the tool named `validate`, or the one whose source is `epack-tool-validate`. It runs through epack's tool runner, with the usual digest checks. A control whose result also differs between the two locked runs is noise. Without a validate tool, or when the tool fails, the report says why and lists no controls.
+
+A file that only one locked run wrote is noise too, listed by its kind and file. A file staged in any run, rather than written as data, has no fields to compare.
+
+The report file (`-o`, by default `shadow-<collector>-<version>.json`) holds no value from the account, so it is safe to share. A field is named by its pattern. An array index becomes `*`. An object key that the schema declares stays, and any other key, such as a region name used as a map key, becomes `{key}`. Errors appear as codes and calls as ranges. A path segment that holds an identifier becomes `{id}`. A file keeps its name only when a build file declares its path, when it has a schema ID, or when it is named for the collector. Any other file name becomes `{file}`, since it can name something in the account, such as a document's title.
+
+At a terminal, the report shows each changed field with up to three of its values, from the locked run to the candidate's, since the person running the shadow owns the account. It also shows the value each changed control read. It shows no values in CI or when its output goes to a file or a pipe, since logs keep them, and `--no-values` hides them at a terminal too. `--values <file>` writes every changed value, up to 50 for each field, to a file with private permissions that stays on that machine.
+
 ## Lockfile Schema
 
 Collectors are pinned in `epack.lock.yaml`:
@@ -604,6 +656,8 @@ collectors:
         asset: "collector-darwin-arm64"
         url: "https://github.com/.../releases/download/v1.2.3/collector-darwin-arm64"
 ```
+
+`epack lock` never runs a collector. It verifies and hashes each binary. When a collector's `collect` list names a kind the run never writes, `epack collect` warns after the run, from the `unmatched` list in the collector result.
 
 ### Lockfile Limits
 
@@ -642,7 +696,7 @@ When collectors fail, `epack collect`, `epack collector run`, and `epack run` st
 
 A failure epack detects before the collector runs keeps its own code and exit code, such as `binary_not_found` (14) or `digest_mismatch` (11).
 
-Each failure also says where its code came from, as `code_source`: `exit_code` when the runner inferred the code from the collector's exit code, and `runner` when epack observed the failure itself, as with a timeout, unusable output, or a missing binary. Both are the runner's best guess. When a collector that exited non-zero printed a failure line with one of the nine codes (see Codes), the failure takes that code instead, with `code_source` set to `collector` and the collector's exit code. A collector's `timeout` means its calls ran out of time; the runner's `timeout`, with exit code 13, means the collector ran past `--timeout`.
+Each failure also says where its code came from, as `code_source`: `exit_code` when the runner inferred the code from the collector's exit code, and `runner` when epack observed the failure itself, as with a timeout, unusable output, or a missing binary. Both are the runner's best guess. When a collector that exited non-zero printed a failure line with one of the codes (see Codes), the failure takes that code instead, with `code_source` set to `collector` and the collector's exit code. A collector's `timeout` means its calls ran out of time; the runner's `timeout`, with exit code 13, means the collector ran past `--timeout`.
 
 The command's error has the code `collect_failed`. Its message is `<collector>: <error>` for one failed collector and `N collectors failed: a, b` for several. When one collector failed, epack exits with that collector's exit code if it is between 2 and 9, or with epack's code for a failure epack detected, such as 13 for a timeout; otherwise, and when several failed, it exits 1. With `EPACK_ERROR_FILE` set, each failed collector also gets a `collector=` line (see the remote protocol's Lock Reporting section).
 
@@ -676,6 +730,9 @@ epack collector run
 # Run specific collectors
 epack collect --only github,jira
 epack collector run --only github
+
+# Preview what a new collector version would change (see Shadow Runs)
+epack shadow aws --version v0.7.0
 ```
 
 ### Component Management
@@ -843,6 +900,8 @@ SDK methods:
 - `ctx.Config()` - Access collector configuration from epack.yaml
 - `ctx.Name()` - Get collector name
 
+`CollectorSpec.ConfigSchema` is a JSON Schema for the collector's config. The scaffold writes one to `docs/schema/config.json` and embeds it with `go:embed`. The SDK checks the config against it before the handler runs, and skips the keys the SDK reads itself, such as `level`. A config that does not match fails the run with `config_invalid` and exit 2. The error message gives the JSON pointer of each value that does not match. The details can quote a value, so they go to stderr. A value that does not match is never read in as a default. For example, a port that is not a number is never read as 443. If the schema does not compile, the config is not checked and the SDK prints a warning. `collectortest.Check` rejects a suite whose schema does not compile.
+
 `CollectedArtifact` fields:
 - `Data` (required unless `File` is set) - The evidence data (any JSON-serializable value)
 - `File` (optional) - Staged file path whose raw bytes become the artifact (mutually exclusive with `Data`; see File Artifacts)
@@ -897,10 +956,18 @@ Each of the three record calls takes options. `componentsdk.MissingPermission(na
 rec.NotCollected(at, err, componentsdk.MissingPermission("logs.read"), componentsdk.Warning("system log: grant logs.read"))
 ```
 
+A gap can also carry advice on what to do about it. The app shows the advice to the customer and does not show it to reviewers. `componentsdk.Fix(instruction)` gives the one instruction that fixes collection, such as "Allow iam:ListSAMLProviders in the collector's IAM policy." `componentsdk.NoAction()` marks a gap where nothing needs changing now, such as for a report the vendor updates a day late. The gap stays. `componentsdk.Decide(question, options...)` gives the customer a choice with real consequences, such as whether to add a plan. Each `ChoiceOption` describes what the option leads to, including its cost and what stays Not collected. A gap holds at most one of the three, and the SDK keeps the first one given. A later one is a `guidance` check finding, and so is a choice with fewer than two options. Advice appears at every level, so its text uses fixed wording plus permission, plan, and region names. It never identifies a resource, person, or account. `componentsdk.Scope(text)` records the account, tenant, or region affected. The scope and the gap's `warning` message appear at the `audit` and `internal` levels only. The text is trimmed to one line of at most 500 characters, and secrets are redacted from it. Below the `audit` level the SDK also redacts the principal's ID and tenant and each identifier in the run's scopes and config, a word that holds a digit or a separator such as `.` or `@`. That is a safety net, and the test kit's `guidance` check still reports the advice. Advice never clears a gap or sets a control's result.
+
+`rec.Warn(message, opts...)` records a warning about the run as a whole, such as a list the collector caps, in the collector result's `warnings`. A warning does not mark a value as left out. It takes the same advice options as a gap, and `MissingPermission`. The message and scope appear at the `audit` and `internal` levels only. Below those levels, a warning with nothing left stays in the list. The same warning given twice is listed once, and the list stops at 200. The test kit's `guidance` check reports advice that contains a value identifying a resource, person, or account, such as a bucket or a user ID. The value can come from the scenario's answers or from the collector's config.
+
+A collector can instead declare the permission a call needs once, with the call, as `componentsdk.Operation{Name: "okta.logs.list", Permission: "okta.logs.read"}`. The collector result lists it with the operation as `permission`. A `permission_denied` gap recorded from the call's error records it as `missing_permission` without an option. That error can be one the client returned or one `componentsdk.ResponseError` built. A `MissingPermission` option overrides it. `HTTPOptions.NamesPermission(resp, body)` reports whether the missing permission explains a denial. It should return false when granting the permission would not lift the refusal, such as AWS's explicit deny from a service control policy. It should also return false for a denial whose message does not say what was refused. The gap then records no permission. The test kit's `permissions` check reports a gap whose `missing_permission` differs from the permission its operation declares.
+
+Some collectors compare what a vendor sends with values the collector names, such as event types, method types, or runtimes. Such a collector keeps those values in a vocabulary. A vocabulary is a JSON file with `name`, `source`, `fetched_at`, and `values`. The file is refreshed from the vendor's own catalog and embedded with `go:embed`. `componentsdk.MustLoadVocabulary(raw)` reads it. `vocabulary.Must(values...)` returns the collector's constants. It panics when the vocabulary lacks one, as `regexp.MustCompile` does, so a misspelled event type fails every test of the collector. `vocabulary.Seen(ctx, value)` reports whether a value the vendor sent is known. It records an unknown value in the collector result's `unrecognized`, grouped by vocabulary. Each entry has a count at every level, and the first 50 values at the `audit` and `internal` levels. The test kit's `vocabulary` check reports a scenario whose answers contain a value the vocabulary lacks. A recording has such a value when the vendor has added one.
+
 A gap names the call it came from when its error carries one. Errors the SDK's client returns do, and so do errors from a failed DNS lookup or dial, or from a timeout or reset on a dialed connection. `componentsdk.ResponseError(resp, err)` gives one an error the collector builds from a response, such as a status it does not expect or a body it cannot decode, along with the vendor code `HTTPOptions.VendorCode` read from the response. A gap's `source` is the first line on the stack in the collector's own module. A collector that records its gaps through a helper of its own calls `rec.Helper()` in it, as a test helper calls `testing.T.Helper`, so the source names the line that called the helper:
 
 ```go
-func (l gapLog) notCollected(err error, pointer string, opts ...componentsdk.GapOption) {
+func (l gapLog) notCollected(err error, pointer string, opts ...componentsdk.AdviceOption) {
     l.rec.Helper()
     l.rec.NotCollected(componentsdk.Location{Path: artifactPath, Pointer: pointer}, err, opts...)
 }
@@ -1032,6 +1099,20 @@ collectortest.Scenario{
 
 A collector that polls, such as one waiting for a report the vendor builds in the background, waits with `componentsdk.Wait(ctx, d)` rather than `time.Sleep`. It sleeps in real runs; in kit runs it returns at once and moves the run's clock forward by `d`, so a loop bounded by a deadline read from `componentsdk.Now` still ends, and the suite does not sleep. The sensitivity check can change only JSON bodies; `Report.Unmutated` lists the operations it could not change, such as those answering in XML or CBOR, and `collectortest.Run` logs them.
 
+The `pages` check reports a list that a collector does not read to its end. In every scenario, the run must later request each next page that an answer offers. An answer can offer a next page in a `Link` header with `rel="next"`, or in a body field such as `next`, `@odata.nextLink`, or `links.next` that holds a URL. It can also offer one in a token field such as `NextToken`, `next_cursor`, or an XML `<NextToken>`, or in a GraphQL `pageInfo` whose `hasNextPage` is true. A link counts as followed when the run requests its URL. A token counts as followed when a request carries it in its query or body. The check also runs the clean scenario once for each operation whose answers page by `Link` header or by a body field. It adds a next page to that operation's last answer, and the run must request it. `Suite.Paged` lists operations that page by `Link` header where the scenarios do not show it, since the vendor sends the header only when another page exists. `Suite.Capped` exempts operations that may leave a page unread. One case is a list the collector cuts short on purpose, with a partial gap where it stops. The other is a polling API that always offers another page. `componentsdk.NextLink(resp)` returns the next page from a response's `Link` headers, parsed as RFC 8288 defines them. It reads every header line and every link on each line.
+
+The `variants` check runs each of `Suite.Variants`. Each variant rewrites the clean scenario as another deployment of the vendor would answer it, such as AWS GovCloud or China, an Azure national cloud, or a vendor's regional domain. A variant is a list of old, new pairs, such as `"arn:aws:", "arn:aws-us-gov:", "us-east-1", "us-gov-west-1"`. The kit applies the pairs to the clean scenario's canned URLs, headers, bodies, and request bodies, and to the suite's config and env. Each data artifact must equal the clean run's artifact with the same rewrite. A value built from a prefix, partition, or host that the collector hard-codes fails the check. So does a request the rewritten scenario cannot answer, such as one to a hard-coded host. The rewrite applies to text as the scenario stores it. A value sent encoded, such as IAM's URL-encoded policy documents, needs its encoded form listed too. A value in base64 cannot be rewritten.
+
+`Suite.FieldSensitivity` turns on the `fields` check. The check changes one state field at a time in each operation's answers. A state field is one whose name ends in `status`, `state`, or `enabled`, or is `operator`, `condition`, `conditions`, or `effect`. The check reports each field whose change leaves every value the same in an object the collector reads. The collector reads an object when emptying the object, or the list its items sit in, changes a value. A changed string takes another value the field holds in the answers, or its opposite, such as `ACTIVE` for `INACTIVE`. Such a field usually determines whether a thing works, such as a flow log's delivery status or a policy rule's conditions. A collector that ignores it can count a thing that exists as one that works. In an XML answer, every state element whose change leaves every value the same is reported. The check needs answers as the vendor sends them, so a suite turns it on once it replays a recording. `Suite.IgnoredFields` lists, by operation, the fields a collector may ignore. `Report.IgnoredFields` lists every one the check found.
+
+The `responses` check compares a suite's canned answers with the vendor's own API. `Suite.ResponseSchemas` maps an operation to the JSON Schema of its successful answer, as the vendor's API spec defines it. The schema can come from the vendor's OpenAPI document. An OpenAPI 3.0 schema needs `nullable` and its other extensions converted to JSON Schema first. In every scenario, each successful answer an operation consumed must match its schema. It must also have no field the schema does not define. The kit enforces this by adding `unevaluatedProperties: false` to each object schema that does not mention other properties. It leaves a branch of `allOf`, `anyOf`, or `oneOf` alone, because the parent schema checks the object as a whole. Otherwise a hand-written answer can include a field its author thought the vendor sends, such as a status on an API token. A collector that reads that field passes tests that the vendor's real answers would fail. A vendor's spec can be wrong too. A schema that sets `additionalProperties: true` still allows other fields.
+
+The `order` check reports a collector value that depends on the order a vendor lists things in. Vendors rarely promise an order. For example, AWS documents that DescribeRegions may list regions in any order. For each HTTP operation, the check runs the clean scenario with every list in that operation's answers reversed. Lists are JSON arrays and runs of sibling XML elements that share a name, such as AWS's `<item>` and `<member>` lists. The check compares each data artifact with every list sorted, including JSON held in a string, such as a copied policy document. Rows may come out in another order, but no value may change. The check skips a run whose reversed answers lead to requests the scenario cannot answer. `Suite.Ordered` exempts operations whose answers come in an order the vendor documents, such as a list sorted by a parameter the collector sends. The check needs lists of two or more items to reverse. A scenario with one region cannot show whether the collector relies on the first item.
+
+The `methods` check reports a value a profile can test that has no description of how the collector measured it. Each number and true-or-false value in a normalized artifact needs an `x-epack-method` in the collector's own schema. So does each one a trust run writes in a detailed artifact, since most collectors have no normalized artifact yet and profiles test their detailed fields. A value marked for a higher level, or in an artifact marked for one, needs none. A value that `Recorder.Mirror` records as a copy of a value in the detailed artifact uses that value's method, so a collector that fills its normalized artifact from its detailed one writes each method once. The check finds that method in the detailed artifact's schema, so it holds when a trust run leaves the detailed artifact out. The check reads the clean scenario's run.
+
+The `writes` check reports an artifact whose schema ID `CollectorSpec.Writes` does not list. `--capabilities` and the build file publish that list, so a reader can learn what a release writes without running it, and a schema ID missing from it would go unannounced. The check reads every scenario that succeeds, since a collector may write some kinds only in some accounts.
+
 `collectortest.NewReplay(scenario)` returns the replay the kit answers requests with, for a focused test of one run: pass it as `componentsdk.InProcessOptions.Transport`, and `Unmatched()` lists the requests no canned response matched.
 
 `GapOperations: true` turns on a check that every gap a fault leaves names the faulted operation, which a gap recorded from an error the SDK's client returned, or from one built with `componentsdk.ResponseError`, does. A gap recorded from a failed DNS lookup or dial, or from a timeout or reset on a dialed connection, names it too. Faults a `Semantics` entry declares are exempt. With `CollectorSpec.TraceMap` set, the kit also checks the committed map against the suite's runs: a field the runs emitted, or an operation the fault matrix found changing a field, that the map lacks is a `tracemap` violation, which says to run `epack sdk map`. With `COLLECTORTEST_MAP` naming a directory, as `epack sdk map` sets it, the kit writes the suite's findings there instead of checking the map. The build file is checked against `componentsdk.BuildSchemaJSON`, as the collector result is against its schema.
@@ -1140,28 +1221,31 @@ A collector's JSON Schemas can say what a value means with `x-epack-*` keywords 
 
 | Keyword | Meaning |
 |---------|---------|
-| `x-epack-level` | `trust`, `audit`, or `internal`: the lowest level whose output includes the field. Fields under it inherit it unless they name a higher level. |
+| `x-epack-level` | `trust`, `audit`, or `internal`: the lowest level whose output includes the field. Fields under it inherit it unless they name a higher level. At the schema's root it marks the whole artifact, which the SDK leaves out below that level. |
 | `x-epack-denominator` | The count the value is a percentage or ratio of. |
+| `x-epack-present` | A boolean field that is true when the value's population has any members. It is for a level that leaves the denominator out. When it is false, the value must be null or absent. |
 | `x-epack-numerator` | The count a percentage is taken of, as a reference in the same form as `x-epack-denominator`. On a boolean it is the count of "all of them": the boolean is true exactly when the numerator equals the denominator. |
 | `x-epack-rounding` | How a whole-number percentage was rounded: `floor`, `ceil`, or `nearest`, which rounds halves up. |
 | `x-epack-null` | When null is a real answer, such as `"No session policy sets a lifetime"`. |
 | `x-epack-rollup` | `{"rows": ref, "where": "/pointer/in/row", "equals": value, "as": "count" or "pct", "truncated": ref}`. A count is the number of rows, or with `where`, of rows whose value there equals `equals` (`true` by default). A percentage is those rows out of all rows. `truncated`, when given, names a boolean that is true when the rows were cut short, such as at a cap on how many the collector lists. |
 | `x-epack-as-of` | A timestamp field. When it is set, the rollup came from a report taken at another time, so it is not recomputed. |
+| `x-epack-method` | One plain sentence on how this collector measures the value, such as `"Reads each S3 bucket's default encryption setting."` It goes in the collector's own schema, since the same normalized field is measured differently by each provider. The schema ships in the build file, so readers can show the sentence beside the value. |
 
 A reference is a sibling property's name, an absolute JSON pointer such as `/summary/total`, or a relative one such as `1/total`: up one level from the object that holds the field, then `/total`. The annotations are read through `properties`, `patternProperties`, `additionalProperties`, `items`, `prefixItems`, local `$ref`s, and every `allOf`, `anyOf`, or `oneOf` branch that names the field.
 
-`CollectorSpec.Schemas` holds the collector's schemas, keyed by artifact path or schema ID. Embed them with `go:embed` from a package in the schema directory, such as `docs/schema/embed.go`. Each schema must be self-contained, since refs to other files or URLs are not loaded. Artifacts of the types `evidencepack/idp-posture@v1`, `cloud-posture`, `vcs-posture`, `email-dns`, and `tls` are checked against the SDK's copies unless `Schemas` has a schema for the type or the path. Those copies require only the fields that say what was collected, such as the provider and account IDs, and allow null on every metric. `componentsdk.NormalizedSchemaJSON` returns them.
+`CollectorSpec.Schemas` holds the collector's schemas, keyed by artifact path or schema ID. Embed them with `go:embed` from a package in the schema directory, such as `docs/schema/embed.go`. Each schema must be self-contained, since refs to other files or URLs are not loaded. Artifacts of the types `evidencepack/idp-posture@v1`, `cloud-posture`, `vcs-posture`, `email-dns`, `tls`, and `endpoint-posture` are checked against the SDK's copies unless `Schemas` has a schema for the type or the path. Those copies require only the fields that identify what was collected, such as the provider or the domain, and allow null on every metric. A field a copy marks with `x-epack-level` is left out below that level. Examples are `account_id` and the user counts in `cloud-posture`, the privileged and app counts in `idp-posture`, and the fleet counts and `metric_coverage` in `endpoint-posture`. Below that level, a boolean field such as `users_present`, `privileged_users_present`, or `devices_present` stands in for the count. No normalized artifact holds a count at the trust level, except the summaries of `tls` and `email-dns`. Their endpoint and domain rows are written at every level. `endpoint-posture` records why a metric has no reading in its `availability` list as well as with a gap. Every percentage in a copy sets its rounding with `x-epack-rounding`. A percentage where more is better rounds down (`floor`), so 996 users of 1,000 with MFA reads 99. Rounding to nearest would give 100. A percentage where more is worse rounds up (`ceil`), so 1 rule of 201 open to the world reads 1. Rounding to nearest would give 0. `componentsdk.Percent` rounds the same way. `componentsdk.NormalizedSchemaJSON` returns the copies.
 
 When the collector emits, the SDK checks each data artifact that has a schema and lists each finding in the result's `checks` with its `check`, `path`, `pointer`, and `message`. A finding never fails the run or changes its outcome. The list stops at 100, and `checks_dropped` counts the rest.
 
 - `schema`: the artifact does not match its schema.
 - `schema_unusable`: a schema in `Schemas` does not compile, so its artifacts went unchecked. The SDK also prints a warning.
-- `population`: a value is set although its denominator is 0. It must be null or absent.
-- `nulls`: a number or boolean is null with no gap covering it, no `x-epack-null`, and no denominator of 0.
+- `population`: a value is set although its denominator is 0 or its `x-epack-present` is false, or although either was not read. A denominator or flag was not read when it is null, or absent with a gap. A value over no population, or over one the collector could not read, must be null or absent. A value the schema declares is also a finding when its population is empty and the artifact leaves it out. That value must be written as null, because a value left out with no gap means the collector could not read it. There is no finding when a gap covers the value or the level leaves it out.
+- `nulls`: a number or boolean is null with no gap covering it, no `x-epack-null`, no denominator of 0 or unread, and no `x-epack-present` of false or unread.
 - `rollups`: a count differs from its rows, or a percentage is off by more than 1. Rows cut short are not recomputed: those the rollup's `truncated` boolean marks, and those as many as their schema's `maxItems`. Nor is a rollup whose rows or `where` field the schema places above the level the collector ran at, where the rows exist without the field, such as per-person MFA flags kept for the `internal` level.
 - `ratios`: where a value, its `x-epack-numerator`, and its `x-epack-denominator` are all present and the denominator is not 0, a percentage that is not 100 × numerator ÷ denominator rounded as its `x-epack-rounding` says, or within 1 of it when the schema states no rounding; a numerator larger than its denominator; a boolean that disagrees with its numerator; and a rounding that is not one of the three. A numerator works at every level, including for counts the collector takes from calls rather than rows, which a rollup cannot recompute.
+- `levels`: a value the collector wrote that its schema marks with `x-epack-level` above the level the run collected at. The SDK leaves the value out of the artifact, as it leaves values out of the result, so a trust pack never holds it. Fix the collector so it does not collect the value at that level. A staged file is written as it is.
 
-`collectortest` reports each finding as a violation and runs the same checks itself on artifacts whose schema only `Suite.Schemas` gives. Sensitivity runs skip `population`, `nulls`, `rollups`, and `ratios`, since their changed responses make rows and rollups disagree. The `levels` check runs the clean scenario at each level: what one level emits, every higher level must emit too, and a field marked with a level must be absent, not even null, below it. `SkipChecks` turns off `levels`, `population`, `nulls`, `rollups`, `ratios`, or `tracemap` by name.
+`collectortest` reports each finding as a violation. It runs the same checks itself on artifacts whose schema comes only from `Suite.Schemas`. Sensitivity runs skip `population`, `nulls`, `rollups`, and `ratios`, since their changed responses make rows and rollups disagree. The `levels` check runs the clean scenario at each level. Every higher level must emit what a lower level emits. A field marked with a level must be absent below that level, and writing it as null is a finding. `SkipChecks` turns off any of the kit's checks by name, such as `levels`, `population`, or `tracemap`. `collectortest.CheckNames()` lists the names.
 
 ### Manual Implementation
 
@@ -1239,7 +1323,7 @@ func main() {
 | Purpose | Gather evidence | Process packs |
 | Orchestration | Managed by epack workflow | User-invoked |
 | Output | JSON to stdout | Files in sidecar directory |
-| Capabilities | No `--capabilities` command | Supports `--capabilities` |
+| Capabilities | SDK collectors answer `--capabilities` with their name, version, and the schemas they write | Supports `--capabilities` |
 | Working directory | Managed by epack | Set to run directory |
 | Pack access | N/A (creates pack content) | Read-only access to pack |
 
@@ -1247,6 +1331,5 @@ func main() {
 
 The following features are reserved but not yet implemented:
 
-- **Collector capabilities**: `--capabilities` command for self-description
 - **Incremental collection**: Delta collection based on previous runs
 - **Collector dependencies**: Declaring dependencies on other collectors

@@ -8,13 +8,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/locktivity/epack/internal/componenttypes"
+	"github.com/locktivity/epack/internal/jsonpointer"
 )
 
 // Check runs the population, nulls, rollups, and ratios checks on doc, the
 // artifact at path as emitted at level, with gaps saying which values were
 // left out on purpose. An unknown level counts as trust.
 func Check(s *Schema, path string, doc any, gaps []Gap, level string) []Finding {
-	w := &walker{schema: s, path: path, doc: doc, level: levelRank[level]}
+	w := &walker{schema: s, path: path, doc: doc, level: rankOf(level)}
 	for _, g := range gaps {
 		if g.Path == path {
 			w.gaps = append(w.gaps, g.Pointer)
@@ -43,6 +46,11 @@ func (w *walker) walk(node any, v view, tokens []string) {
 		for _, key := range sortedKeys(n) {
 			w.child(n[key], w.schema.member(v, key), tokens, key)
 		}
+		for _, key := range declared(v) {
+			if _, ok := n[key]; !ok {
+				w.absent(w.schema.member(v, key), append(append(make([]string, 0, len(tokens)+1), tokens...), key))
+			}
+		}
 	case []any:
 		for i, item := range n {
 			w.child(item, w.schema.item(v, i), tokens, strconv.Itoa(i))
@@ -60,24 +68,107 @@ func (w *walker) child(value any, v view, parent []string, token string) {
 }
 
 func (w *walker) visit(value any, v view, tokens []string) {
-	at := pointer(tokens)
-	den, hasDen := w.reference(v, "x-epack-denominator", tokens)
-	denZero := hasDen && den.found && isZero(den.value)
+	at := jsonpointer.Format(tokens)
+	pop := w.population(v, tokens)
 	if value == nil {
-		if scalar(v.types()) && !w.covered(at) && v.text("x-epack-null") == "" && !denZero {
-			w.add(CheckNulls, at, "null with no gap, no x-epack-null note, and no denominator of 0")
+		if scalar(v.types()) && !w.covered(at) && v.text("x-epack-null") == "" && !pop.explainsNull() {
+			w.add(CheckNulls, at, "null with no gap, no x-epack-null note, no denominator of 0 or unread, and no x-epack-present of false or unread")
 		}
 		return
 	}
-	if denZero && !w.covered(den.pointer) {
-		w.add(CheckPopulation, at, fmt.Sprintf("value %s, but its denominator %s is 0; a value over no population must be null", show(value), den.pointer))
+	for _, reason := range w.emptyReasons(pop) {
+		w.add(CheckPopulation, at, fmt.Sprintf("value %s, but %s. A value over no population must be null", show(value), reason))
+	}
+	if pop.unread != "" && !w.covered(at) {
+		w.add(CheckPopulation, at, fmt.Sprintf("value %s, but %s was not read. A value over a population that was not read must be left out too", show(value), pop.unread))
 	}
 	if got, ok := number(value); ok {
 		w.rollup(v, tokens, at, got, value)
 	}
-	if num, ok := w.reference(v, "x-epack-numerator", tokens); ok && hasDen {
-		w.ratio(v, at, value, num, den)
+	if num, ok := w.reference(v, "x-epack-numerator", tokens); ok && pop.hasDen {
+		w.ratio(v, at, value, num, pop.den)
 	}
+}
+
+// absent checks a value left out of its object. The value must be written as
+// null when the artifact shows its population is empty, with a denominator
+// of 0 or an x-epack-present of false. A value left out looks like one the
+// collector could not read. absent skips a value a gap covers, since it was
+// not read. It also skips a value the schema places above the level, since
+// the level leaves it out.
+func (w *walker) absent(v view, tokens []string) {
+	if len(v) == 0 || !scalar(v.types()) {
+		return
+	}
+	at := jsonpointer.Format(tokens)
+	if w.covered(at) || levelOf(v) > w.level {
+		return
+	}
+	if reasons := w.emptyReasons(w.population(v, tokens)); len(reasons) > 0 {
+		w.add(CheckPopulation, at, fmt.Sprintf("left out, but %s. Write null for a value over no population. A value left out looks like one the collector could not read", reasons[0]))
+	}
+}
+
+// population describes what a value counts. It holds the denominator and
+// present flag that the value's annotations point to, with their values in
+// the artifact.
+type population struct {
+	den, present       resolved
+	hasDen, hasPresent bool
+	// zero is true when the denominator is 0, and none is true when the
+	// present flag is false. Either makes the population empty.
+	zero, none bool
+	// unread is the pointer of the denominator or present flag that was not
+	// read, or "".
+	unread string
+}
+
+func (w *walker) population(v view, tokens []string) population {
+	var p population
+	p.den, p.hasDen = w.reference(v, "x-epack-denominator", tokens)
+	p.present, p.hasPresent = w.reference(v, "x-epack-present", tokens)
+	p.zero = p.hasDen && p.den.found && isZero(p.den.value)
+	p.none = p.present.found && p.present.value == false
+	switch {
+	case p.hasDen && w.unread(p.den):
+		p.unread = p.den.pointer
+	case p.hasPresent && w.unread(p.present):
+		p.unread = p.present.pointer
+	}
+	return p
+}
+
+// explainsNull reports whether the population explains a null value. It
+// does when the population is empty or was not read.
+func (p population) explainsNull() bool {
+	return p.zero || p.none || p.unread != ""
+}
+
+// emptyReasons returns the reason for each reference that makes the
+// population empty and that no gap covers.
+func (w *walker) emptyReasons(p population) []string {
+	var out []string
+	if p.zero && !w.covered(p.den.pointer) {
+		out = append(out, fmt.Sprintf("its denominator %s is 0", p.den.pointer))
+	}
+	if p.none && !w.covered(p.present.pointer) {
+		out = append(out, fmt.Sprintf("its present flag %s is false", p.present.pointer))
+	}
+	return out
+}
+
+// declared returns the sorted names of the properties the schemas in v
+// define.
+func declared(v view) []string {
+	seen := map[string]bool{}
+	for _, obj := range v {
+		if p, ok := obj["properties"].(map[string]any); ok {
+			for name := range p {
+				seen[name] = true
+			}
+		}
+	}
+	return sortedKeys(seen)
 }
 
 // Roundings x-epack-rounding names. Nearest rounds halves up.
@@ -261,8 +352,7 @@ func (w *walker) aboveLevel(rowsAt, where string) bool {
 	}
 	v := w.schema.item(rows, 0)
 	rank = max(rank, levelOf(v))
-	for _, token := range strings.Split(where[1:], "/") {
-		token = unescape(token)
+	for _, token := range jsonpointer.Tokens(where) {
 		if idx, err := strconv.Atoi(token); err == nil && idx >= 0 {
 			v = append(w.schema.member(v, token), w.schema.item(v, idx)...)
 		} else {
@@ -291,6 +381,17 @@ func (w *walker) reference(v view, keyword string, tokens []string) (resolved, b
 	return resolved{pointer: at, value: value, found: found}, true
 }
 
+// unread reports whether a population reference was not read. That is the
+// case when it is null, or when it is absent and a gap covers it. A
+// reference absent with no gap was left out on purpose, such as a count the
+// level leaves out. unread returns false for it.
+func (w *walker) unread(r resolved) bool {
+	if r.found {
+		return r.value == nil
+	}
+	return w.covered(r.pointer)
+}
+
 // covered reports whether a gap sits at at or at one of its ancestors.
 func (w *walker) covered(at string) bool {
 	for _, g := range w.gaps {
@@ -305,30 +406,39 @@ func (w *walker) add(check, at, message string) {
 	w.findings = append(w.findings, Finding{Check: check, Path: w.path, Pointer: at, Message: message})
 }
 
-var levelRank = map[string]int{"trust": 0, "audit": 1, "internal": 2}
+// rankOf is the rank of a level, or 0 for a string that names none.
+func rankOf(level string) int {
+	rank, _ := componenttypes.Level(level).Rank()
+	return rank
+}
 
 // levelOf is the rank of the level a view names with x-epack-level, or 0.
 func levelOf(v view) int {
-	return levelRank[v.text("x-epack-level")]
+	return rankOf(v.text("x-epack-level"))
 }
 
-var levelNames = []string{"trust", "audit", "internal"}
+// WholeAbove reports whether s sets x-epack-level at its root, on the whole
+// artifact, to a level above level.
+func WholeAbove(s *Schema, level string) bool {
+	whole := s.rootView().text("x-epack-level")
+	return whole != "" && !componenttypes.Level(level).AtLeast(componenttypes.Level(whole))
+}
 
 // AboveLevel reports each value in doc, the artifact at path as emitted at
 // level, that its schema places at a higher level with x-epack-level. A value
 // takes the highest level named on it or on any ancestor. Values inside one
 // already reported are not reported again.
 func AboveLevel(s *Schema, path string, doc any, level string) []Finding {
-	ran := levelRank[level]
+	ran := rankOf(level)
 	var out []Finding
 	var walk func(node any, v view, tokens []string, inherited int)
 	visit := func(node any, v view, tokens []string, inherited int) {
 		at := inherited
-		if r, ok := levelRank[v.text("x-epack-level")]; ok && r > at {
+		if r, ok := componenttypes.Level(v.text("x-epack-level")).Rank(); ok && r > at {
 			at = r
 		}
 		if at > ran {
-			out = append(out, Finding{Check: CheckLevels, Path: path, Pointer: pointer(tokens), Message: fmt.Sprintf("present at %s, but its schema marks it %s", level, levelNames[at])})
+			out = append(out, Finding{Check: CheckLevels, Path: path, Pointer: jsonpointer.Format(tokens), Message: fmt.Sprintf("present at %s, but its schema marks it %s", level, componenttypes.LevelAt(at))})
 			return
 		}
 		if len(v) > 0 {

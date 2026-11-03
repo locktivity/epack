@@ -308,35 +308,8 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 	lockfilePath := filepath.Join(workDir, lockfile.FileName)
 	lf, _ := lockfile.Load(lockfilePath) // Ignore error; sources are optional
 
-	// Get current platform for binary digest lookup
-	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
-
 	// Add each collector as a source with its version and provenance from the lockfile
-	for _, r := range runResult.Results {
-		if !r.Success {
-			continue
-		}
-		version := ""
-		source := ""
-		commit := ""
-		binaryDigest := ""
-		if lf != nil {
-			if locked, ok := lf.GetCollector(r.Collector); ok {
-				version = locked.Version
-				source = locked.Source
-				commit = locked.Commit
-				// Get the binary digest for the current platform
-				if platformEntry, ok := locked.Platforms[platformKey]; ok {
-					binaryDigest = platformEntry.Digest
-				}
-			}
-		}
-		b.AddSourceWithOptions(r.Collector, version, builder.SourceOptions{
-			Source:       source,
-			Commit:       commit,
-			BinaryDigest: binaryDigest,
-		})
-	}
+	addCollectorSources(b, runResult.Results, lf)
 
 	// Record collection timestamp for all artifacts (freshness checking)
 	collectedAt := timestamp.Now().String()
@@ -361,6 +334,56 @@ func runAndBuildPackWorkflow(ctx context.Context, cfg *config.JobConfig, workDir
 
 	result.PackPath = outputPath
 	return result, nil
+}
+
+// addCollectorSources adds each collector that ran as a source of the pack,
+// with the version, source, commit, and binary digest lf pins for it.
+func addCollectorSources(b *builder.Builder, results []RunResult, lf *lockfile.LockFile) {
+	platformKey := platform.Key(runtime.GOOS, runtime.GOARCH)
+	for _, r := range results {
+		if !r.Success {
+			continue
+		}
+		version := ""
+		source := ""
+		commit := ""
+		binaryDigest := ""
+		if lf != nil {
+			if locked, ok := lf.GetCollector(r.Collector); ok {
+				version = locked.Version
+				source = locked.Source
+				commit = locked.Commit
+				// Get the binary digest for the current platform
+				if platformEntry, ok := locked.Platforms[platformKey]; ok {
+					binaryDigest = platformEntry.Digest
+				}
+			}
+		}
+		b.AddSourceWithOptions(r.Collector, version, builder.SourceOptions{
+			Source:       source,
+			Commit:       commit,
+			BinaryDigest: binaryDigest,
+		})
+	}
+}
+
+// BuildPack builds an unsigned pack at path from collector results, the way
+// epack collect does: each collector that ran as a source with what lf pins
+// for it, its artifacts, and the profiles and overlays cfg names with their
+// digests in lf. It seals no control mappings, since they never change a
+// validation result.
+func BuildPack(cfg *config.JobConfig, lf *lockfile.LockFile, results []RunResult, path string) error {
+	b := builder.New(cfg.Stream)
+	addCollectorSources(b, results, lf)
+	if err := addCollectorArtifacts(b, results, timestamp.Now().String()); err != nil {
+		return err
+	}
+	b.SetProfiles(buildProfileRefs(cfg, lf))
+	b.SetOverlays(buildOverlayRefs(cfg, lf))
+	if err := b.Build(path); err != nil {
+		return fmt.Errorf("building pack: %w", err)
+	}
+	return nil
 }
 
 // builderSealSink adapts the pack builder to mapping.SealSink, stamping each

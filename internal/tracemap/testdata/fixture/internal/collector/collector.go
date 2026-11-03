@@ -253,7 +253,7 @@ func normalize(o *Output) *Normalized {
 
 // Spec describes the collector.
 func Spec() componentsdk.CollectorSpec {
-	return componentsdk.CollectorSpec{Name: "fixture", Version: "0.0.1"}
+	return componentsdk.CollectorSpec{Name: "fixture", Version: "0.0.1", Writes: []string{"evidencepack/fixture@v1"}}
 }
 
 // Run reads the org and its people and emits both artifacts.

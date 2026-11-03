@@ -12,12 +12,12 @@ import (
 type Location struct {
 	// Schema is the artifact's schema. Use Path instead when several
 	// artifacts share a schema or the artifact has none.
-	Schema string
+	Schema string `json:"schema,omitempty"`
 	// Path is the artifact's path in the pack.
-	Path string
+	Path string `json:"path,omitempty"`
 	// Pointer is a JSON pointer (RFC 6901) into the artifact's data. Address
 	// items by array index, never by name.
-	Pointer string
+	Pointer string `json:"pointer"`
 }
 
 // Gap statuses.
@@ -30,19 +30,21 @@ const (
 	GapPartial = "partial"
 )
 
-// Gap is a value a collector left out of its artifact, and why.
+// Gap is a value that a collector left out of its artifact, with the reason.
+// Location holds the value's path and pointer.
 type Gap struct {
-	Schema     string `json:"schema,omitempty"`
-	Path       string `json:"path,omitempty"`
-	Pointer    string `json:"pointer"`
+	Location
 	Status     string `json:"status"`
 	Code       Code   `json:"code"`
 	Owner      Owner  `json:"owner"`
 	VendorCode string `json:"vendor_code,omitempty"`
-	Unmeasured int    `json:"unmeasured,omitempty"`
+	// Unmeasured counts the items a partial gap could not read. It appears at
+	// the audit and internal levels only.
+	Unmeasured int `json:"unmeasured,omitempty"`
 	// Operation and Call name the failed call that left the value out, when
 	// the gap was recorded from an error the SDK's client returned or one
-	// built with ResponseError. Call matches the call on its rows.
+	// built with ResponseError. Call matches the call on its rows, and like
+	// them appears at the audit and internal levels only.
 	Operation string `json:"operation,omitempty"`
 	Call      int    `json:"call,omitempty"`
 	// Source is the line of the collector's own code that recorded the gap,
@@ -57,11 +59,47 @@ type Gap struct {
 	// the audit and internal levels only.
 	Warning string `json:"warning,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+	// Guidance holds the advice on what to do about the gap. See Fix,
+	// NoAction, Decide, and Scope.
+	Guidance
+
+	// guidanceConflict is true when the gap was given more than one of Fix,
+	// NoAction, and Decide. It is also true for a Decide with fewer than two
+	// options.
+	guidanceConflict bool
 }
 
-// GapOption adds a detail to a gap the Recorder records.
-type GapOption struct {
-	apply func(*Gap)
+// AdviceOption adds a detail to a gap or a run warning that the Recorder
+// records, such as Fix or MissingPermission. A run warning takes every
+// option except Warning.
+type AdviceOption struct {
+	apply func(*advice)
+}
+
+// GapOption is the name AdviceOption had before run warnings took options.
+//
+// Deprecated: Use AdviceOption.
+type GapOption = AdviceOption
+
+// advice holds what the options set on a gap or a run warning.
+type advice struct {
+	warning           string
+	missingPermission string
+	guidance          Guidance
+	// conflict is true when more than one of Fix, NoAction, and Decide was
+	// given. It is also true for a Decide with fewer than two options.
+	conflict bool
+}
+
+// adviceOf applies opts.
+func adviceOf(opts []AdviceOption) advice {
+	var a advice
+	for _, o := range opts {
+		if o.apply != nil {
+			o.apply(&a)
+		}
+	}
+	return a
 }
 
 // MissingPermission names the permission a permission_denied gap's
@@ -70,19 +108,25 @@ type GapOption struct {
 // permission_denied, and is dropped from any other. A permission holding
 // whitespace or more than 256 bytes is dropped too, since it appears at
 // every level.
-func MissingPermission(permission string) GapOption {
-	return GapOption{apply: func(g *Gap) {
-		if g.Code == CodePermissionDenied && len(permission) <= 256 && !strings.ContainsFunc(permission, unicode.IsSpace) && !strings.ContainsFunc(permission, unicode.IsControl) {
-			g.MissingPermission = permission
+func MissingPermission(permission string) AdviceOption {
+	return AdviceOption{apply: func(a *advice) {
+		if permissionName(permission) {
+			a.missingPermission = permission
 		}
 	}}
+}
+
+// permissionName reports whether permission can appear at every level. It
+// must be at most 256 bytes and have no whitespace or control characters.
+func permissionName(permission string) bool {
+	return permission != "" && len(permission) <= 256 && !strings.ContainsFunc(permission, unicode.IsSpace) && !strings.ContainsFunc(permission, unicode.IsControl)
 }
 
 // Warning gives a gap the collector's message to the operator about it,
 // such as the role to grant. Like the error text, it is redacted and appears
 // at the audit and internal levels only.
-func Warning(message string) GapOption {
-	return GapOption{apply: func(g *Gap) { g.Warning = message }}
+func Warning(message string) AdviceOption {
+	return AdviceOption{apply: func(a *advice) { a.warning = message }}
 }
 
 // Principal is the identity a collector signed in as.
@@ -91,7 +135,8 @@ type Principal struct {
 	Provider string `json:"provider"`
 	// Kind is the kind of principal, such as "service_principal" or "user".
 	Kind string `json:"kind"`
-	// TenantID is the tenant, account, or organization signed in to.
+	// TenantID is the tenant, account, or organization signed in to. It
+	// appears at the audit and internal levels only.
 	TenantID string `json:"tenant_id,omitempty"`
 	// AuthMethod is how the collector proved its identity, such as
 	// AuthPrivateKeyJWT or AuthAPIToken.
@@ -148,6 +193,7 @@ type Recorder struct {
 	gaps      []Gap
 	principal *Principal
 	mirrors   []Mirrored
+	warnings  []RunWarning
 }
 
 // Records returns ctx's recorder. Contexts that RunCollector or RunInProcess
@@ -160,14 +206,14 @@ func Records(ctx CollectorContext) *Recorder {
 // classified with Classify. The value itself must be absent or null in the
 // emitted artifact; Emit fails otherwise. When err came from a call the
 // SDK's client made, or from ResponseError, the gap names that call.
-func (r *Recorder) NotCollected(at Location, err error, opts ...GapOption) {
-	r.add(at, GapNotCollected, 0, classifyOrInternal(err), err, errorText(err), opts)
+func (r *Recorder) NotCollected(at Location, err error, opts ...AdviceOption) {
+	r.add(Gap{Location: at, Status: GapNotCollected, Code: classifyOrInternal(err), Detail: errorText(err)}, err, opts)
 }
 
 // NotCollectedCode records a left-out value with a code the collector chose,
 // such as CodeNotLicensed for a feature the plan lacks.
-func (r *Recorder) NotCollectedCode(at Location, code Code, detail string, opts ...GapOption) {
-	r.add(at, GapNotCollected, 0, code, nil, detail, opts)
+func (r *Recorder) NotCollectedCode(at Location, code Code, detail string, opts ...AdviceOption) {
+	r.add(Gap{Location: at, Status: GapNotCollected, Code: code, Detail: detail}, nil, opts)
 }
 
 // Partial records that the rollup at at was left out because unmeasured of
@@ -176,8 +222,8 @@ func (r *Recorder) NotCollectedCode(at Location, code Code, detail string, opts 
 // read could still show 100%, so it is not written. At a list or object,
 // such as a list read in part, Partial instead says the value holds only
 // the items that were read, and the value may be emitted.
-func (r *Recorder) Partial(at Location, unmeasured int, err error, opts ...GapOption) {
-	r.add(at, GapPartial, unmeasured, classifyOrInternal(err), err, errorText(err), opts)
+func (r *Recorder) Partial(at Location, unmeasured int, err error, opts ...AdviceOption) {
+	r.add(Gap{Location: at, Status: GapPartial, Code: classifyOrInternal(err), Unmeasured: unmeasured, Detail: errorText(err)}, err, opts)
 }
 
 // Mirror records at to the gap that covers from, with all its details, such
@@ -206,7 +252,7 @@ func (r *Recorder) Mirror(from, to Location) {
 		return
 	}
 	g := r.gaps[source]
-	g.Schema, g.Path, g.Pointer = to.Schema, to.Path, to.Pointer
+	g.Location = to
 	r.keep(g)
 }
 
@@ -249,41 +295,77 @@ func (r *Recorder) signedIn() *Principal {
 	return &cp
 }
 
-// add keeps the first gap recorded for a location.
-func (r *Recorder) add(at Location, status string, unmeasured int, code Code, err error, detail string, opts []GapOption) {
-	if !code.Valid() {
-		code = CodeInternal
+// add fills in the rest of g from err and opts. g already holds its
+// location, status, code, unmeasured count, and detail. add keeps g only if
+// it is the first gap recorded for its location.
+func (r *Recorder) add(g Gap, err error, opts []AdviceOption) {
+	// Only the SDK records not_shared, for what the collect config key
+	// leaves out.
+	if !g.Code.Valid() || g.Code == CodeNotShared {
+		g.Code = CodeInternal
 	}
-	g := Gap{
-		Schema:     at.Schema,
-		Path:       at.Path,
-		Pointer:    at.Pointer,
-		Status:     status,
-		Code:       code,
-		Owner:      code.Owner(),
-		VendorCode: VendorCodeOf(err),
-		Unmeasured: unmeasured,
-		Source:     gapSource(),
-		Detail:     detail,
-	}
+	a := adviceOf(opts)
+	g.Owner = g.Code.Owner()
+	g.VendorCode = VendorCodeOf(err)
+	g.Source = gapSource()
+	g.MissingPermission, g.Warning = a.missingPermission, a.warning
+	g.Guidance, g.guidanceConflict = a.guidance, a.conflict
 	if c, ok := callOf(err); ok {
 		g.Operation, g.Call = c.operation, c.call
-	}
-	for _, o := range opts {
-		if o.apply != nil {
-			o.apply(&g)
+		if g.MissingPermission == "" && permissionName(c.permission) {
+			g.MissingPermission = c.permission
 		}
+	}
+	if g.Code != CodePermissionDenied {
+		g.MissingPermission = ""
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.keep(g)
 }
 
+// leaveOut records a not_shared gap on the whole artifact with schema ID
+// schemaID at path, which the collect config key left out. The gap names
+// the artifact by its schema when it has one, and otherwise by its path, so
+// leaving one artifact out twice records one gap.
+func (r *Recorder) leaveOut(schemaID, path string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	at := Location{Path: path}
+	if schemaID != "" {
+		at = Location{Schema: schemaID}
+	}
+	r.keep(notSharedGap(at))
+}
+
+// notShared records that the value at at was left out because it was copied
+// from an artifact the collect config key left out. It replaces any gap
+// already recorded there, such as one Mirror copied from that artifact.
+func (r *Recorder) notShared(at Location) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gaps = slices.DeleteFunc(r.gaps, func(g Gap) bool { return g.Location == at })
+	r.keep(notSharedGap(at))
+}
+
+func notSharedGap(at Location) Gap {
+	return Gap{Location: at, Status: GapNotCollected, Code: CodeNotShared, Owner: CodeNotShared.Owner(),
+		Detail: "left out by the collect config key"}
+}
+
+// dropInside removes the gaps that inside reports as being in an artifact
+// the run does not write.
+func (r *Recorder) dropInside(inside func(Gap) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gaps = slices.DeleteFunc(r.gaps, inside)
+}
+
 // keep adds g unless a gap is already recorded at its location. The caller
 // holds r.mu.
 func (r *Recorder) keep(g Gap) {
 	for _, existing := range r.gaps {
-		if existing.Schema == g.Schema && existing.Path == g.Path && existing.Pointer == g.Pointer {
+		if existing.Location == g.Location {
 			return
 		}
 	}

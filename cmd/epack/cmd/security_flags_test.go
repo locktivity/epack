@@ -206,6 +206,19 @@ func TestInsecureCLIFlagsEmitAuditEvent_Matrix(t *testing.T) {
 			validate: validateVerifyFlags,
 		},
 		{
+			name:      "verify skip tlog",
+			component: "verify",
+			setFlags: func() {
+				verifyInsecureSkipTlog = true
+				verifyPublicKeys = []string{"key.pub"}
+			},
+			reset: func() {
+				verifyInsecureSkipTlog = false
+				verifyPublicKeys = nil
+			},
+			validate: validateVerifyFlags,
+		},
+		{
 			name:      "sign",
 			component: "sign",
 			setFlags: func() {

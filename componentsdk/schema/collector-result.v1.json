@@ -34,11 +34,11 @@
       "properties": {
         "status": {
           "enum": ["collected", "partial"],
-          "description": "collected when the run read every value its level collects, or partial when it left values out. gaps lists each one."
+          "description": "collected when the run read every value its level collects, or partial when it left values out. gaps lists each one. A not_shared gap does not make a run partial."
         },
         "code": {
           "$ref": "#/$defs/code",
-          "description": "For a partial run, the code of the first gap, saying why its value was left out."
+          "description": "For a partial run, the code of the first gap other than a not_shared one, saying why its value was left out."
         },
         "owner": {
           "$ref": "#/$defs/owner",
@@ -76,25 +76,48 @@
         "operations": {
           "type": "array",
           "items": { "$ref": "#/$defs/operation" },
-          "description": "One entry per kind of call, with its counts."
+          "description": "One entry per kind of call: whether a request was retried and which codes came back, with the counts at the audit and internal levels."
         },
         "requests": {
           "type": "array",
           "items": { "$ref": "#/$defs/request" },
+          "x-epack-level": "audit",
           "description": "One row per request, at the audit and internal levels: the first 1000, then up to 1000 more whose attempt failed or was a retry."
         },
         "requests_dropped": {
           "type": "integer",
           "minimum": 0,
+          "x-epack-level": "audit",
           "description": "Number of request rows left out."
         },
         "problem_requests_dropped": {
           "type": "integer",
           "minimum": 0,
+          "x-epack-level": "audit",
           "description": "Number of the rows left out whose attempt failed or was a retry. Present wherever the rows are; 0 means every failed or retried request has a row."
         }
       },
       "description": "The API calls the collector made."
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/warning" },
+      "description": "Warnings about the run as a whole, each with what to do about it. Below the audit level, a warning keeps only its advice and missing permission. A warning with neither stays in the list."
+    },
+    "unrecognized": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["vocabulary", "count"],
+        "additionalProperties": false,
+        "properties": {
+          "vocabulary": {"type": "string", "description": "The vocabulary's name, such as okta.event_types."},
+          "count": {"type": "integer", "minimum": 1, "description": "How many distinct values the run read that the vocabulary lacks."},
+          "values": {"type": "array", "items": {"type": "string"}, "maxItems": 50, "x-epack-level": "audit", "description": "The first 50 of those values, sorted. Present at the audit and internal levels only."}
+        }
+      },
+      "description": "Values the run read from the vendor that the collector's vocabulary lacks, grouped by vocabulary. An entry means the vendor sends values the collector does not know."
     },
     "signed_in_as": {
       "type": "object",
@@ -111,7 +134,8 @@
         },
         "tenant_id": {
           "type": "string",
-          "description": "The tenant, account, or organization signed in to."
+          "x-epack-level": "audit",
+          "description": "The tenant, account, or organization signed in to. Present at the audit and internal levels only."
         },
         "auth_method": {
           "type": "string",
@@ -131,9 +155,32 @@
           "const": true,
           "description": "Present when the collector can show that its credential could only read."
         },
-        "id": { "type": "string", "description": "Present at the audit and internal levels only." }
+        "id": { "type": "string", "x-epack-level": "audit", "description": "Present at the audit and internal levels only." }
       },
       "description": "The identity the collector signed in as. Absent when the collector does not report one."
+    },
+    "collect": {
+      "type": "object",
+      "required": ["listed"],
+      "additionalProperties": false,
+      "properties": {
+        "listed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The kinds of evidence the collect config key listed, such as cloud-posture."
+        },
+        "left_out": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Each kind the collector could write that the key left out. Each has a not_shared gap."
+        },
+        "unmatched": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Each kind the key listed that the run never wrote, such as a misspelled one."
+        }
+      },
+      "description": "What the collect config key listed and what it left out, at every level. Absent when the config has no such key."
     },
     "run": {
       "type": "object",
@@ -154,6 +201,11 @@
           "format": "date-time",
           "description": "When the run finished, in RFC 3339 UTC."
         },
+        "level": {
+          "type": "string",
+          "enum": ["trust", "audit", "internal"],
+          "description": "The level the run collected at, at every level. A reader uses it to tell a value the level left out from one the collector could not read. Absent from results of older SDKs."
+        },
         "proxy": {
           "type": "boolean",
           "description": "True when a proxy variable such as HTTPS_PROXY was set for the run."
@@ -168,7 +220,7 @@
   },
   "$defs": {
     "code": {
-      "enum": ["auth_failed", "permission_denied", "config_invalid", "not_licensed", "rate_limited", "vendor_error", "timeout", "invalid_response", "internal"]
+      "enum": ["auth_failed", "permission_denied", "config_invalid", "not_licensed", "rate_limited", "vendor_error", "timeout", "invalid_response", "internal", "not_shared"]
     },
     "owner": {
       "enum": ["customer", "nobody", "vendor", "vendor_or_runner", "publisher"]
@@ -197,7 +249,7 @@
         },
         "code": {
           "$ref": "#/$defs/code",
-          "description": "Why the value was left out: auth_failed, permission_denied, config_invalid, not_licensed, rate_limited, vendor_error, timeout, invalid_response, or internal."
+          "description": "Why the value was left out: auth_failed, permission_denied, config_invalid, not_licensed, rate_limited, vendor_error, timeout, invalid_response, internal, or not_shared. not_shared means the customer left it out of this pack with the collect config key."
         },
         "owner": {
           "$ref": "#/$defs/owner",
@@ -210,7 +262,8 @@
         "unmeasured": {
           "type": "integer",
           "minimum": 0,
-          "description": "For a partial gap, the number of items that could not be read."
+          "x-epack-level": "audit",
+          "description": "For a partial gap, the number of items that could not be read. Present at the audit and internal levels only."
         },
         "operation": {
           "type": "string",
@@ -219,7 +272,8 @@
         "call": {
           "type": "integer",
           "minimum": 1,
-          "description": "The number of that call, matching the call on its request rows. A partial gap names the first failed call among those it counts."
+          "x-epack-level": "audit",
+          "description": "The number of that call, matching the call on its request rows. A partial gap names the first failed call among those it counts. Present at the audit and internal levels only."
         },
         "source": {
           "type": "string",
@@ -231,9 +285,49 @@
         },
         "warning": {
           "type": "string",
+          "x-epack-level": "audit",
           "description": "The collector's message to the operator about the gap, redacted. Present at the audit and internal levels only."
         },
-        "detail": { "type": "string", "description": "Present at the audit and internal levels only." }
+        "detail": { "type": "string", "x-epack-level": "audit", "description": "Present at the audit and internal levels only." },
+        "fix": { "type": "string", "maxLength": 500, "description": "The one instruction that fixes collection. It uses fixed wording plus permission, plan, and region names. A gap has at most one of fix, no_action, and choice." },
+        "no_action": { "type": "boolean", "description": "True when nothing needs changing now. It does not clear the gap." },
+        "choice": { "$ref": "#/$defs/choice" },
+        "scope": { "type": "string", "maxLength": 500, "x-epack-level": "audit", "description": "The account, tenant, or region affected. Present at the audit and internal levels only." }
+      }
+    },
+    "choice": {
+      "type": "object",
+      "required": ["question", "options"],
+      "additionalProperties": false,
+      "description": "A decision for the customer that has real consequences.",
+      "properties": {
+        "question": { "type": "string", "maxLength": 500 },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["label", "consequence"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string", "maxLength": 500 },
+              "consequence": { "type": "string", "maxLength": 500, "description": "What happens if the customer picks the option, including its cost and what stays Not collected." }
+            }
+          }
+        }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A warning about the run as a whole, with what to do about it.",
+      "properties": {
+        "message": { "type": "string", "maxLength": 500, "x-epack-level": "audit", "description": "The collector's message about what happened. Present at the audit and internal levels only." },
+        "missing_permission": { "type": "string", "description": "The permission to grant, in the vendor's own terms." },
+        "fix": { "type": "string", "maxLength": 500, "description": "The one instruction that fixes collection. A warning has at most one of fix, no_action, and choice." },
+        "no_action": { "type": "boolean", "description": "True when nothing needs changing now." },
+        "choice": { "$ref": "#/$defs/choice" },
+        "scope": { "type": "string", "maxLength": 500, "x-epack-level": "audit", "description": "The account, tenant, or region affected. Present at the audit and internal levels only." }
       }
     },
     "check": {
@@ -241,7 +335,7 @@
       "required": ["check", "pointer", "message"],
       "additionalProperties": false,
       "properties": {
-        "check": { "type": "string", "description": "schema, schema_unusable, population, nulls, rollups, or ratios." },
+        "check": { "type": "string", "description": "schema, schema_unusable, population, nulls, rollups, ratios, guidance, or levels." },
         "path": { "type": "string", "description": "The artifact the finding is about. A schema_unusable finding has none." },
         "pointer": {
           "type": "string",
@@ -256,7 +350,7 @@
     },
     "operation": {
       "type": "object",
-      "required": ["name", "calls", "attempts", "retries"],
+      "required": ["name"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -266,27 +360,46 @@
         "calls": {
           "type": "integer",
           "minimum": 0,
-          "description": "Number of times the collector made the call, not counting retries."
+          "x-epack-level": "audit",
+          "description": "Number of times the collector made the call, not counting retries. Present at the audit and internal levels only."
         },
         "attempts": {
           "type": "integer",
           "minimum": 0,
-          "description": "Number of requests sent, including retries."
+          "x-epack-level": "audit",
+          "description": "Number of requests sent, including retries. Present at the audit and internal levels only."
         },
         "retries": {
           "type": "integer",
           "minimum": 0,
-          "description": "Number of requests that were retries."
+          "x-epack-level": "audit",
+          "description": "Number of requests that were retries. Present at the audit and internal levels only."
+        },
+        "retried": {
+          "type": "boolean",
+          "description": "True when a request for the operation was a retry."
         },
         "statuses": {
           "type": "object",
           "additionalProperties": { "type": "integer" },
-          "description": "Number of responses per HTTP status code, or per DNS response code for a lookup."
+          "x-epack-level": "audit",
+          "description": "Number of responses per HTTP status code, or per DNS response code for a lookup. Present at the audit and internal levels only."
+        },
+        "status_codes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The HTTP status codes, or DNS response codes for a lookup, that the operation's responses had, without their counts."
         },
         "errors": {
           "type": "object",
           "additionalProperties": { "type": "integer" },
-          "description": "Number of failed attempts per code."
+          "x-epack-level": "audit",
+          "description": "Number of failed attempts per code. Present at the audit and internal levels only."
+        },
+        "error_codes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/code" },
+          "description": "The codes of the operation's failed attempts, without their counts."
         },
         "deprecation": {
           "type": "string",
@@ -295,34 +408,39 @@
         "sunset": {
           "type": "string",
           "description": "The Sunset header from the vendor's most recent response that carried one."
+        },
+        "permission": {
+          "type": "string",
+          "description": "The permission the call needs, in the vendor's terms. The collector declares it with Operation.Permission. A permission_denied gap from the call records it as its missing_permission."
         }
       }
     },
     "step": {
       "type": "object",
-      "required": ["name", "title", "start_ms", "end_ms", "requests", "calls", "retries", "failed"],
+      "required": ["name", "title"],
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "minLength": 1, "description": "The step's name, such as people. Step names are part of the collector's contract, like operation names." },
         "title": { "type": "string", "description": "The step's title, such as People and sign-in methods." },
-        "start_ms": { "type": "integer", "minimum": 0, "description": "When the step started, in milliseconds after the run's started_at." },
-        "end_ms": { "type": "integer", "minimum": 0, "description": "When the step ended, in milliseconds after the run's started_at. A step still open when the collector emitted ended then." },
-        "requests": { "type": "integer", "minimum": 0, "description": "The requests sent in the step, including rows left out of calls.requests." },
-        "calls": { "type": "integer", "minimum": 0, "description": "The calls those requests belong to." },
-        "retries": { "type": "integer", "minimum": 0, "description": "The requests that were retries." },
-        "failed": { "type": "integer", "minimum": 0, "description": "The attempts that failed: those with an error code or a status of 400 or more." },
+        "start_ms": { "type": "integer", "minimum": 0, "x-epack-level": "audit", "description": "When the step started, in milliseconds after the run's started_at. Present at the audit and internal levels only." },
+        "end_ms": { "type": "integer", "minimum": 0, "x-epack-level": "audit", "description": "When the step ended, in milliseconds after the run's started_at. A step still open when the collector emitted ended then. Present at the audit and internal levels only." },
+        "requests": { "type": "integer", "minimum": 0, "x-epack-level": "audit", "description": "The requests sent in the step, including rows left out of calls.requests. Present at the audit and internal levels only." },
+        "calls": { "type": "integer", "minimum": 0, "x-epack-level": "audit", "description": "The calls those requests belong to. Present at the audit and internal levels only." },
+        "retries": { "type": "integer", "minimum": 0, "x-epack-level": "audit", "description": "The requests that were retries. Present at the audit and internal levels only." },
+        "failed": { "type": "integer", "minimum": 0, "x-epack-level": "audit", "description": "The attempts that failed: those with an error code or a status of 400 or more. Present at the audit and internal levels only." },
+        "any_failed": { "type": "boolean", "description": "True when an attempt in the step failed: one with an error code or a status of 400 or more." },
         "operations": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "calls"],
+            "required": ["name"],
             "additionalProperties": false,
             "properties": {
               "name": { "type": "string", "description": "The operation." },
-              "calls": { "type": "integer", "minimum": 0, "description": "Its calls in the step." }
+              "calls": { "type": "integer", "minimum": 0, "x-epack-level": "audit", "description": "Its calls in the step. Present at the audit and internal levels only." }
             }
           },
-          "description": "Each operation called in the step, in the order first called, with its number of calls."
+          "description": "Each operation called in the step, in the order first called, with its number of calls at the audit and internal levels."
         }
       }
     },

@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/locktivity/epack/internal/jsonpointer"
 )
 
 // view lists the schema objects that apply at one place in an instance, each
@@ -148,8 +150,7 @@ func (s *Schema) levelAt(doc any, ptr string) (view, int, bool) {
 		return nil, 0, false
 	}
 	cur := doc
-	for _, token := range strings.Split(ptr[1:], "/") {
-		token = unescape(token)
+	for _, token := range jsonpointer.Tokens(ptr) {
 		switch node := cur.(type) {
 		case map[string]any:
 			cur = node[token]
@@ -231,9 +232,9 @@ func target(ref string, tokens []string) (string, bool) {
 		if up > len(base) {
 			return "", false
 		}
-		return pointer(base[:len(base)-up]) + rest, true
+		return jsonpointer.Format(base[:len(base)-up]) + rest, true
 	}
-	return pointer(append(append([]string(nil), base...), ref)), true
+	return jsonpointer.Format(append(append([]string(nil), base...), ref)), true
 }
 
 func relative(ref string) (int, string, bool) {

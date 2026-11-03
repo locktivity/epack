@@ -8,9 +8,9 @@ import (
 	"io"
 	"math/big"
 	"strconv"
-	"strings"
 
 	"github.com/locktivity/epack/componentsdk"
+	"github.com/locktivity/epack/internal/jsonpointer"
 )
 
 const (
@@ -157,7 +157,7 @@ func compareJSON(artifact, pointer string, base, head any, out *[]change) {
 			keys[k] = true
 		}
 		for _, k := range sortedKeys(keys) {
-			child := pointer + "/" + escapePointer(k)
+			child := pointer + "/" + jsonpointer.Escape(k)
 			bv, inBase := b[k]
 			hv, inHead := h[k]
 			switch {
@@ -217,10 +217,6 @@ func scalarEqual(a, b any) bool {
 		return an == bn
 	}
 	return a == b
-}
-
-func escapePointer(key string) string {
-	return strings.NewReplacer("~", "~0", "/", "~1").Replace(key)
 }
 
 // mustJSON encodes a value decoded from JSON or built here, which always

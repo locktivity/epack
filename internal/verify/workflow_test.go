@@ -1,12 +1,22 @@
 package verify
 
 import (
+	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/locktivity/epack/pack"
+	"github.com/locktivity/epack/pack/builder"
 	"github.com/locktivity/epack/pack/verify"
+	"github.com/locktivity/epack/sign"
+	"github.com/locktivity/epack/sign/sigstore"
 )
 
 func TestAttestationDetailCarriesTheLogEntryAndCertificate(t *testing.T) {
@@ -49,4 +59,86 @@ func TestAttestationDetailCarriesTheLogEntryAndCertificate(t *testing.T) {
 	if strings.Contains(string(unlogged), "log_index") {
 		t.Errorf("a signature with no log entry = %s", unlogged)
 	}
+}
+
+func TestPackVerifiesAKeySignatureWithOnlyThePublicKey(t *testing.T) {
+	key := newKey(t)
+	p := keySignedPack(t, key)
+	trustRoot := filepath.Join("..", "..", "pack", "verify", "testdata", "public-good.json")
+
+	tests := []struct {
+		name      string
+		opts      PackOpts
+		wantError string
+	}{
+		{
+			name: "signer's key, skipping the log",
+			opts: PackOpts{PublicKeys: []crypto.PublicKey{key.Public()}, InsecureSkipTlog: true},
+		},
+		{
+			name:      "signer's key requiring a log entry",
+			opts:      PackOpts{PublicKeys: []crypto.PublicKey{key.Public()}},
+			wantError: "not recorded in a transparency log",
+		},
+		{
+			name:      "another key",
+			opts:      PackOpts{PublicKeys: []crypto.PublicKey{newKey(t).Public()}, InsecureSkipTlog: true},
+			wantError: "none of the 1 provided public keys signed this attestation",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.opts.TrustRootPath = trustRoot
+			result, err := Pack(context.Background(), p, tt.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantError == "" {
+				if !result.Verified || len(result.Attestations) != 1 || result.Attestations[0].Method != "key" {
+					t.Fatalf("result = %+v, want one verified key attestation", result)
+				}
+				return
+			}
+			if result.Verified || len(result.AttestationErrors) != 1 || !strings.Contains(result.AttestationErrors[0], tt.wantError) {
+				t.Fatalf("attestation errors = %q, want %q", result.AttestationErrors, tt.wantError)
+			}
+			if strings.Count(result.AttestationErrors[0], "verification failed") != 1 {
+				t.Fatalf("attestation error %q, want one verification failed prefix", result.AttestationErrors[0])
+			}
+		})
+	}
+}
+
+func keySignedPack(t *testing.T, key *ecdsa.PrivateKey) *pack.Pack {
+	t.Helper()
+	b := builder.New("test/key")
+	if err := b.AddBytes("artifacts/a.json", []byte(`{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "key.epack")
+	if err := b.Build(path); err != nil {
+		t.Fatal(err)
+	}
+	signer, err := sigstore.NewSigner(context.Background(), sigstore.Options{PrivateKey: key, SkipTlog: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sign.SignPackFile(context.Background(), path, signer); err != nil {
+		t.Fatal(err)
+	}
+	p, err := pack.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+func newKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
 }

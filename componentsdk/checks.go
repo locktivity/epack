@@ -4,11 +4,11 @@ import (
 	"embed"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 // Output check names, as CheckFinding.Check carries them.
@@ -18,10 +18,14 @@ const (
 	// CheckSchemaUnusable reports a schema in CollectorSpec.Schemas that does
 	// not compile, so the artifacts it covers went unchecked.
 	CheckSchemaUnusable = outputcheck.CheckSchemaUnusable
-	// CheckPopulation reports a value whose x-epack-denominator is 0.
+	// CheckPopulation reports a value whose x-epack-denominator is 0 or was
+	// not read. It also reports a value whose x-epack-present is false or was
+	// not read.
 	CheckPopulation = outputcheck.CheckPopulation
 	// CheckNulls reports a null number or boolean that no gap, x-epack-null
-	// note, or denominator of 0 explains.
+	// note, or population annotation accounts for. A population annotation
+	// accounts for a null when the denominator is 0 or unread, or when
+	// x-epack-present is false or unread.
 	CheckNulls = outputcheck.CheckNulls
 	// CheckRollups reports an x-epack-rollup its rows do not give.
 	CheckRollups = outputcheck.CheckRollups
@@ -29,6 +33,13 @@ const (
 	// its x-epack-numerator and x-epack-denominator, rounded as its
 	// x-epack-rounding says.
 	CheckRatios = outputcheck.CheckRatios
+	// CheckGuidance reports a gap or run warning that has more than one of
+	// Fix, NoAction, and Decide. It also reports a Decide with fewer than two
+	// options. The SDK keeps the first advice given.
+	CheckGuidance = "guidance"
+	// CheckLevels reports a value the collector wrote that its schema places
+	// above the run's level with x-epack-level. The SDK leaves the value out.
+	CheckLevels = outputcheck.CheckLevels
 )
 
 // CheckFinding is one problem the output checks found when the collector
@@ -51,11 +62,12 @@ const (
 var normalizedFS embed.FS
 
 var normalizedFiles = map[string]string{
-	"evidencepack/idp-posture@v1":   "schema/normalized/idp-posture.v1.json",
-	"evidencepack/cloud-posture@v1": "schema/normalized/cloud-posture.v1.json",
-	"evidencepack/vcs-posture@v1":   "schema/normalized/vcs-posture.v1.json",
-	"evidencepack/email-dns@v1":     "schema/normalized/email-dns.v1.json",
-	"evidencepack/tls@v1":           "schema/normalized/tls.v1.json",
+	"evidencepack/idp-posture@v1":      "schema/normalized/idp-posture.v1.json",
+	"evidencepack/cloud-posture@v1":    "schema/normalized/cloud-posture.v1.json",
+	"evidencepack/vcs-posture@v1":      "schema/normalized/vcs-posture.v1.json",
+	"evidencepack/email-dns@v1":        "schema/normalized/email-dns.v1.json",
+	"evidencepack/tls@v1":              "schema/normalized/tls.v1.json",
+	"evidencepack/endpoint-posture@v1": "schema/normalized/endpoint-posture.v1.json",
 }
 
 // NormalizedSchemaJSON returns the SDK's JSON Schema for a normalized artifact
@@ -175,11 +187,11 @@ func outputChecks(set *emittedSet, spec map[string]*artifactSchema, gaps []Gap, 
 	return out, dropped
 }
 
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
+func sortedKeys[K ~string, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }

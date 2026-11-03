@@ -115,6 +115,36 @@ type config struct {
 	tlogThreshold             int
 	tsaThreshold              int
 	insecureSkipIdentityCheck bool
+	insecureSkipTlogForKeys   bool
+}
+
+// hasIdentityPolicy reports whether a certificate's issuer or subject is
+// constrained.
+func (c *config) hasIdentityPolicy() bool {
+	return c.issuer != "" || c.issuerRegexp != nil || c.subject != "" || c.subjectRegexp != nil
+}
+
+// acceptsCertificates reports whether any certificate signer can verify:
+// one matching the identity policy, or any when the check is skipped.
+func (c *config) acceptsCertificates() bool {
+	return c.hasIdentityPolicy() || c.insecureSkipIdentityCheck
+}
+
+// keyTlogThreshold is how many transparency log entries a key signature
+// needs.
+func (c *config) keyTlogThreshold() int {
+	if c.insecureSkipTlogForKeys {
+		return 0
+	}
+	return c.tlogThreshold
+}
+
+// needsTrustedRoot reports whether verification can use the trusted root.
+// Certificates chain to its authorities, and log entries and signed
+// timestamps are checked against its logs and timestamp authorities.
+func (c *config) needsTrustedRoot() bool {
+	keysNeedObservers := len(c.publicKeys) > 0 && (c.keyTlogThreshold() > 0 || c.tsaThreshold > 0)
+	return c.acceptsCertificates() || keysNeedObservers
 }
 
 // Option configures a Verifier.
@@ -179,6 +209,16 @@ func WithTrustedRoot(tr root.TrustedMaterial) Option {
 func WithTransparencyLogThreshold(threshold int) Option {
 	return func(c *config) {
 		c.tlogThreshold = threshold
+	}
+}
+
+// WithInsecureSkipTlogForKeys accepts key signatures that have no
+// transparency log entry, such as ones made with sign's SkipTlog. Nothing then
+// records publicly that the key signed. Certificate signatures still need
+// the transparency log threshold.
+func WithInsecureSkipTlogForKeys() Option {
+	return func(c *config) {
+		c.insecureSkipTlogForKeys = true
 	}
 }
 

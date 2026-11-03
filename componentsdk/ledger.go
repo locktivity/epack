@@ -20,16 +20,26 @@ const (
 	maxProblemRows = 1000
 )
 
-// OperationCalls counts one operation's calls in a run.
+// OperationCalls counts one operation's calls in a run. Retried, StatusCodes,
+// and ErrorCodes say whether a request was retried and which codes came
+// back, at every level. The counts appear at the audit and internal levels
+// only, since how many calls a collector makes grows with what the account
+// holds.
 type OperationCalls struct {
 	Name        string         `json:"name"`
 	Calls       int            `json:"calls"`
 	Attempts    int            `json:"attempts"`
 	Retries     int            `json:"retries"`
+	Retried     bool           `json:"retried"`
 	Statuses    map[string]int `json:"statuses,omitempty"`
+	StatusCodes []string       `json:"status_codes,omitempty"`
 	Errors      map[Code]int   `json:"errors,omitempty"`
+	ErrorCodes  []Code         `json:"error_codes,omitempty"`
 	Deprecation string         `json:"deprecation,omitempty"`
 	Sunset      string         `json:"sunset,omitempty"`
+	// Permission is the permission the collector declared for the call in
+	// Operation.Permission.
+	Permission string `json:"permission,omitempty"`
 }
 
 // CallRow is one attempt of one call. Routes are templated and query values
@@ -89,11 +99,14 @@ func newLedger() *ledger {
 	return &ledger{ops: map[string]*OperationCalls{}}
 }
 
-func (l *ledger) stats(name string) *OperationCalls {
-	s, ok := l.ops[name]
+func (l *ledger) stats(op Operation) *OperationCalls {
+	s, ok := l.ops[op.Name]
 	if !ok {
-		s = &OperationCalls{Name: name}
-		l.ops[name] = s
+		s = &OperationCalls{Name: op.Name}
+		l.ops[op.Name] = s
+	}
+	if s.Permission == "" && permissionName(op.Permission) {
+		s.Permission = op.Permission
 	}
 	return s
 }
@@ -147,7 +160,7 @@ type attemptRecord struct {
 func (l *ledger) add(a attemptRecord, requestIDHeaders []string, route func(string) string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s := l.stats(a.call.op.Name)
+	s := l.stats(a.call.op)
 	s.Attempts++
 	if a.attempt == 1 {
 		s.Calls++
@@ -203,7 +216,7 @@ type callRef struct {
 func (l *ledger) addCall(c callStart, method, host, rcode string, code Code, took time.Duration) *callRef {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s := l.stats(c.op.Name)
+	s := l.stats(c.op)
 	s.Calls++
 	s.Attempts++
 	if rcode != "" {
@@ -230,7 +243,7 @@ func (l *ledger) addCall(c callStart, method, host, rcode string, code Code, too
 func (l *ledger) failCall(op Operation, ref *callRef, code Code) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s := l.stats(op.Name)
+	s := l.stats(op)
 	if s.Errors == nil {
 		s.Errors = map[Code]int{}
 	}
@@ -260,7 +273,7 @@ func (l *ledger) failCall(op Operation, ref *callRef, code Code) {
 func (l *ledger) addRefused(c callStart, req *http.Request, route func(string) string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s := l.stats(c.op.Name)
+	s := l.stats(c.op)
 	s.Calls++
 	if s.Errors == nil {
 		s.Errors = map[Code]int{}
@@ -315,6 +328,13 @@ func (l *ledger) operations() []OperationCalls {
 		c := *s
 		c.Statuses = copyMap(s.Statuses)
 		c.Errors = copyMap(s.Errors)
+		c.Retried = s.Retries > 0
+		if len(s.Statuses) > 0 {
+			c.StatusCodes = sortedKeys(s.Statuses)
+		}
+		if len(s.Errors) > 0 {
+			c.ErrorCodes = sortedKeys(s.Errors)
+		}
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

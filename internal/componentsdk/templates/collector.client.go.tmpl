@@ -30,9 +30,17 @@ const (
 )
 
 // PermissionReadUsers is the permission the token needs to list users and
-// their factors, in the vendor's own terms, which a permission_denied gap
-// names. TODO: Use the vendor's name for it.
+// their factors, in the vendor's own terms. TODO: Use the vendor's name for
+// it.
 const PermissionReadUsers = "users:read"
+
+// permissions is the permission each call needs. Declared with the call, a
+// permission is listed in the collector result, and a permission_denied gap
+// recorded from the call's error names it.
+var permissions = map[string]string{
+	OpListUsers:   PermissionReadUsers,
+	OpListFactors: PermissionReadUsers,
+}
 
 const (
 	maxResponseBytes = 32 << 20
@@ -120,7 +128,7 @@ func list[T any](ctx context.Context, c *Client, op, path string) ([]T, error) {
 // body wanting can build an error with componentsdk.ResponseError, which
 // gives a gap recorded from it the response's call.
 func (c *Client) get(ctx context.Context, op, path string, out any) (*http.Response, error) {
-	ctx = componentsdk.WithOperation(ctx, componentsdk.Operation{Name: op})
+	ctx = componentsdk.WithOperation(ctx, componentsdk.Operation{Name: op, Permission: permissions[op]})
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
 	if err != nil {
 		return nil, err

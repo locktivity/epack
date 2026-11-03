@@ -481,7 +481,7 @@ func (s *scrubber) emails(in string) string {
 		if s.keep[m] || s.keep[key] || fakeEmail.MatchString(key) {
 			return m
 		}
-		f := s.fake("email", key, func(n int) string { return fmt.Sprintf("user%d@example.com", n) })
+		f := s.fake("email", key, nthFakeEmail)
 		return strings.Replace(f, "@", sep, 1)
 	})
 }
@@ -491,20 +491,70 @@ func (s *scrubber) guid(m string) string {
 	if s.keep[m] || s.keep[key] || fakeGUID.MatchString(key) {
 		return m
 	}
-	return s.fake("guid", key, func(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) })
+	return s.fake("guid", key, nthFakeGUID)
 }
 
 // accounts replaces 12-digit numbers, such as AWS account IDs alone or in
 // ARNs, but not where they are part of a longer number, a decimal, a word,
 // or a GUID.
 func (s *scrubber) accounts(in string) string {
-	return replaceIndexed(in, digitRun.FindAllStringIndex(in, -1), func(a, b int) (string, bool) {
+	return replaceIndexed(in, accountSpans(in), func(a, b int) (string, bool) {
 		run := in[a:b]
-		if len(run) != 12 || !accountBoundary(in, a, b) || s.keep[run] {
+		if s.keep[run] {
 			return "", false
 		}
-		return s.fake("aws_account", run, func(n int) string { return strconv.Itoa(123456789011 + n) }), true
+		return s.fake("aws_account", run, nthFakeAccount), true
 	})
+}
+
+// accountSpans returns where s holds a 12-digit AWS account number.
+func accountSpans(s string) [][]int {
+	var out [][]int
+	for _, span := range digitRun.FindAllStringIndex(s, -1) {
+		if span[1]-span[0] == 12 && accountBoundary(s, span[0], span[1]) {
+			out = append(out, span)
+		}
+	}
+	return out
+}
+
+// The scrubber writes these fakes for a tenant's email addresses, GUIDs, and
+// AWS account numbers. The fakes are numbered from 1 in the order the values
+// appear.
+const (
+	fakeGUIDPrefix  = "00000000-0000-4000-8000-"
+	fakeAccountBase = 123456789011
+	// maxFakeAccounts is the largest number of fake account numbers
+	// scrubbedFakes recognizes. A recording holds far fewer.
+	maxFakeAccounts = 1_000_000
+)
+
+func nthFakeEmail(n int) string   { return fmt.Sprintf("user%d@example.com", n) }
+func nthFakeGUID(n int) string    { return fmt.Sprintf(fakeGUIDPrefix+"%012d", n) }
+func nthFakeAccount(n int) string { return strconv.Itoa(fakeAccountBase + n) }
+
+// scrubbedFakes returns the fakes in s that the scrubber writes for a
+// tenant's email addresses, GUIDs, and AWS account numbers. In a recording,
+// each fake replaces one of the tenant's own identifiers wherever it
+// appears, even inside another value such as an ARN.
+func scrubbedFakes(s string) []string {
+	var out []string
+	for _, m := range emailAddress.FindAllString(s, -1) {
+		if fakeEmail.MatchString(strings.ToLower(strings.Replace(m, "%40", "@", 1))) {
+			out = append(out, m)
+		}
+	}
+	for _, m := range guidPattern.FindAllString(s, -1) {
+		if strings.HasPrefix(m, fakeGUIDPrefix) && fakeGUID.MatchString(m) {
+			out = append(out, m)
+		}
+	}
+	for _, span := range accountSpans(s) {
+		if n, err := strconv.Atoi(s[span[0]:span[1]]); err == nil && n > fakeAccountBase && n <= fakeAccountBase+maxFakeAccounts {
+			out = append(out, s[span[0]:span[1]])
+		}
+	}
+	return out
 }
 
 func accountBoundary(s string, a, b int) bool {

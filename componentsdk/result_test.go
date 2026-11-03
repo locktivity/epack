@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 func TestResolveGaps(t *testing.T) {
@@ -21,9 +21,9 @@ func TestResolveGaps(t *testing.T) {
 		{Data: map[string]any{"mfa_coverage_pct": nil}, Schema: "evidencepack/idp-posture@v1"},
 	}
 	gaps, err := resolveGaps([]Gap{
-		{Path: "artifacts/demo.entra.json", Pointer: "/mfa/coverage_pct"},
-		{Schema: "evidencepack/idp-posture@v1", Pointer: "/mfa_coverage_pct"},
-		{Path: "artifacts/never-emitted.json", Pointer: "/x"},
+		{Location: Location{Path: "artifacts/demo.entra.json", Pointer: "/mfa/coverage_pct"}},
+		{Location: Location{Schema: "evidencepack/idp-posture@v1", Pointer: "/mfa_coverage_pct"}},
+		{Location: Location{Path: "artifacts/never-emitted.json", Pointer: "/x"}},
 	}, artifacts, "demo")
 	if err != nil {
 		t.Fatal(err)
@@ -35,18 +35,18 @@ func TestResolveGaps(t *testing.T) {
 		t.Errorf("gaps = %+v", gaps)
 	}
 
-	_, err = resolveGaps([]Gap{{Path: "artifacts/demo.entra.json", Pointer: "/users"}}, artifacts, "demo")
+	_, err = resolveGaps([]Gap{{Location: Location{Path: "artifacts/demo.entra.json", Pointer: "/users"}}}, artifacts, "demo")
 	if err == nil || !strings.Contains(err.Error(), "has a value at /users") {
 		t.Errorf("err = %v, want a value-and-gap conflict", err)
 	}
 
 	twins := append(artifacts, CollectedArtifact{Data: map[string]any{}, Schema: "evidencepack/idp-posture@v1", Path: "b.json"})
-	_, err = resolveGaps([]Gap{{Schema: "evidencepack/idp-posture@v1", Pointer: "/x"}}, twins, "demo")
+	_, err = resolveGaps([]Gap{{Location: Location{Schema: "evidencepack/idp-posture@v1", Pointer: "/x"}}}, twins, "demo")
 	if err == nil || !strings.Contains(err.Error(), "several artifacts share") {
 		t.Errorf("err = %v, want an ambiguity error", err)
 	}
 
-	_, err = resolveGaps([]Gap{{Path: "artifacts/demo.entra.json", Pointer: "mfa"}}, artifacts, "demo")
+	_, err = resolveGaps([]Gap{{Location: Location{Path: "artifacts/demo.entra.json", Pointer: "mfa"}}}, artifacts, "demo")
 	if err == nil {
 		t.Error("a pointer without a leading slash should fail")
 	}
@@ -59,7 +59,7 @@ func TestAPartialGapMayNameAListReadInPart(t *testing.T) {
 		"mfa_pct": 50,
 	}, Path: "artifacts/demo.json"}}
 	at := func(pointer, status string) Gap {
-		return Gap{Path: "artifacts/demo.json", Pointer: pointer, Status: status}
+		return Gap{Location: Location{Path: "artifacts/demo.json", Pointer: pointer}, Status: status}
 	}
 	if _, err := resolveGaps([]Gap{at("/users", GapPartial), at("/groups", GapPartial)}, artifacts, "demo"); err != nil {
 		t.Errorf("a partial gap at a list or object read in part: %v", err)
@@ -108,45 +108,89 @@ func TestBuildResultGatesByLevel(t *testing.T) {
 		resp: &http.Response{StatusCode: 200, Header: http.Header{}}, took: 20 * time.Millisecond}, defaultRequestIDHeaders, nil)
 	artifacts := []CollectedArtifact{{Data: map[string]any{"defender": map[string]any{}}, Path: "artifacts/demo.json"}}
 
-	trust, err := buildResult(resultInput{run: r, level: LevelTrust, artifacts: artifacts, getenv: func(string) string { return "" }, finished: time.Now()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	trust := resultAt(t, resultInput{run: r, level: LevelTrust, artifacts: artifacts, getenv: func(string) string { return "" }, finished: time.Now()})
 	if trust.Outcome.Status != OutcomePartial || trust.Outcome.Code != CodeVendorError || trust.Outcome.Owner != OwnerVendor {
 		t.Errorf("outcome = %+v", trust.Outcome)
 	}
-	if len(trust.Gaps) != 2 || trust.Gaps[0].Pointer != "/defender/score" || trust.Gaps[1].Unmeasured != 12 || trust.Gaps[1].VendorCode != "E0000006" {
+	if len(trust.Gaps) != 2 || trust.Gaps[0].Pointer != "/defender/score" || trust.Gaps[1].VendorCode != "E0000006" {
 		t.Fatalf("gaps = %+v", trust.Gaps)
 	}
 	for _, g := range trust.Gaps {
-		if g.Detail != "" {
-			t.Errorf("trust gap carries detail %q", g.Detail)
+		if g.Detail != "" || g.Unmeasured != 0 {
+			t.Errorf("trust gap carries detail %q or unmeasured %d", g.Detail, g.Unmeasured)
 		}
 	}
-	if trust.SignedInAs == nil || trust.SignedInAs.ID != "" || strings.Join(trust.SignedInAs.Scopes, ",") != "okta.apps.read,okta.users.read" {
+	if trust.SignedInAs == nil || trust.SignedInAs.ID != "" || trust.SignedInAs.TenantID != "" || strings.Join(trust.SignedInAs.Scopes, ",") != "okta.apps.read,okta.users.read" {
 		t.Errorf("trust principal = %+v", trust.SignedInAs)
 	}
 	if len(trust.Calls.Requests) != 0 || len(trust.Calls.Operations) != 1 {
 		t.Errorf("trust calls = %+v", trust.Calls)
 	}
+	if op := trust.Calls.Operations[0]; op.Calls != 0 || op.Attempts != 0 || op.Statuses != nil || op.Retried || strings.Join(op.StatusCodes, ",") != "200" {
+		t.Errorf("trust operation = %+v, want the status codes without counts", op)
+	}
 	if trust.Run.RunID != "run-9" || trust.Collector.Commit != "abc" {
 		t.Errorf("run = %+v, collector = %+v", trust.Run, trust.Collector)
 	}
 
-	audit, err := buildResult(resultInput{run: r, level: LevelAudit, artifacts: artifacts, getenv: func(k string) string {
+	audit := resultAt(t, resultInput{run: r, level: LevelAudit, artifacts: artifacts, getenv: func(k string) string {
 		if k == "HTTPS_PROXY" {
 			return "http://proxy:3128"
 		}
 		return ""
 	}, finished: time.Now()})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if strings.Contains(audit.Gaps[0].Detail, "s3cr3t-token-value") || !strings.Contains(audit.Gaps[0].Detail, "request failed") {
 		t.Errorf("audit detail = %q, want it redacted by value", audit.Gaps[0].Detail)
 	}
-	if audit.SignedInAs.ID != "0oa123" || len(audit.Calls.Requests) != 1 || !audit.Run.Proxy {
+	if audit.SignedInAs.ID != "0oa123" || audit.SignedInAs.TenantID != "acme" || len(audit.Calls.Requests) != 1 || !audit.Run.Proxy {
 		t.Errorf("audit result = %+v", audit)
+	}
+	if audit.Gaps[1].Unmeasured != 12 {
+		t.Errorf("audit gaps = %+v, want 12 unmeasured", audit.Gaps)
+	}
+	if op := audit.Calls.Operations[0]; op.Calls != 1 || op.Attempts != 1 || op.Statuses["200"] != 1 || strings.Join(op.StatusCodes, ",") != "200" {
+		t.Errorf("audit operation = %+v, want the counts and the status codes", op)
+	}
+}
+
+func TestTrustResultHoldsNothingItsSchemaMarksAudit(t *testing.T) {
+	r := newRun(CollectorSpec{Name: "demo"}, "demo", "run-9", nil, 1)
+	r.records.Partial(Location{Path: "artifacts/demo.json", Pointer: "/mfa/coverage_pct"}, 12, &apiErr{status: 403, vendor: "E0000006"})
+	r.records.SignedInAs(Principal{Provider: "okta", Kind: "service_app", TenantID: "acme", ID: "0oa123"})
+	st := r.calls.startStep("people", "People", 0)
+	r.calls.add(attemptRecord{call: callStart{op: Operation{Name: "users.list"}, number: 1, step: st}, attempt: 1, req: mustRequest("https://acme.okta.com/api/v1/users"),
+		resp: &http.Response{StatusCode: 429, Header: http.Header{}}, took: 20 * time.Millisecond}, defaultRequestIDHeaders, nil)
+	r.calls.add(attemptRecord{call: callStart{op: Operation{Name: "users.list"}, number: 1, step: st}, attempt: 2, req: mustRequest("https://acme.okta.com/api/v1/users"),
+		resp: &http.Response{StatusCode: 200, Header: http.Header{}}, took: 20 * time.Millisecond}, defaultRequestIDHeaders, nil)
+	artifacts := []CollectedArtifact{{Data: map[string]any{"mfa": map[string]any{}}, Path: "artifacts/demo.json"}}
+	s, err := outputcheck.Compile(ResultSchemaJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	above := func(level Level) []string {
+		raw, err := resultData(resultInput{run: r, level: level, artifacts: artifacts, finished: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc, err := outputcheck.Decode(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := outputcheck.Validate(s, "result.json", doc); len(got) != 0 {
+			t.Errorf("%s result does not match its schema: %+v", level, got)
+		}
+		var pointers []string
+		for _, f := range outputcheck.AboveLevel(s, "result.json", doc, string(LevelTrust)) {
+			pointers = append(pointers, f.Pointer)
+		}
+		return pointers
+	}
+	if got := above(LevelTrust); len(got) != 0 {
+		t.Errorf("trust result holds %q, which its schema marks audit", got)
+	}
+	if got := above(LevelAudit); len(got) == 0 {
+		t.Error("audit result holds nothing marked audit, so the check above proves nothing")
 	}
 }
 
@@ -305,11 +349,10 @@ func TestCollectorDeadline(t *testing.T) {
 
 func TestResultJSONShape(t *testing.T) {
 	r := newRun(CollectorSpec{Name: "demo"}, "demo", "", nil, 1)
-	res, err := buildResult(resultInput{run: r, level: LevelTrust, getenv: func(string) string { return "" }, finished: time.Unix(0, 0)})
+	raw, err := resultData(resultInput{run: r, level: LevelTrust, getenv: func(string) string { return "" }, finished: time.Unix(0, 0)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(res)
 	var generic map[string]any
 	_ = json.Unmarshal(raw, &generic)
 	for _, key := range []string{"collector", "outcome", "gaps", "calls", "run"} {
@@ -320,6 +363,20 @@ func TestResultJSONShape(t *testing.T) {
 	if gaps, _ := generic["gaps"].([]any); gaps == nil {
 		t.Errorf("gaps should encode as [] when empty: %s", raw)
 	}
+}
+
+// resultAt returns the decoded result that a run at in's level writes.
+func resultAt(t *testing.T, in resultInput) CollectorResult {
+	t.Helper()
+	raw, err := resultData(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res CollectorResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatal(err)
+	}
+	return res
 }
 
 func validateResult(t *testing.T, raw []byte) []outputcheck.Finding {
@@ -413,5 +470,22 @@ func TestResultSchemaStillTakesAnOktaV030Result(t *testing.T) {
 	withGap, _ := json.Marshal(old)
 	if found := validateResult(t, withGap); len(found) > 0 {
 		t.Errorf("a v0.3.0 gap no longer validates: %+v", found)
+	}
+}
+
+func TestTheResultRecordsTheLevelTheRunCollectedAt(t *testing.T) {
+	for _, level := range []Level{LevelTrust, LevelAudit, LevelInternal} {
+		res := RunInProcess(CollectorSpec{Name: "probe"}, func(ctx CollectorContext) error {
+			return ctx.Emit([]CollectedArtifact{{Path: "artifacts/probe.json", Data: map[string]any{}}})
+		}, InProcessOptions{Config: map[string]any{"level": string(level)}})
+		if res.Result == nil || res.Result.Run.Level != level {
+			t.Errorf("%s: run = %+v, want its level recorded at every level, so a reader can tell a field the level left out", level, res.Result)
+		}
+	}
+	res := RunInProcess(CollectorSpec{Name: "probe"}, func(ctx CollectorContext) error {
+		return ctx.Emit([]CollectedArtifact{{Path: "artifacts/probe.json", Data: map[string]any{}}})
+	}, InProcessOptions{Config: map[string]any{"level": "secret"}})
+	if res.Result == nil || res.Result.Run.Level != LevelTrust {
+		t.Errorf("an unknown level records %+v, want trust, the level the run fell back to", res.Result)
 	}
 }

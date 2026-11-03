@@ -46,7 +46,7 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	}
 	ref := d.run.calls.addCall(call, "DIAL", strings.ToLower(host), "", Classify(err), d.run.now().Sub(call.started))
 	if err != nil {
-		return conn, &callError{err: err, operation: op.Name, call: call.number}
+		return conn, &callError{err: err, responseCall: responseCall{operation: op.Name, call: call.number}}
 	}
 	return &ledgerConn{Conn: conn, calls: d.run.calls, op: op, ref: ref, call: call.number}, nil
 }
@@ -96,5 +96,5 @@ func (c *ledgerConn) note(err error) error {
 	if c.failed.CompareAndSwap(false, true) {
 		c.calls.failCall(c.op, c.ref, code)
 	}
-	return &callError{err: err, operation: c.op.Name, call: c.call}
+	return &callError{err: err, responseCall: responseCall{operation: c.op.Name, call: c.call}}
 }

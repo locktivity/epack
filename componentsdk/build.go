@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 )
 
 // BuildSchema is the schema of the build file the SDK adds to every
@@ -27,6 +28,17 @@ type CollectorBuild struct {
 	// TraceMap is CollectorSpec.TraceMap. It is absent for a collector
 	// without one.
 	TraceMap json.RawMessage `json:"trace_map,omitempty"`
+	// Writes is CollectorSpec.Writes, sorted. It is absent for a collector
+	// that lists none.
+	Writes []string `json:"writes,omitempty"`
+}
+
+// sortedWrites returns a sorted copy of the schema IDs a collector lists in
+// CollectorSpec.Writes, each once.
+func sortedWrites(writes []string) []string {
+	out := slices.Clone(writes)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func buildPath(name string) string {
@@ -40,6 +52,7 @@ func newBuild(spec CollectorSpec, stderr io.Writer) CollectorBuild {
 	b := CollectorBuild{
 		Collector: ResultCollector{Name: spec.Name, Version: spec.Version, Commit: spec.Commit},
 		Schemas:   make(map[string]json.RawMessage, len(spec.Schemas)),
+		Writes:    sortedWrites(spec.Writes),
 	}
 	for key, raw := range spec.Schemas {
 		if raw = bytes.TrimSpace(raw); json.Valid(raw) {

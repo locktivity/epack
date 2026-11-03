@@ -25,6 +25,9 @@ func registerCollectorCommands(root *cobra.Command) {
 	// Add 'epack collect' as a top-level shortcut (auto-lock, sync, run)
 	root.AddCommand(collectorcmd.NewCollectCommand())
 
+	// Add 'epack shadow' to preview what a new collector version would change
+	root.AddCommand(collectorcmd.NewShadowCommand())
+
 	// Add 'epack new' for creating new projects
 	root.AddCommand(componentcmd.NewNewCommand())
 

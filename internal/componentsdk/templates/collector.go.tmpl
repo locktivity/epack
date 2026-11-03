@@ -15,10 +15,9 @@ const SchemaVersion = "1.0.0"
 
 // Output is the artifact the collector emits at artifactPath.
 type Output struct {
-	SchemaVersion    string       `json:"schema_version"`
-	CollectedAt      string       `json:"collected_at"`
-	CollectedAtLevel string       `json:"collected_at_level"`
-	Organization     Organization `json:"organization"`
+	SchemaVersion string       `json:"schema_version"`
+	CollectedAt   string       `json:"collected_at"`
+	Organization  Organization `json:"organization"`
 	// Users is left out, with a gap, when the users could not be listed.
 	Users *Users `json:"users,omitempty"`
 }
@@ -66,10 +65,9 @@ func collect(ctx componentsdk.CollectorContext, client *{{.VendorPackage}}.Clien
 	rec.SignedInAs(componentsdk.Principal{Provider: "{{.Name}}", Kind: "api_token", TenantID: org.ID, AuthMethod: componentsdk.AuthAPIToken})
 
 	out := &Output{
-		SchemaVersion:    SchemaVersion,
-		CollectedAt:      componentsdk.Now(ctx).UTC().Format(time.RFC3339),
-		CollectedAtLevel: string(ctx.Level()),
-		Organization:     Organization{ID: org.ID, Name: org.Name, MFARequired: *org.MFARequired},
+		SchemaVersion: SchemaVersion,
+		CollectedAt:   componentsdk.Now(ctx).UTC().Format(time.RFC3339),
+		Organization:  Organization{ID: org.ID, Name: org.Name, MFARequired: *org.MFARequired},
 	}
 	gaps := gapLog{rec: rec}
 
@@ -77,7 +75,7 @@ func collect(ctx componentsdk.CollectorContext, client *{{.VendorPackage}}.Clien
 	defer step.End()
 	users, err := client.ListUsers(people.Context())
 	if err != nil {
-		gaps.notCollected(err, "/users", componentsdk.MissingPermission({{.VendorPackage}}.PermissionReadUsers))
+		gaps.notCollected(err, "/users")
 		return out, nil
 	}
 	out.Users = readUsers(people, client, gaps, users)

@@ -2,7 +2,7 @@ package collectortest
 
 import (
 	"github.com/locktivity/epack/componentsdk"
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 // valueChecksApply reports whether the population, nulls, rollups, and

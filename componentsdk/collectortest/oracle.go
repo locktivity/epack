@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/locktivity/epack/componentsdk"
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 // emptyObject and emptyArray stand in for empty containers, which are leaves
@@ -28,35 +28,21 @@ func flatten(raw json.RawMessage) (map[string]any, error) {
 		return nil, err
 	}
 	out := map[string]any{}
-	var walk func(pointer string, v any)
-	walk = func(pointer string, v any) {
+	eachJSON(doc, func(at place, v any) {
 		switch node := v.(type) {
 		case map[string]any:
 			if len(node) == 0 {
-				out[pointer] = emptyObject
-				return
-			}
-			for k, child := range node {
-				walk(pointer+"/"+escapeToken(k), child)
+				out[at.pointer] = emptyObject
 			}
 		case []any:
 			if len(node) == 0 {
-				out[pointer] = emptyArray
-				return
-			}
-			for i, child := range node {
-				walk(fmt.Sprintf("%s/%d", pointer, i), child)
+				out[at.pointer] = emptyArray
 			}
 		default:
-			out[pointer] = node
+			out[at.pointer] = node
 		}
-	}
-	walk("", doc)
+	})
 	return out, nil
-}
-
-func escapeToken(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "~", "~0"), "/", "~1")
 }
 
 // artifactsByPath indexes data artifacts by path, leaving out the result

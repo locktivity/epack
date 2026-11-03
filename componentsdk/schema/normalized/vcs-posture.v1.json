@@ -30,39 +30,98 @@
         }
       }
     },
+    "repositories_present": {
+      "type": ["boolean", "null"],
+      "description": "Whether the scan covered any repositories. When false, the branch protection and security feature percentages are null"
+    },
+    "repository_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "x-epack-level": "audit",
+      "description": "Repositories in the organization that the include and exclude patterns could select"
+    },
+    "scanned_repository_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "x-epack-level": "audit",
+      "description": "Repositories the scan covered. The branch protection and security feature percentages count these"
+    },
     "repo_coverage_pct": {
       "type": ["number", "null"],
       "minimum": 0,
       "maximum": 100,
-      "description": "Percentage of repositories covered by the scan (based on include/exclude patterns)"
+      "x-epack-rounding": "floor",
+      "description": "Percentage of repositories covered by the scan (based on include/exclude patterns)",
+      "x-epack-numerator": "scanned_repository_count",
+      "x-epack-denominator": "repository_count"
     },
     "branch_protection": {
       "type": ["object", "null"],
       "description": "Coverage percentages for branch protection rules on default branches",
       "properties": {
+        "pr_required_repository_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "x-epack-level": "audit",
+          "description": "Scanned repositories requiring pull requests before merge"
+        },
+        "approving_reviews_repository_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "x-epack-level": "audit",
+          "description": "Scanned repositories requiring at least one approving review"
+        },
+        "status_checks_repository_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "x-epack-level": "audit",
+          "description": "Scanned repositories requiring status checks to pass"
+        },
+        "signed_commits_repository_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "x-epack-level": "audit",
+          "description": "Scanned repositories requiring signed commits"
+        },
         "pr_required_pct": {
           "type": ["number", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Percentage of repos requiring pull requests before merge"
+          "x-epack-rounding": "floor",
+          "description": "Percentage of repos requiring pull requests before merge",
+          "x-epack-numerator": "pr_required_repository_count",
+          "x-epack-denominator": "/scanned_repository_count",
+          "x-epack-present": "/repositories_present"
         },
         "approving_reviews_pct": {
           "type": ["number", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Percentage of repos requiring at least one approving review"
+          "x-epack-rounding": "floor",
+          "description": "Percentage of repos requiring at least one approving review",
+          "x-epack-numerator": "approving_reviews_repository_count",
+          "x-epack-denominator": "/scanned_repository_count",
+          "x-epack-present": "/repositories_present"
         },
         "status_checks_pct": {
           "type": ["number", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Percentage of repos requiring status checks to pass"
+          "x-epack-rounding": "floor",
+          "description": "Percentage of repos requiring status checks to pass",
+          "x-epack-numerator": "status_checks_repository_count",
+          "x-epack-denominator": "/scanned_repository_count",
+          "x-epack-present": "/repositories_present"
         },
         "signed_commits_pct": {
           "type": ["number", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Percentage of repos requiring signed commits"
+          "x-epack-rounding": "floor",
+          "description": "Percentage of repos requiring signed commits",
+          "x-epack-numerator": "signed_commits_repository_count",
+          "x-epack-denominator": "/scanned_repository_count",
+          "x-epack-present": "/repositories_present"
         }
       }
     },
@@ -70,23 +129,53 @@
       "type": ["object", "null"],
       "description": "Coverage percentages for security scanning features",
       "properties": {
+        "vuln_alerts_repository_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "x-epack-level": "audit",
+          "description": "Scanned repositories with dependency vulnerability alerts enabled"
+        },
+        "secret_scanning_repository_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "x-epack-level": "audit",
+          "description": "Scanned repositories with secret scanning enabled"
+        },
+        "code_scanning_repository_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "x-epack-level": "audit",
+          "description": "Scanned repositories with code scanning (SAST) enabled"
+        },
         "vuln_alerts_pct": {
           "type": ["number", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Percentage of repos with dependency vulnerability alerts enabled"
+          "x-epack-rounding": "floor",
+          "description": "Percentage of repos with dependency vulnerability alerts enabled",
+          "x-epack-numerator": "vuln_alerts_repository_count",
+          "x-epack-denominator": "/scanned_repository_count",
+          "x-epack-present": "/repositories_present"
         },
         "secret_scanning_pct": {
           "type": ["number", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Percentage of repos with secret scanning enabled"
+          "x-epack-rounding": "floor",
+          "description": "Percentage of repos with secret scanning enabled",
+          "x-epack-numerator": "secret_scanning_repository_count",
+          "x-epack-denominator": "/scanned_repository_count",
+          "x-epack-present": "/repositories_present"
         },
         "code_scanning_pct": {
           "type": ["number", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Percentage of repos with code scanning (SAST) enabled"
+          "x-epack-rounding": "floor",
+          "description": "Percentage of repos with code scanning (SAST) enabled",
+          "x-epack-numerator": "code_scanning_repository_count",
+          "x-epack-denominator": "/scanned_repository_count",
+          "x-epack-present": "/repositories_present"
         }
       }
     }

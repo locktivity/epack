@@ -48,7 +48,7 @@ func TestStepsRecordTheirCallsTimesAndCounts(t *testing.T) {
 		t.Fatalf("exit = %d failure = %+v stderr = %s", res.ExitCode, res.Failure, res.Stderr)
 	}
 	want := []ResultStep{
-		{Name: "people", Title: "People and sign-in methods", StartMS: 300, EndMS: 2300, Requests: 3, Calls: 2, Retries: 1, Failed: 2,
+		{Name: "people", Title: "People and sign-in methods", StartMS: 300, EndMS: 2300, Requests: 3, Calls: 2, Retries: 1, Failed: 2, AnyFailed: true,
 			Operations: []StepOperation{{Name: "users.list", Calls: 1}, {Name: "users.factors.list", Calls: 1}}},
 		{Name: "groups", Title: "groups", StartMS: 2300, EndMS: 3300, Requests: 1, Calls: 1,
 			Operations: []StepOperation{{Name: "groups.list", Calls: 1}}},
@@ -77,6 +77,21 @@ func TestStepsRecordTheirCallsTimesAndCounts(t *testing.T) {
 	})
 	if len(trust.Result.Steps) != 2 || len(trust.Result.Calls.Requests) != 0 {
 		t.Errorf("trust result = %+v, want the steps without the rows", trust.Result)
+	}
+	wantTrust := []ResultStep{
+		{Name: "people", Title: "People and sign-in methods", AnyFailed: true,
+			Operations: []StepOperation{{Name: "users.list"}, {Name: "users.factors.list"}}},
+		{Name: "groups", Title: "groups", Operations: []StepOperation{{Name: "groups.list"}}},
+	}
+	if !reflect.DeepEqual(trust.Result.Steps, wantTrust) {
+		t.Errorf("trust steps =\n%+v\nwant their names and failures without times or counts\n%+v", trust.Result.Steps, wantTrust)
+	}
+	var calls int
+	for _, op := range trust.Operations {
+		calls += op.Calls
+	}
+	if calls != 4 {
+		t.Errorf("in-process operations count %d calls, want all 4 at the trust level", calls)
 	}
 }
 

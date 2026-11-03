@@ -98,35 +98,3 @@ func (s *scrubber) decodedBody(decoded []byte) (string, error) {
 	}
 	return out, nil
 }
-
-// mutateBody changes r's body for the sensitivity check, as mutateJSON or
-// mutateCBOR changes it, and reports whether anything changed. A body Record
-// decoded with a codec changes as JSON and stays decoded, and one
-// Suite.Codec takes is decoded, changed, and encoded again. op is the
-// operation whose calls r answered.
-func (k *kit) mutateBody(op string, r Response) (string, bool, error) {
-	if r.decoded {
-		body, ok := mutateJSON(r.Body)
-		return body, ok, nil
-	}
-	decoded, err := decodeResponse(k.suite.Codec, op, r.Header, []byte(r.Body))
-	switch {
-	case err != nil:
-		return "", false, err
-	case decoded != nil:
-		body, ok := mutateJSON(string(decoded))
-		if !ok {
-			return r.Body, false, nil
-		}
-		encoded, err := k.suite.Codec.EncodeResponse(op, r.Header, []byte(body))
-		if err != nil {
-			return "", false, fmt.Errorf("the codec could not encode it once changed: %w", err)
-		}
-		return string(encoded), true, nil
-	case isCBOR(r.Header.Get("Content-Type")):
-		body, ok := mutateCBOR(r.Body)
-		return body, ok, nil
-	}
-	body, ok := mutateJSON(r.Body)
-	return body, ok, nil
-}

@@ -7,6 +7,340 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ENHANCEMENTS
+
+- A collector's schema can describe how the collector measures a value with
+  `x-epack-method`, one plain sentence such as "Reads each S3 bucket's
+  default encryption setting." The test kit's new `methods` check asks for
+  one on every number and true-or-false value in a normalized artifact. A
+  value copied from the detailed artifact with `Recorder.Mirror` uses the
+  method of the value it copies. The check also asks for one on each such
+  value a trust run writes in a detailed artifact, since profiles test the
+  detailed fields of collectors with no normalized artifact. It finds a
+  copied value's method in the detailed artifact's schema, so it holds when
+  that artifact is not written
+- A new reserved config key, `collect`, lists the kinds of evidence a
+  collector collects, such as `[cloud-posture]`, at every level. A
+  collector's own detailed file goes by the collector's name. Without the
+  key, a collector collects every kind its level allows. A key that is not a
+  list of kinds fails the run with `config_invalid`. Each kind it leaves out
+  gets a gap with the new code `not_shared`, and the collector result's new
+  `collect` records what the key listed, what it left out, and any kind the
+  run never wrote. Leaving out a normalized kind also removes the values
+  `Recorder.Mirror` copied from it. A `not_shared` gap does not make a run
+  partial. `componentsdk.Selected` tells a collector whether to collect a
+  kind, and `Emit` leaves out what it rules out
+- `CollectorSpec.Writes` lists the schema IDs a collector can write. SDK
+  collectors publish it in `--capabilities` and the build file, and the new
+  `writes` kit check fails a collector that writes a schema ID it does not
+  list. `epack collect` and `epack run` warn when a collector's `collect`
+  list names a kind the run never wrote, from the result's `unmatched`
+  list
+- `epack shadow <collector>` previews what a new collector version would
+  change before you upgrade. It runs the locked version, the candidate, and
+  the locked version again. A field or gap that differs between the two
+  locked runs is noise, which the report lists apart from its changes.
+  The candidate is a release (`--version`) or a local build (`--binary`),
+  locked and verified in a throwaway project. Strict production mode
+  refuses a local build, as it refuses an unpinned binary in
+  `epack collect`, and a custom credential broker gets the same check as
+  in `collect`. The report lists changed fields by pattern, gaps by code
+  and missing permission, API operations, call counts as ranges, and each
+  control whose result would change, from the project's validate tool run
+  on a pack from each run. It names a file only by a path a build file
+  declares, a schema ID, or the collector's own name, and holds no value
+  from the account. At a terminal outside CI, the report shows the values
+  behind each change. `--values` writes them to a private file
+- `x-epack-level` at a schema's root marks the whole artifact. The SDK
+  leaves it out of a run below that level and drops the gaps inside it. A
+  collector whose normalized artifact carries what profiles read can mark
+  its detailed schema `audit` so trust packs leave that file out
+- The collector result's `run.level` records the level the run collected
+  at, at every level, for every artifact the run wrote
+- `Emit` leaves out each value a collector writes that its schema marks
+  above the run's level, as the result leaves out its own. The result lists
+  each one as a `levels` check finding, which the test kit reports
+- Below the audit level, the collector result leaves out what grows with the
+  account's size or names it:
+  - `signed_in_as.tenant_id`
+  - each operation's `calls`, `attempts`, `retries`, `statuses`, and `errors`
+  - each step's `start_ms`, `end_ms`, `requests`, `calls`, `retries`, and
+    `failed`, and its operations' calls
+  - a gap's `call` and `unmeasured`
+
+  At every level, operations gain `retried`, `status_codes`, and
+  `error_codes`, and steps gain `any_failed`, so a trust result still says
+  which calls failed or were retried. The schema marks each field left out
+  with `x-epack-level: audit`. The SDK leaves out exactly the fields the
+  schema marks
+- `evidencepack/cloud-posture@v1` marks `account_id`, `accounts_expected`,
+  the IAM `user_count`, `access_key_user_count`, and `saml_provider_count`,
+  and the workforce sign-in `user_count` as audit-level. It adds
+  `all_accounts_collected` and the IAM
+  `users_present`, `access_keys_present`, and `saml_providers_present`, so a
+  trust artifact can say whether a population is empty without counting it.
+  An account no longer requires `account_id`
+- `InProcessResult.Operations` counts each operation's calls at every level.
+  The test kit's fault matrix and credential checks read it, so they work for
+  a suite that runs at the trust level
+- epack-conformance COL-080 fails a trust result that holds any value the
+  result schema marks for a higher level, such as the tenant, call or step
+  counts or times, or a gap's call number or unmeasured count. The schema is
+  the only list, so a field marked later is checked without a change to
+  COL-080. A result from an SDK that counted calls at every level still
+  passes with those counts. Its operations do not carry `retried`
+- `epack verify --insecure-skip-tlog`, with `--public-key`, accepts a key
+  signature that has no transparency log entry, such as one made with
+  `epack sign --no-tlog`. Certificate signatures still need their entry. A
+  verification that accepts only such key signatures fetches no Sigstore
+  trust root, so it makes no network calls
+- Every percentage in the normalized schemas sets its rounding with
+  `x-epack-rounding`. A percentage where more is better, such as MFA
+  coverage, rounds down (`floor`). A percentage where more is worse, such as
+  rules open to the world or endpoints that still accept a legacy protocol,
+  rounds up (`ceil`). This way a percentage short of 100 never rounds up to
+  100, and one above 0 never rounds down to 0
+- The `tls` and `email-dns` summary percentages, and their every-endpoint
+  and every-domain booleans, point to their counts with `x-epack-numerator`
+  and `x-epack-denominator`. The `ratios` check recomputes them from those
+  counts
+- `cloud-posture`'s `mfa_coverage_pct` and
+  `access_key_rotation_compliant_pct`, and `idp-posture`'s privileged MFA
+  percentages, point to the count they are taken over. The `population`
+  check reports one that is set when that count is 0
+- The `x-epack-present` annotation points to a boolean field that is true
+  when a value's population has any members. The `population` and `nulls`
+  checks treat a false flag like a denominator of 0. At the trust level,
+  `cloud-posture` leaves out its user counts, and the checks use the flag
+  instead
+- The `population` check reports a value that is set although its
+  denominator or `x-epack-present` flag was not read. A denominator or flag
+  was not read when it is null or left out with a gap. A count or
+  percentage over a population the collector could not read must be left
+  out too. The `nulls` check accepts a null value whose denominator was not
+  read
+- `componentsdk.NextLink(resp)` returns the next page from a response's
+  `Link` headers, parsed as RFC 8288 defines them. It reads every header
+  line and every link on each line. Okta sends self and next on separate
+  lines, and GitHub lists several links on one line
+- The test kit's `pages` check reports a next page that a scenario's answer
+  offered and the run never requested. The next page can come from a `Link`
+  header, a body field such as `next` or `@odata.nextLink`, a token such as
+  `NextToken` or `next_cursor`, or a GraphQL `pageInfo`. For each operation
+  that pages by `Link` header or body field, the check also adds a next page
+  to the operation's last answer and checks that the run requests it.
+  `Suite.Capped` exempts lists cut short on purpose and polling APIs.
+  `Suite.Paged` lists operations that page by `Link` header where the
+  scenarios do not show it
+- The test kit's `order` check runs the clean scenario once for each
+  operation, with every list in that operation's answers reversed. Lists
+  are JSON arrays and repeated XML elements. The check compares the results
+  with every list sorted and reports a value that changes. `Suite.Ordered`
+  exempts answers whose order the vendor documents
+- `Suite.Variants` runs the clean scenario as another deployment of the
+  vendor, such as AWS GovCloud, would answer it. It rewrites the scenario's
+  canned answers, config, and env with old, new pairs. The `variants` check
+  reports a value that does not follow the rewrite, such as an ARN prefix
+  the collector hard-codes. It also reports a request the rewritten scenario
+  cannot answer, such as one to a hard-coded host
+- `componentsdk.Operation.Permission` declares the permission a call needs,
+  in the vendor's terms. The collector result lists it with the operation as
+  `permission` at every level. A `permission_denied` gap recorded from the
+  call's error records it as `missing_permission`, with no option needed.
+  `HTTPOptions.NamesPermission` lets a collector leave the permission off a
+  denial that granting it would not fix, such as AWS's explicit deny or a
+  denial with no message. The test kit's `permissions` check reports a gap
+  whose missing permission differs from the one its operation declares
+- The SDK has a normalized schema for `evidencepack/endpoint-posture@v1`,
+  based on the JumpCloud collector's schema. Emit checks artifacts of that
+  type against it. The fleet counts, `metric_coverage`, device rows,
+  policies, events, and inventories are audit-level. Local admin accounts
+  are internal-level. At the trust level, an artifact has
+  `fleet.devices_present` and no counts. The schema adds
+  `fleet.mdm_enrolled_pct`, the percentage of `devices_count` enrolled in
+  MDM. Every percentage and count allows null, for a fleet with no devices.
+  Every percentage rounds down and requires `devices_present` to be true
+- `evidencepack/idp-posture@v1` accepts `jumpcloud` as a provider
+- `CollectorSpec.ConfigSchema` is a JSON Schema for the collector's config.
+  The SDK checks the config against it before the handler runs, and skips
+  the keys it reads itself, such as `level`. A config that does not match
+  fails the run with `config_invalid`. The error gives each bad value's JSON
+  pointer. This keeps a malformed value from being read in as a default
+- A scaffolded collector declares its config schema in
+  `docs/schema/config.json`, and its spec passes that file as
+  `ConfigSchema`. It declares the permission each call needs with
+  `Operation.Permission`, so its gaps record the missing permission without
+  an option
+- `componentsdk.Vocabulary` holds the values a vendor's field can take. They
+  come from a file that is refreshed from the vendor's catalog. `Must`
+  panics at startup on a constant the vocabulary lacks, such as a misspelled
+  event type. `Seen` adds a value that the vendor sent and the vocabulary
+  lacks to the collector result's `unrecognized` list. The list has a count
+  at every level and the values at the audit level. The test kit's
+  `vocabulary` check reports a scenario whose answers contain such a value
+- `Suite.FieldSensitivity` turns on the test kit's `fields` check. The check
+  changes one state field at a time in each operation's answers, such as a
+  status, an enabled flag, an operator, or conditions. It reports a field
+  whose change leaves every value the same in an object the collector reads.
+  `Suite.IgnoredFields` exempts a field the collector may ignore. On Okta's
+  recording, the check finds policy rule conditions the collector never
+  reads
+- `Suite.ResponseSchemas` maps an operation to the JSON Schema of its
+  successful answer, as the vendor's API spec defines it. The test kit's
+  `responses` check validates every scenario's canned answers against that
+  schema and reports any field the schema does not define. Okta's
+  hand-written token answers carry a status field that Okta never sends. The
+  check reports it against Okta's published ApiToken schema
+- `evidencepack/cloud-posture@v1` has a `database` object with
+  `encryption_pct`, `public_access_blocked_pct`, and `multi_az_pct`.
+  `multi_az_pct` and the counts behind the percentages are audit-level, and
+  `databases_present` is written at every level. The schema also has
+  `threat_detection.enabled`, which is true when threat detection is on in
+  every enabled region. `backup.retention_days_min` is null when no resource
+  has backups enabled
+- The descriptions of `cloud-posture`'s `ssh_open_to_world_pct` and
+  `rdp_open_to_world_pct` match what the collectors count. They count
+  security groups or network security groups with a rule open to any
+  address. On Google Cloud they count firewall rules open to any address
+- A percentage over an empty population is null in a normalized artifact,
+  as it is in a collector's own artifacts. A left-out percentage therefore
+  means a failed read. The `population` check reports a percentage left out
+  with no gap when its denominator is 0 or its `x-epack-present` flag is
+  false
+- Every percentage in the `idp-posture`, `vcs-posture`, and `cloud-posture`
+  schemas points to the counts it is taken from, and the `ratios` and
+  `population` checks run on them. Each percentage has a numerator count at
+  the audit level. A percentage that had no denominator has one at the
+  audit level, with a present flag at every level. These denominators and
+  flags are:
+  - `user_security.user_count` and `users_present`
+  - `app_security.app_count` and `apps_present`
+  - `lifecycle.account_count` and `accounts_present`
+  - the top-level `repository_count`, `scanned_repository_count`, and
+    `repositories_present`
+  - `storage_resource_count`, `security_group_count`, and
+    `scanned_resource_count`, each with its present flag
+
+  The privileged percentages keep `privileged_users_count` as their
+  denominator. `policy.mfa_required_coverage_pct` is taken over
+  `user_security.user_count`
+- `evidencepack/idp-posture@v1` marks `privileged_users_count`,
+  `super_admin_count`, `standing_privileged_users_count`, and
+  `authorized_third_party_apps_count` as audit-level. It adds
+  `privileged_users_present` and `standing_privileged_users_present` at
+  every level. The privileged percentages are null when
+  `privileged_users_present` is false
+- A gap can carry collection guidance from `componentsdk.Fix`, `NoAction`,
+  or `Decide`. A gap holds at most one of them, and it is written at every
+  level. Below the audit level, the SDK redacts from it the principal's ID
+  and tenant and the identifiers in the run's scopes and config. When it
+  redacts any, the test kit's `guidance` check reads the advice from an
+  audit run. The scope set with `componentsdk.Scope` is written from the audit level, like the
+  gap's warning. A second piece of advice on one gap is a `guidance` check
+  finding, and the gap keeps the first. A choice with fewer than two options
+  is also a finding
+- `Recorder.Warn` records a warning about the whole run in the collector
+  result's `warnings` list. It takes the same advice options as a gap, and
+  a missing permission. The advice and missing permission are written at
+  every level, and the message and scope from the audit level
+- The test kit's `guidance` check reports advice that contains a value from
+  the scenario's answers or config that identifies a resource, person, or
+  account. The check recognizes such a value by its field's name. It also
+  recognizes the fakes that a recording's scrubbing writes for an email
+  address, GUID, or AWS account number, wherever they appear, such as an
+  account number inside an ARN
+- `componentsdk.Recorder.Warnings()` returns the run warnings recorded so
+  far, as `Gaps()` does for gaps. It is for tests that run a collector's
+  code without `RunInProcess`
+- `collectortest.CheckNames()` returns the names of the test kit's checks.
+  `Suite.SkipChecks` takes these names, and `Violation.Check` holds one
+- `componentsdk.Percent(count, total, rounding)` returns a whole percentage
+  rounded with `RoundDown`, `RoundUp`, or `RoundNearest`. It returns nil
+  when there is nothing to count
+
+### UPGRADE NOTES
+
+- A collector that writes a normalized artifact fails the test kit's
+  `methods` check until each number and true-or-false value in it has an
+  `x-epack-method`, in the collector's schema or on the detailed value it
+  copies. A collector also fails it until each such value a trust run writes
+  in its detailed artifact has one. Mark the detailed schema `audit` at its
+  root when a normalized artifact carries what profiles read
+- A collector that writes an artifact with a schema ID fails the test kit's
+  `writes` check until `CollectorSpec.Writes` lists it
+- A reader of collector results finds the new gap code `not_shared` and the
+  new `collect` object. A `not_shared` gap is the customer's choice, so it
+  needs no fix and does not count against collector health
+- A collector that writes `evidencepack/cloud-posture@v1` fails the test
+  kit's `levels` check at the trust level until it leaves out the fields the
+  schema marks audit. Write `users_present`, `access_keys_present`, and
+  `saml_providers_present` beside the counts
+- A reader of trust-level collector results finds operations without
+  `calls`, `attempts`, or `retries` and steps without times or counts. Read
+  `retried`, `status_codes`, `error_codes`, and `any_failed` instead
+- A collector fails the test kit's `pages` check when its scenarios offer a
+  next page that it never requests. Read every page, or list a polling API
+  or a deliberate cap in `Suite.Capped`. For example, Okta's recording
+  offers a System Log page that its collector does not read
+- A collector fails the test kit's `order` check when its values depend on
+  the order a vendor lists things in. For example, the AWS collector judges
+  a trail bucket's retention by whichever trail DescribeTrails lists first
+- `evidencepack/email-dns@v1` follows RFC 9989, which replaces RFC 7489 for
+  DMARC. `enforced` and the summary's enforced values count a domain as
+  enforced when the policy that applies to it rejects failing mail. That is
+  p=reject on the domain's own record, or a subdomain policy of reject on
+  the record the DNS tree walk finds above the domain. The subdomain policy
+  is sp, or p when the record has no sp. In either case the record must not
+  set t=y. A legacy pct tag does not affect these values. `has_reporting`
+  and the reporting values need a valid rua URI, so an address without
+  mailto: does not count. `policy` is none for a record that lists a valid
+  rua URI but has no valid p tag. An email-dns collector changes its values
+  to match and lists each changed value in its changelog
+- A collector that writes `evidencepack/endpoint-posture@v1` fails the test
+  kit's `levels` check at the trust level until it leaves out the fleet
+  counts, `scope.observed_devices_count`, and `metric_coverage`. It must
+  also write `fleet.devices_present`
+- `email-dns`'s `with_dmarc_count` and `with_all_three_count` count a domain
+  when a DMARC record applies to it. That record is the domain's own or the
+  one the DNS tree walk finds above it. `enforced` uses the same record
+- A collector that leaves out a percentage over an empty population fails
+  the test kit's `population` check until it writes null. For example, the
+  Okta and Microsoft Cloud collectors leave out the privileged MFA
+  percentages for a tenant with no privileged users
+- A collector that writes `idp-posture`, `vcs-posture`, or `cloud-posture`
+  writes the counts behind each percentage at the audit level, and the
+  present flags at every level. The checks use the counts to recompute its
+  percentages, and the flags to recognize an empty population at the trust
+  level
+- A collector that writes `evidencepack/idp-posture@v1` fails the test kit's
+  `levels` check at the trust level until it leaves out the privileged and
+  app counts. It must also write `privileged_users_present` and
+  `standing_privileged_users_present`. The Okta and Microsoft Cloud
+  collectors do not do this yet. A Foundational Controls 1.x profile that
+  tests `super_admin_count` on a trust-level stream shows Not collected once
+  its collector updates, because the count is written from the audit level
+  only
+- A collector gets a `ratios` finding when it rounds a normalized percentage
+  differently from the schema's `x-epack-rounding` and the schema points to
+  the percentage's counts. The TLS and email-dns summaries point to their
+  counts. For example, rounding a TLS `expiring_soon_pct` or
+  `legacy_protocol_supported_pct` down is a finding
+- `componentsdk.Gap` gets its `Schema`, `Path`, and `Pointer` fields from an
+  embedded `Location`. It reads and writes them as JSON the same way as
+  before. A `Gap` literal that sets those fields, as tests do, must set them
+  in `Location`, as in `Gap{Location: Location{Path: p, Pointer: "/users"}}`.
+  Go 1.27 accepts the old form too. The Microsoft Cloud and Sentry
+  collectors' tests build such literals
+- A reader that takes the level from an artifact's `collected_at_level`
+  should read the collector result's `run.level`, and fall back to
+  `collected_at_level` for older collectors. A collector's own file can be
+  missing at a level, as GitHub's is at trust. The normalized schemas do not
+  declare `collected_at_level`, `endpoint-posture` rejects it, and new
+  scaffolds do not write it
+- `componentsdk.GapOption` is now `componentsdk.AdviceOption`, since run
+  warnings take the same options. `GapOption` remains as a deprecated alias,
+  so code that names it still compiles
+
 ## [0.9.9] - 2026-10-26
 
 ### BUG FIXES

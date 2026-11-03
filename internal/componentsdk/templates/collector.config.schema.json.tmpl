@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The {{.Name}} collector's configuration in epack.yaml. The SDK checks it against this schema before Run, and reads the level key itself, so the key is not listed here.",
+  "type": "object",
+  "required": ["organization"],
+  "additionalProperties": false,
+  "properties": {
+    "organization": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The organization to collect from"
+    }
+  }
+}

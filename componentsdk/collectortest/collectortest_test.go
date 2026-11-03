@@ -52,6 +52,11 @@ type demo struct {
 	bearer       bool // sends its token in Authorization rather than X-Demo-Token
 	gitlabHeader bool // sends its token in PRIVATE-TOKEN rather than X-Demo-Token
 	linkPages    bool // follows the next page in the Link header rather than the body
+	firstPage    bool // reads only the first users page
+	sdkLinks     bool // follows the next page that componentsdk.NextLink finds in every Link line
+	firstRow     bool // reports the first user's MFA as mfa_enforced, which depends on the order users are listed in
+	declares     bool // declares that the score call needs scores.read
+	wrongHint    bool // tells the customer to grant scores.write when the score call is denied
 	broadHosts   bool // lists "*.com" among its CredentialHosts
 	callErrors   bool // builds its errors from responses with componentsdk.ResponseError, so their gaps name the call
 	normalized   bool // emits a normalized artifact whose score is copied from the detailed one with Mirror
@@ -123,7 +128,7 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 	token := ctx.Secret("DEMO_TOKEN")
 	rec := componentsdk.Records(ctx)
 
-	var link string
+	var link, sdkNext string
 	var last *http.Response
 	// fromResponse gives an error built from the last response its call.
 	fromResponse := func(err error) error {
@@ -135,7 +140,11 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 	get := func(op, url string, out any) error {
 		reqCtx := ctx.Context()
 		if !d.hookNames && (!d.unnamed || op != "demo.score.get") {
-			reqCtx = componentsdk.WithOperation(reqCtx, componentsdk.Operation{Name: op})
+			named := componentsdk.Operation{Name: op}
+			if d.declares && op == "demo.score.get" {
+				named.Permission = "scores.read"
+			}
+			reqCtx = componentsdk.WithOperation(reqCtx, named)
 		}
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 		if err != nil {
@@ -156,6 +165,10 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 		defer func() { _ = resp.Body.Close() }()
 		last = resp
 		link = resp.Header.Get("Link")
+		sdkNext = ""
+		if u, ok := componentsdk.NextLink(resp); ok {
+			sdkNext = u.String()
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fromResponse(componentsdk.CodeError(componentsdk.ClassifyResponse(resp), &demoAPIError{status: resp.StatusCode}))
 		}
@@ -241,6 +254,9 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 		for _, u := range *page.Users {
 			users++
 			on := u.MFA != nil && *u.MFA
+			if d.firstRow && users == 1 {
+				out["mfa_enforced"] = on
+			}
 			if on {
 				mfa++
 			}
@@ -249,6 +265,12 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 		next = page.Next
 		if d.linkPages {
 			next = nextPage(link)
+		}
+		if d.sdkLinks {
+			next = sdkNext
+		}
+		if d.firstPage {
+			break
 		}
 	}
 	switch {
@@ -295,6 +317,8 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 		return err
 	case err != nil && d.zeroOnError:
 		out["score"] = 0
+	case err != nil && d.wrongHint:
+		rec.NotCollected(at("/score"), err, componentsdk.MissingPermission("scores.write"))
 	case err != nil:
 		record("/score", err)
 	case d.ignoreScore:
@@ -583,7 +607,7 @@ func TestLevelLossesCountGapsAsEmitted(t *testing.T) {
 	}}
 	high := componentsdk.InProcessResult{
 		Artifacts: []componentsdk.EmittedArtifact{{Path: "a.json", Data: json.RawMessage(`{"kept": 1, "changed": null}`)}},
-		Result:    &componentsdk.CollectorResult{Gaps: []componentsdk.Gap{{Path: "a.json", Pointer: "/gapped"}}},
+		Result:    &componentsdk.CollectorResult{Gaps: []componentsdk.Gap{{Location: componentsdk.Location{Path: "a.json", Pointer: "/gapped"}}}},
 	}
 	got := levelLosses(componentsdk.LevelTrust, componentsdk.LevelAudit, low, high, newIgnoreSet(map[string][]string{"a.json": {"/ignored"}}))
 	want := []string{
@@ -696,7 +720,7 @@ func TestAVendorThrottleReachesTheLedgerAndTheGap(t *testing.T) {
 		return res
 	}
 	scoreCalls := func(res componentsdk.InProcessResult) componentsdk.OperationCalls {
-		for _, op := range res.Result.Calls.Operations {
+		for _, op := range res.Operations {
 			if op.Name == "demo.score.get" {
 				return op
 			}
@@ -990,7 +1014,7 @@ func TestCompareRunsAcceptsContainersEmptiedByGaps(t *testing.T) {
 	gap := func(pointers ...string) []componentsdk.Gap {
 		var gaps []componentsdk.Gap
 		for _, p := range pointers {
-			gaps = append(gaps, componentsdk.Gap{Path: "a.json", Pointer: p})
+			gaps = append(gaps, componentsdk.Gap{Location: componentsdk.Location{Path: "a.json", Pointer: p}})
 		}
 		return gaps
 	}
@@ -1012,8 +1036,8 @@ func TestCompareRunsCoversAListReadInPart(t *testing.T) {
 	clean := []componentsdk.EmittedArtifact{{Path: "a.json", Data: json.RawMessage(`{"users": [{"mfa": true}, {"mfa": false}, {"mfa": true}], "count": 3}`)}}
 	faulted := []componentsdk.EmittedArtifact{{Path: "a.json", Data: json.RawMessage(`{"users": [{"mfa": false}, {"mfa": true}, {"mfa": true, "admin": true}], "count": null}`)}}
 	gaps := []componentsdk.Gap{
-		{Path: "a.json", Pointer: "/users", Status: componentsdk.GapPartial},
-		{Path: "a.json", Pointer: "/count", Status: componentsdk.GapPartial},
+		{Location: componentsdk.Location{Path: "a.json", Pointer: "/users"}, Status: componentsdk.GapPartial},
+		{Location: componentsdk.Location{Path: "a.json", Pointer: "/count"}, Status: componentsdk.GapPartial},
 	}
 	if got := compareRuns(clean, faulted, gaps, nil); len(got) != 0 {
 		t.Errorf("items under a partial gap were reported: %q", got)

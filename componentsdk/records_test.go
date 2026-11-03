@@ -29,10 +29,10 @@ func TestRecorderMirror(t *testing.T) {
 	rec.Mirror(at(detailed, "/users/count"), at(normalized, "/mfa_coverage_pct"))
 
 	want := []Gap{
-		{Path: normalized, Pointer: "/policy/mfa_required", Status: GapNotCollected, Code: CodePermissionDenied, Owner: OwnerCustomer, VendorCode: "E0000006", Detail: "status 403"},
-		{Path: normalized, Pointer: "/mfa_coverage_pct", Status: GapPartial, Code: CodeInternal, Owner: OwnerPublisher, Unmeasured: 7, Detail: "page 3 failed"},
-		{Path: normalized, Pointer: "/users_total", Status: GapNotCollected, Code: CodeNotLicensed, Owner: OwnerNobody, Detail: "no user report"},
-		{Path: normalized, Pointer: "/sso_enabled", Status: GapNotCollected, Code: CodeTimeout, Owner: OwnerVendorOrRunner, Detail: "slow"},
+		{Location: Location{Path: normalized, Pointer: "/policy/mfa_required"}, Status: GapNotCollected, Code: CodePermissionDenied, Owner: OwnerCustomer, VendorCode: "E0000006", Detail: "status 403"},
+		{Location: Location{Path: normalized, Pointer: "/mfa_coverage_pct"}, Status: GapPartial, Code: CodeInternal, Owner: OwnerPublisher, Unmeasured: 7, Detail: "page 3 failed"},
+		{Location: Location{Path: normalized, Pointer: "/users_total"}, Status: GapNotCollected, Code: CodeNotLicensed, Owner: OwnerNobody, Detail: "no user report"},
+		{Location: Location{Path: normalized, Pointer: "/sso_enabled"}, Status: GapNotCollected, Code: CodeTimeout, Owner: OwnerVendorOrRunner, Detail: "slow"},
 	}
 	got := rec.Gaps()[4:]
 	for i := range got {
@@ -126,11 +126,7 @@ func TestBuildResultGatesGapWarningsAndKeepsSignInDetails(t *testing.T) {
 		RequestedScopes: []string{"okta.users.read", "okta.logs.read"}, Scopes: []string{"okta.users.read"}, ID: "0oa1"})
 	artifacts := []CollectedArtifact{{Data: map[string]any{}, Path: "artifacts/demo.json"}}
 	build := func(level Level) CollectorResult {
-		res, err := buildResult(resultInput{run: r, level: level, artifacts: artifacts, getenv: func(string) string { return "" }, finished: time.Now()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return res
+		return resultAt(t, resultInput{run: r, level: level, artifacts: artifacts, getenv: func(string) string { return "" }, finished: time.Now()})
 	}
 	trust, audit := build(LevelTrust), build(LevelAudit)
 	if g := trust.Gaps[0]; g.Warning != "" || g.MissingPermission != "okta.logs.read" || g.Source == "" {

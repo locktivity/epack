@@ -25,8 +25,16 @@ import (
 type Syncer struct {
 	Registry     RegistryClient
 	LockfilePath string
-	BaseDir      string // .epack directory
-	WorkDir      string // Project root (parent of .epack)
+	BaseDir      string           // .epack directory
+	WorkDir      string           // Project root (parent of .epack)
+	Verifier     SigstoreVerifier // nil verifies with Sigstore
+}
+
+func (s *Syncer) verifier() SigstoreVerifier {
+	if s.Verifier != nil {
+		return s.Verifier
+	}
+	return DefaultSigstoreVerifier{}
 }
 
 // lockedComponent abstracts the common fields between LockedCollector and LockedTool.
@@ -885,7 +893,7 @@ func (s *Syncer) verifyDownloadedBinarySigstore(
 		SourceRepositoryURI: BuildGitHubRepoURL(owner, repo),
 		SourceRepositoryRef: BuildGitHubRefTag(locked.Version),
 	}
-	sigResult, err := VerifySigstoreBundle(bundlePath, tmpPath, expectedIdentity)
+	sigResult, err := s.verifier().Verify(bundlePath, tmpPath, expectedIdentity)
 	_ = os.Remove(bundlePath)
 	if err != nil {
 		securityaudit.Emit(securityaudit.Event{

@@ -21,13 +21,14 @@ const (
 // Spec describes the collector to componentsdk.RunCollector.
 func Spec(version, commit string) componentsdk.CollectorSpec {
 	return componentsdk.CollectorSpec{
-		Name:        "{{.Name}}",
-		Version:     version,
-		Commit:      commit,
-		Description: "TODO: Describe what this collector gathers",
-		Timeout:     5 * time.Minute,
-		Schemas:     map[string][]byte{artifactPath: schema.Artifact},
-		TraceMap:    schema.TraceMap,
+		Name:         "{{.Name}}",
+		Version:      version,
+		Commit:       commit,
+		Description:  "TODO: Describe what this collector gathers",
+		Timeout:      5 * time.Minute,
+		Schemas:      map[string][]byte{artifactPath: schema.Artifact},
+		TraceMap:     schema.TraceMap,
+		ConfigSchema: schema.Config,
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 )
 
 const demoTraceMap = `{

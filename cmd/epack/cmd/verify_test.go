@@ -560,3 +560,20 @@ func TestSourceCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateVerifyFlags_SkipTlogNeedsAPublicKey(t *testing.T) {
+	origSkipTlog, origKeys := verifyInsecureSkipTlog, verifyPublicKeys
+	t.Cleanup(func() {
+		verifyInsecureSkipTlog, verifyPublicKeys = origSkipTlog, origKeys
+	})
+
+	verifyInsecureSkipTlog, verifyPublicKeys = true, nil
+	if err := validateVerifyFlags(); err == nil || !strings.Contains(err.Error(), "--insecure-skip-tlog requires --public-key") {
+		t.Fatalf("validateVerifyFlags() = %v, want --insecure-skip-tlog to need --public-key", err)
+	}
+
+	verifyPublicKeys = []string{"key.pub"}
+	if err := validateVerifyFlags(); err != nil {
+		t.Fatalf("validateVerifyFlags() = %v, want --insecure-skip-tlog with --public-key accepted", err)
+	}
+}

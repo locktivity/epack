@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/locktivity/epack/componentsdk"
-	"github.com/locktivity/epack/componentsdk/internal/outputcheck"
+	"github.com/locktivity/epack/internal/outputcheck"
 	"github.com/locktivity/epack/internal/tracemap"
 )
 
