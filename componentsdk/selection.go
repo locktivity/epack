@@ -15,9 +15,10 @@ import (
 // The collect config key lists the kinds of evidence a run collects, so a
 // pack's epack.yaml says what each collector contributes. A kind is the name
 // in a schema ID such as evidencepack/vuln-scanning@v1. A collector's own
-// detailed file has no schema ID and goes by the collector's name. The key
-// applies at every level, and the level still decides what a kind holds.
-// With no key, a run collects every kind its level allows.
+// detailed file has no schema ID and is the kind details, for every
+// collector. The key applies at every level, and the level still decides
+// what a kind holds. With no key, a run collects every kind its level
+// allows.
 const collectKey = componenttypes.CollectKey
 
 // CollectOf returns the kinds a config's collect key lists. set is false when
@@ -27,15 +28,18 @@ func CollectOf(config map[string]any) (kinds []string, set bool, err error) {
 	return componenttypes.CollectOf(config)
 }
 
-// KindOf returns the kind of an artifact with schema ID schemaID written by
-// the collector named collector: the name in the schema ID, or the
-// collector's name for an artifact with no schema ID.
-func KindOf(schemaID, collector string) string {
-	return componenttypes.KindOf(schemaID, collector)
+// DetailsKind is the kind of a collector's own detailed file, the one
+// artifact with no schema ID. The collect config key lists it as details.
+const DetailsKind = componenttypes.DetailsKind
+
+// KindOf returns the kind of an artifact with schema ID schemaID: the name
+// in the schema ID, or details for an artifact with no schema ID.
+func KindOf(schemaID string) string {
+	return componenttypes.KindOf(schemaID)
 }
 
-// kindName matches a kind as collect lists it: a schema ID's kind, or a
-// collector's name.
+// kindName matches a kind as collect lists it: a schema ID's kind, or
+// details.
 var kindName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 // checkCollect reports a collect key that is not a list of kinds. It does
@@ -64,6 +68,7 @@ func (c *collectorContext) checkCollect() error {
 // artifact that Selected rules out even when the collector passes it.
 func Selected(ctx CollectorContext, at Location) bool {
 	r := runOf(ctx)
+	at.Path = r.path(at.Path)
 	switch r.verdict(at.Path, at.Schema, LevelOf(ctx.Config()), collectListOf(ctx.Config())) {
 	case notListed:
 		r.leaveOut(at.Schema, at.Path)
@@ -92,7 +97,7 @@ const (
 // verdict decides what the run does with the artifact with schema ID
 // schemaID at path, and notes its kind as one the run met.
 func (r *run) verdict(path, schemaID string, level Level, list collectList) verdict {
-	r.collect.saw(KindOf(schemaID, r.name))
+	r.collect.saw(KindOf(schemaID))
 	switch {
 	case wholeAbove(r.schemas, path, schemaID, level):
 		return aboveLevel
@@ -105,7 +110,7 @@ func (r *run) verdict(path, schemaID string, level Level, list collectList) verd
 // leaveOut records that the collect config key left out the artifact with
 // schema ID schemaID at path: its kind, and a not_shared gap on it.
 func (r *run) leaveOut(schemaID, path string) {
-	r.collect.leaveOut(KindOf(schemaID, r.name))
+	r.collect.leaveOut(KindOf(schemaID))
 	r.records.leaveOut(schemaID, path)
 }
 
@@ -124,13 +129,9 @@ func collectListOf(config map[string]any) collectList {
 }
 
 // collects reports whether list names the kind of an artifact with schema
-// ID schemaID. A collector's own file may go by its configured or its
-// published name.
+// ID schemaID.
 func (r *run) collects(list collectList, schemaID string) bool {
-	if list.all || slices.Contains(list.kinds, KindOf(schemaID, r.name)) {
-		return true
-	}
-	return KindOf(schemaID, "") == "" && r.collector != "" && slices.Contains(list.kinds, r.collector)
+	return list.all || slices.Contains(list.kinds, KindOf(schemaID))
 }
 
 // collectState is what the collect config key did in a run: the kinds it

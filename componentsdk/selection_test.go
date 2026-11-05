@@ -38,10 +38,10 @@ func TestKindOf(t *testing.T) {
 	for schemaID, want := range map[string]string{
 		"evidencepack/vuln-scanning@v1": "vuln-scanning",
 		"demo/posture@v2":               "posture",
-		"":                              "github",
+		"":                              "details",
 		"odd schema":                    "odd schema",
 	} {
-		if got := KindOf(schemaID, "github"); got != want {
+		if got := KindOf(schemaID); got != want {
 			t.Errorf("KindOf(%q) = %q, want %q", schemaID, got, want)
 		}
 	}
@@ -62,12 +62,12 @@ func TestACollectKeyThatIsNotAListOfKindsIsAConfigError(t *testing.T) {
 func TestTheResultListsKindsTheRunNeverWrote(t *testing.T) {
 	res := RunInProcess(CollectorSpec{Name: "demo"}, func(ctx CollectorContext) error {
 		return ctx.Emit([]CollectedArtifact{{Data: map[string]any{}}, {Schema: "evidencepack/tls@v1", Data: map[string]any{}}})
-	}, InProcessOptions{Name: "demo-prod", Config: map[string]any{"collect": []any{"demo", "tls", "vuln-scaning"}}})
+	}, InProcessOptions{Name: "demo-prod", Config: map[string]any{"collect": []any{"details", "tls", "vuln-scaning"}}})
 	if res.ExitCode != 0 {
 		t.Fatalf("exit %d: %s", res.ExitCode, res.Stderr)
 	}
 	if got := res.Result.Collect; got == nil || !reflect.DeepEqual(got.Unmatched, []string{"vuln-scaning"}) || len(got.LeftOut) != 0 {
-		t.Errorf("collect = %+v, want only the misspelled kind unmatched, and the collector's own file kept under its published name", got)
+		t.Errorf("collect = %+v, want only the misspelled kind unmatched, and the collector's own file kept as details", got)
 	}
 }
 
@@ -133,8 +133,8 @@ func TestTheCollectKeyLeavesOutKindsItDoesNotList(t *testing.T) {
 	if g := gapAt(res, Location{Path: "artifacts/demo.json"}); g == nil || g.Code != CodeNotShared || g.Owner != OwnerNobody || g.Status != GapNotCollected {
 		t.Errorf("gap on the detailed artifact = %+v, want not_shared", g)
 	}
-	if got := res.Result.Collect; got == nil || !reflect.DeepEqual(*got, ResultCollect{Listed: []string{"tls"}, LeftOut: []string{"demo"}}) {
-		t.Errorf("collect = %+v, want the detailed file left out under the collector's name", got)
+	if got := res.Result.Collect; got == nil || !reflect.DeepEqual(*got, ResultCollect{Listed: []string{"tls"}, LeftOut: []string{"details"}}) {
+		t.Errorf("collect = %+v, want the detailed file left out as details", got)
 	}
 	if res.Result.Outcome.Status != OutcomeCollected {
 		t.Errorf("outcome = %+v, want collected, since leaving an artifact out is the customer's choice", res.Result.Outcome)
@@ -153,12 +153,14 @@ func TestTheCollectKeyAppliesAtEveryLevel(t *testing.T) {
 	}
 }
 
-func TestACollectorsOwnFileGoesByEitherName(t *testing.T) {
-	res := RunInProcess(CollectorSpec{Name: "github"}, func(ctx CollectorContext) error {
-		return ctx.Emit([]CollectedArtifact{{Data: map[string]any{}}})
-	}, InProcessOptions{Name: "github-prod", Config: map[string]any{"collect": []any{"github"}}})
-	if res.ExitCode != 0 || len(res.Artifacts) != 3 || res.Result.Collect == nil || len(res.Result.Collect.LeftOut) != 0 {
-		t.Errorf("exit %d, %d artifacts, collect %+v; want the file kept under the published name", res.ExitCode, len(res.Artifacts), res.Result.Collect)
+func TestACollectorsOwnFileIsTheKindDetails(t *testing.T) {
+	for kind, kept := range map[string]bool{"details": true, "github": false, "github-prod": false} {
+		res := RunInProcess(CollectorSpec{Name: "github"}, func(ctx CollectorContext) error {
+			return ctx.Emit([]CollectedArtifact{{Data: map[string]any{}}, {Schema: "evidencepack/vcs-posture@v1", Data: map[string]any{}}})
+		}, InProcessOptions{Name: "github-prod", Config: map[string]any{"collect": []any{kind, "vcs-posture"}}})
+		if res.ExitCode != 0 || res.Result.Collect == nil || (len(res.Result.Collect.LeftOut) == 0) != kept {
+			t.Errorf("collect: [%s]: exit %d, collect %+v; want the detailed file kept only for details", kind, res.ExitCode, res.Result.Collect)
+		}
 	}
 }
 
@@ -211,6 +213,30 @@ func TestLeavingOutADetailedArtifactKeepsWhatWasCopiedFromIt(t *testing.T) {
 	}
 	if res.Result.Outcome.Status != OutcomePartial || res.Result.Outcome.Code != CodeVendorError {
 		t.Errorf("outcome = %+v, want partial with the vendor_error code, passing over not_shared", res.Result.Outcome)
+	}
+}
+
+func TestMirroringFromAnArtifactSelectedOutKeepsTheCopiedValue(t *testing.T) {
+	detail := Location{Path: "artifacts/detail.json"}
+	res := selectionRun(CollectorSpec{}, map[string]any{"collect": []any{"tls"}}, func(ctx CollectorContext) []CollectedArtifact {
+		if Selected(ctx, detail) {
+			t.Errorf("Selected(%+v) = true, want the detailed artifact ruled out", detail)
+		}
+		rec := Records(ctx)
+		rec.Mirror(Location{Path: detail.Path, Pointer: "/kept"}, Location{Path: "artifacts/tls.json", Pointer: "/kept"})
+		return []CollectedArtifact{{Path: "artifacts/tls.json", Schema: "evidencepack/tls@v1", Data: map[string]any{"kept": 1}}}
+	})
+	if res.ExitCode != 0 {
+		t.Fatalf("exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	if doc := dataOf(t, res, "artifacts/tls.json"); doc["kept"] != float64(1) {
+		t.Errorf("normalized = %v, want the copied value kept", doc)
+	}
+	if g := gapAt(res, Location{Path: "artifacts/tls.json", Pointer: "/kept"}); g != nil {
+		t.Errorf("gap %+v on a value the run wrote; the not_shared gap on the detailed artifact is not the value's", g)
+	}
+	if g := gapAt(res, detail); g == nil || g.Code != CodeNotShared {
+		t.Errorf("gap on the detailed artifact = %+v, want not_shared", g)
 	}
 }
 
@@ -285,7 +311,7 @@ func TestSelectedSaysWhetherToCollectAnArtifact(t *testing.T) {
 				Selected(ctx, Location{Path: "artifacts/detail.json"}),
 				Selected(ctx, Location{Schema: "demo/other@v1"}))
 			return ctx.Emit(nil)
-		}, InProcessOptions{Config: map[string]any{"level": level, "collect": []any{"other", "demo"}}})
+		}, InProcessOptions{Config: map[string]any{"level": level, "collect": []any{"other", "details"}}})
 		want := []bool{false, level == "internal", true}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: Selected = %v, want %v: the unlisted kind is ruled out, and the audit-only file below audit", level, got, want)
@@ -312,7 +338,7 @@ func TestAnArtifactLeftOutTwiceGetsOneGap(t *testing.T) {
 			{Schema: at.Schema, Path: at.Path, Data: map[string]any{}},
 			{Path: "artifacts/demo.json", Data: map[string]any{"ok": true}},
 		})
-	}, InProcessOptions{Config: map[string]any{"level": "audit", "collect": []any{"demo"}}})
+	}, InProcessOptions{Config: map[string]any{"level": "audit", "collect": []any{"details"}}})
 	if res.ExitCode != 0 {
 		t.Fatalf("exit %d: %s", res.ExitCode, res.Stderr)
 	}
@@ -351,7 +377,7 @@ func TestCapabilitiesAndTheBuildFileListWhatACollectorWrites(t *testing.T) {
 	if !reflect.DeepEqual(caps.Writes, want) {
 		t.Errorf("capabilities writes = %v, want %v, sorted and each once", caps.Writes, want)
 	}
-	if got := newBuild(spec, &errOut).Writes; !reflect.DeepEqual(got, want) {
+	if got := newBuild(spec, func(p string) string { return p }, &errOut).Writes; !reflect.DeepEqual(got, want) {
 		t.Errorf("build file writes = %v, want %v", got, want)
 	}
 	out.Reset()

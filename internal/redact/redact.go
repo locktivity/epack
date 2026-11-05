@@ -9,7 +9,8 @@
 //   - JWT/OIDC tokens
 //   - CI provider tokens (GitHub ghs_/gho_/ghp_, GitLab glpat-/glcbt-, etc.)
 //   - API keys and secrets in key=value patterns
-//   - Long base64 strings (likely encoded credentials)
+//   - Long base64 strings (likely encoded credentials), unless they read as
+//     words, such as an API error code or path
 //
 // File paths are NOT redacted - they're useful for debugging and rarely secrets.
 //
@@ -123,7 +124,8 @@ func Value(v string) string {
 //   - JWT tokens (three-part base64url format)
 //   - CI provider tokens (GitHub ghs_/gho_/ghp_, GitLab glpat-/glcbt-, etc.)
 //   - API keys and secrets in key=value patterns
-//   - Long base64 strings (40+ chars, likely encoded secrets)
+//   - Long base64 strings (40+ chars, likely encoded secrets), unless they
+//     read as words
 //   - Sensitive URL query parameters (token, api_key, secret, etc.)
 //
 // SECURITY: Input is truncated to maxInputLength before scanning to prevent
@@ -156,12 +158,18 @@ func truncateForRedaction(s string) (string, bool) {
 }
 
 func applySensitiveRedactions(s string) string {
+	s = applyTokenRedactions(s)
+	return base64SecretPattern.ReplaceAllStringFunc(s, redactBase64SecretMatch)
+}
+
+// applyTokenRedactions applies every rule but the one for long base64-like
+// runs, which runs last.
+func applyTokenRedactions(s string) string {
 	s = redactURLQueryParams(s)
 	s = ciTokenPattern.ReplaceAllString(s, Placeholder)
 	s = jwtPattern.ReplaceAllString(s, Placeholder)
 	s = bearerPattern.ReplaceAllString(s, "${1}"+Placeholder)
-	s = apiKeyPattern.ReplaceAllStringFunc(s, redactAPIKeyMatch)
-	return base64SecretPattern.ReplaceAllStringFunc(s, redactBase64SecretMatch)
+	return apiKeyPattern.ReplaceAllStringFunc(s, redactAPIKeyMatch)
 }
 
 // redactAPIKeyMatch redacts the value after a credential keyword: always
@@ -181,17 +189,26 @@ func redactAPIKeyMatch(match string) string {
 }
 
 // redactBase64SecretMatch redacts a long base64 run, except for 64-character
-// hex digests, which stay readable even inside a path or URL such as
-// "blobs/<digest>/data": the text around a digest is judged on its own.
+// hex digests and runs that read as words. A digest stays readable even
+// inside a path or URL such as "blobs/<digest>/data", and the text around it
+// is judged on its own.
 func redactBase64SecretMatch(match string) string {
+	out, _ := splitLongRun(match)
+	return out
+}
+
+// splitLongRun returns match with each long run that does not read as words
+// replaced by Placeholder, and the runs it replaced.
+func splitLongRun(match string) (string, []string) {
 	segments := strings.Split(match, "/")
-	var out, run []string
+	var out, run, hidden []string
 	flush := func() {
 		if len(run) == 0 {
 			return
 		}
 		text := strings.Join(run, "/")
-		if len(text) >= 40 {
+		if len(text) >= 40 && !wordShaped(text) {
+			hidden = append(hidden, text)
 			text = Placeholder
 		}
 		out = append(out, text)
@@ -206,7 +223,116 @@ func redactBase64SecretMatch(match string) string {
 		run = append(run, seg)
 	}
 	flush()
-	return strings.Join(out, "/")
+	return strings.Join(out, "/"), hidden
+}
+
+// wordShaped reports whether a long run reads as words, such as an API error
+// code, a field name, or a path, so it stays readable. Each piece between
+// slashes must be digits only, at most five characters, or letters that read
+// as camel-case words. A random secret almost always has a digit, and a run
+// of 40 random letters passes the word test about once in 100,000 tries.
+func wordShaped(run string) bool {
+	for _, seg := range strings.Split(run, "/") {
+		if len(seg) > 5 && !isDigits(seg) && !readsAsWords(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// readsAsWords reports whether s is letters in camel case whose words
+// average at least 4.5 letters and run at most 20. At most 35% of the
+// letters may be capitals. Each word with lowercase letters needs a vowel,
+// and no five lowercase consonants may run together.
+func readsAsWords(s string) bool {
+	if !isLetters(s) {
+		return false
+	}
+	words := splitWords(s)
+	uppers, consonants := 0, 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case isUpper(c):
+			uppers++
+			consonants = 0
+		case isVowel(c):
+			consonants = 0
+		default:
+			if consonants++; consonants == 5 {
+				return false
+			}
+		}
+	}
+	if 2*len(s) < 9*len(words) || 20*uppers > 7*len(s) {
+		return false
+	}
+	for _, w := range words {
+		if len(w) > 20 {
+			return false
+		}
+		if strings.ToUpper(w) != w && !strings.ContainsFunc(w, func(r rune) bool { return isVowel(byte(r) | 0x20) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// splitWords splits a run of letters written in camel case into its words,
+// so "ServerSideEncryption" has 3 and "ELBHealthCheck" has 3.
+func splitWords(s string) []string {
+	var words []string
+	start := 0
+	for i := 1; i < len(s); i++ {
+		if isUpper(s[i]) && (!isUpper(s[i-1]) || (i+1 < len(s) && !isUpper(s[i+1]))) {
+			words = append(words, s[start:i])
+			start = i
+		}
+	}
+	return append(words, s[start:])
+}
+
+func isVowel(c byte) bool {
+	switch c {
+	case 'a', 'e', 'i', 'o', 'u', 'y':
+		return true
+	}
+	return false
+}
+
+// LongRunsHidden returns the long runs that Sensitive's rule for base64-like
+// text hides in s, after the other rules. A test can then tell an identifier
+// hidden by mistake from a secret. Runs inside a URL are left out. A URL's
+// path can hold a secret, as a webhook URL does, so hiding it is expected.
+func LongRunsHidden(s string) []string {
+	s, _ = truncateForRedaction(s)
+	s = urlPattern.ReplaceAllString(applyTokenRedactions(s), " ")
+	var hidden []string
+	for _, match := range base64SecretPattern.FindAllString(s, -1) {
+		_, h := splitLongRun(match)
+		hidden = append(hidden, h...)
+	}
+	return hidden
+}
+
+func isUpper(c byte) bool { return c >= 'A' && c <= 'Z' }
+
+func isLetters(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; !isUpper(c) && (c < 'a' || c > 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+func isDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // Error is an alias for Sensitive - scans error messages for secrets.

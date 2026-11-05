@@ -30,7 +30,7 @@
     "schemas": {
       "type": "object",
       "additionalProperties": { "type": ["object", "boolean"] },
-      "description": "The JSON Schema each data artifact was checked against, keyed as the collector's spec keys them, by artifact path or schema ID. An artifact of a normalized type with no schema here was checked against the SDK's own schema for its type."
+      "description": "The JSON Schema each data artifact was checked against, keyed by artifact path or schema ID. A normalized type the collector gives its own methods for appears as the SDK's schema for the type with those methods. An artifact of a normalized type with no schema here was checked against the SDK's own schema for its type."
     },
     "writes": {
       "type": "array",

@@ -2,6 +2,8 @@ package componentsdk
 
 import (
 	"bytes"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +66,7 @@ func TestBuildFileIsTheSameForEveryRunOfABuild(t *testing.T) {
 	for i, opts := range []InProcessOptions{
 		{Config: map[string]any{"level": "trust"}, RunID: "run-1"},
 		{Config: map[string]any{"level": "audit"}, RunID: "run-2", Clock: func() time.Time { return time.Unix(1e9, 0) }},
-		{Config: map[string]any{"level": "internal"}, Name: "demo-prod"},
+		{Config: map[string]any{"level": "internal"}},
 	} {
 		res := RunInProcess(demoBuildSpec, emitDemo, opts)
 		if res.ExitCode != 0 {
@@ -76,8 +78,31 @@ func TestBuildFileIsTheSameForEveryRunOfABuild(t *testing.T) {
 		} else if !bytes.Equal(build.Data, first) {
 			t.Errorf("run %d wrote another build file:\n%s\nwant\n%s", i, build.Data, first)
 		}
-		if want := "artifacts/" + map[bool]string{true: "demo-prod", false: "demo"}[opts.Name != ""] + ".collector-build.json"; build.Path != want {
-			t.Errorf("build file path = %q, want %q", build.Path, want)
+		if build.Path != "artifacts/demo.collector-build.json" {
+			t.Errorf("build file path = %q", build.Path)
+		}
+	}
+
+	// A run configured under another name writes its files under that name,
+	// and its build file names them by those paths.
+	prod := RunInProcess(demoBuildSpec, emitDemo, InProcessOptions{Name: "demo-prod"})
+	if prod.ExitCode != 0 || prod.Build == nil {
+		t.Fatalf("exit = %d stderr = %s", prod.ExitCode, prod.Stderr)
+	}
+	renamed := strings.ReplaceAll(string(first), "artifacts/demo.", "artifacts/demo-prod.")
+	var want, got any
+	if err := json.Unmarshal([]byte(renamed), &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(buildArtifact(t, prod).Data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the demo-prod build file = %s\nwant the demo one with each artifacts/demo. path under artifacts/demo-prod.", buildArtifact(t, prod).Data)
+	}
+	for _, a := range prod.Artifacts {
+		if !strings.HasPrefix(a.Path, "artifacts/demo-prod.") {
+			t.Errorf("the demo-prod run wrote %s", a.Path)
 		}
 	}
 	res := RunInProcess(demoBuildSpec, emitDemo, InProcessOptions{})
@@ -133,6 +158,30 @@ func TestBuildFileLeavesOutWhatIsNotJSON(t *testing.T) {
 	}
 	if !strings.Contains(res.Stderr, "CollectorSpec.TraceMap is not a JSON object") {
 		t.Errorf("stderr = %q, want a warning about the trace map", res.Stderr)
+	}
+}
+
+func TestBuildFileCarriesTheNormalizedSchemaWithTheCollectorsMethods(t *testing.T) {
+	spec := CollectorSpec{Name: "tls", Version: "1.0.0", Writes: []string{"evidencepack/tls@v1"},
+		Methods: map[string]map[string]string{"evidencepack/tls@v1": {"/summary/reachable_pct": "Connects to each endpoint once."}}}
+	data := map[string]any{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "summary": map[string]any{"total_endpoints": 0}, "endpoints": []any{}}
+	res := RunInProcess(spec, func(ctx CollectorContext) error {
+		return ctx.Emit([]CollectedArtifact{{Data: data, Path: "artifacts/tls.json", Schema: "evidencepack/tls@v1"}})
+	}, InProcessOptions{})
+	if res.ExitCode != 0 || res.Build == nil {
+		t.Fatalf("exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	sch, err := outputcheck.Compile(res.Build.Schemas["evidencepack/tls@v1"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outputcheck.MethodAt(sch, "/summary/reachable_pct"); got != "Connects to each endpoint once." {
+		t.Errorf("the build file's tls schema gives the method %q", got)
+	}
+	for _, f := range res.Result.Checks {
+		if f.Check == CheckSchema {
+			t.Errorf("the artifact was checked against a schema it does not match: %+v", f)
+		}
 	}
 }
 

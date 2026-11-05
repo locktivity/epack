@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/locktivity/epack/internal/componenttypes"
 	"github.com/locktivity/epack/internal/jsonpointer"
 )
 
@@ -30,15 +31,35 @@ const (
 type analysis struct {
 	prog *program
 	// roots holds the Go types emitted at each artifact path, and
-	// rootsBySchema those emitted with a schema but no constant path.
+	// rootsBySchema those emitted with a schema but no path that constants
+	// give.
 	roots         map[string][]types.Type
 	rootsBySchema map[string][]types.Type
-	sites         map[*types.Var][]*site
-	funcs         map[*types.Func]*ast.FuncDecl
+	// emitted holds each artifact as the source emits it, until every
+	// package-level variable's value is known and its path can be worked out.
+	emitted []emittedArtifact
+	// values holds the value each package-level variable is declared with.
+	values map[*types.Var]declared
+	sites  map[*types.Var][]*site
+	funcs  map[*types.Func]*ast.FuncDecl
 	// encodedFields holds each MarshalJSON method of the module that encodes
 	// one field of its receiver alone, with the index path to the field, or
 	// the receiver's own fields under their own names, with an empty path.
 	encodedFields map[*types.Func][]int
+}
+
+// emittedArtifact is one artifact the source emits: the expressions for its
+// path and schema, and the Go type of its data.
+type emittedArtifact struct {
+	info         *types.Info
+	path, schema ast.Expr
+	data         types.Type
+}
+
+// declared is the expression a package-level variable is declared with.
+type declared struct {
+	info  *types.Info
+	value ast.Expr
 }
 
 // site is one place that writes a variable or field: a statement, a
@@ -59,6 +80,7 @@ func newAnalysis(prog *program) *analysis {
 		sites:         map[*types.Var][]*site{},
 		funcs:         map[*types.Func]*ast.FuncDecl{},
 		encodedFields: map[*types.Func][]int{},
+		values:        map[*types.Var]declared{},
 	}
 	for _, p := range prog.pkgs {
 		for _, f := range p.files {
@@ -74,6 +96,7 @@ func newAnalysis(prog *program) *analysis {
 			})
 		}
 	}
+	a.placeRoots()
 	return a
 }
 
@@ -116,6 +139,9 @@ func (a *analysis) visit(info *types.Info, n ast.Node, stack []ast.Node) {
 			}
 			v, _ := info.Defs[name].(*types.Var)
 			a.addSite(v, at(n, value))
+			if v != nil && len(n.Values) == len(n.Names) && v.Pkg() != nil && v.Parent() == v.Pkg().Scope() {
+				a.values[v] = declared{info: info, value: value}
+			}
 		}
 	case *ast.RangeStmt:
 		for _, e := range []ast.Expr{n.Key, n.Value} {
@@ -167,11 +193,67 @@ func (a *analysis) addRoot(info *types.Info, path, schema, data ast.Expr) {
 	if t == nil {
 		return
 	}
-	if p, ok := constString(info, path); ok {
-		a.roots[p] = append(a.roots[p], t)
-	} else if s, ok := constString(info, schema); ok {
-		a.rootsBySchema[s] = append(a.rootsBySchema[s], t)
+	a.emitted = append(a.emitted, emittedArtifact{info: info, path: path, schema: schema, data: t})
+}
+
+// placeRoots files each emitted artifact's type under its path, when
+// constants give the path, and otherwise under its schema.
+func (a *analysis) placeRoots() {
+	for _, e := range a.emitted {
+		if p, ok := a.stringOf(e.info, e.path, 0); ok {
+			a.roots[p] = append(a.roots[p], e.data)
+		} else if s, ok := constString(e.info, e.schema); ok {
+			a.rootsBySchema[s] = append(a.rootsBySchema[s], e.data)
+		}
 	}
+	a.emitted = nil
+}
+
+// stringOf returns the string e holds when constants give it: a constant, a
+// call to componentsdk.ArtifactPath with such arguments, or a package-level
+// variable declared with one.
+func (a *analysis) stringOf(info *types.Info, e ast.Expr, depth int) (string, bool) {
+	if s, ok := constString(info, e); ok {
+		return s, true
+	}
+	if e == nil || depth > maxDepth {
+		return "", false
+	}
+	switch e := ast.Unparen(e).(type) {
+	case *ast.CallExpr:
+		fn := callee(info, e)
+		if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != sdkPackage || fn.Name() != "ArtifactPath" || len(e.Args) != 2 {
+			return "", false
+		}
+		collector, ok := a.stringOf(info, e.Args[0], depth+1)
+		if !ok {
+			return "", false
+		}
+		schemaID, ok := a.stringOf(info, e.Args[1], depth+1)
+		if !ok {
+			return "", false
+		}
+		return "artifacts/" + collector + "." + componenttypes.KindOf(schemaID) + ".json", true
+	case *ast.Ident:
+		return a.declaredString(info.Uses[e], depth)
+	case *ast.SelectorExpr:
+		return a.declaredString(info.Uses[e.Sel], depth)
+	}
+	return "", false
+}
+
+// declaredString is stringOf for the value a package-level variable is
+// declared with.
+func (a *analysis) declaredString(obj types.Object, depth int) (string, bool) {
+	v, ok := obj.(*types.Var)
+	if !ok {
+		return "", false
+	}
+	d, ok := a.values[v]
+	if !ok {
+		return "", false
+	}
+	return a.stringOf(d.info, d.value, depth+1)
 }
 
 func constString(info *types.Info, e ast.Expr) (string, bool) {

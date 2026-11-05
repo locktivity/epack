@@ -105,6 +105,21 @@ type InProcessResult struct {
 	// UnlistedCredentials names the operations that sent a credential header
 	// through a client built without CredentialHosts.
 	UnlistedCredentials []string
+	// Redacted lists the runs of letters and digits that redaction hid as
+	// possible secrets from the result's gaps, advice, and run warnings, and
+	// from a failure message. Such a run is often an identifier the collector
+	// meant to show, such as an API error code. Nothing writes it to an
+	// artifact.
+	Redacted []Redacted
+}
+
+// Redacted is a run of letters and digits that redaction hid as a possible
+// secret.
+type Redacted struct {
+	// Where names the text, such as "the gap at artifacts/acme.json /users".
+	Where string
+	// Text is the run as the collector wrote it.
+	Text string
 }
 
 // EmittedArtifact is one artifact as the runner receives it.
@@ -172,6 +187,7 @@ func RunInProcess(spec CollectorSpec, handler CollectorHandler, opts InProcessOp
 		res.recordFiles(opts.OutputDir)
 		res.CredentialHosts = c.run.credentialHostLists()
 		res.UnlistedCredentials = c.run.unlistedCredentialOps()
+		res.Redacted = c.run.hiddenRuns()
 		res.Operations = c.run.calls.operations()
 		res.Mirrors = c.run.records.mirrored()
 	}()

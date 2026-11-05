@@ -215,6 +215,54 @@ func TestTransportWaitsForARateLimitReset(t *testing.T) {
 	}
 }
 
+func TestTransportWaitsThrottleWaitWhenTheLimitHasRequestsLeft(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reset := strconv.FormatInt(now.Add(10*time.Second).Unix(), 10)
+	secondary := func(resp *http.Response, body []byte) (Code, bool) {
+		if strings.Contains(string(body), "secondary rate limit") {
+			return CodeRateLimited, true
+		}
+		return "", false
+	}
+	cases := []struct {
+		name     string
+		header   http.Header
+		throttle time.Duration
+		wait     time.Duration
+	}{
+		{name: "a secondary limit with requests left", header: http.Header{"X-Ratelimit-Remaining": {"4999"}, "X-Ratelimit-Reset": {reset}}, throttle: time.Minute, wait: time.Minute},
+		{name: "a used-up limit waits for its reset", header: http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {reset}}, throttle: time.Minute, wait: 10 * time.Second},
+		{name: "a used-up limit with no reset header", header: http.Header{"X-Ratelimit-Remaining": {"0"}}, throttle: time.Minute, wait: time.Minute},
+		{name: "no rate limit headers", header: http.Header{}, throttle: time.Minute, wait: time.Minute},
+		{name: "a wait past the cap", header: http.Header{}, throttle: 5 * time.Minute, wait: time.Minute},
+		{name: "unset, the reset header decides", header: http.Header{"X-Ratelimit-Remaining": {"4999"}, "X-Ratelimit-Reset": {reset}}, wait: 10 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			script := newScript().on("api.example.com/users", respond(403, `{"message":"You have exceeded a secondary rate limit."}`, tc.header))
+			c := testContext(script)
+			c.run.clock = func() time.Time { return now }
+			var waits []time.Duration
+			c.run.sleep = func(_ context.Context, d time.Duration) error {
+				waits = append(waits, d)
+				return nil
+			}
+			client := NewHTTPClient(c, HTTPOptions{MaxAttempts: 2, ClassifyResponse: secondary, ThrottleWait: tc.throttle})
+			resp, err := get(t, client, context.Background(), "https://api.example.com/users")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+			if len(waits) != 1 {
+				t.Fatalf("waits = %v, want one before the retry", waits)
+			}
+			if limit := tc.wait + min(time.Second, tc.wait/10+1); waits[0] < tc.wait || waits[0] >= limit {
+				t.Errorf("waited %s, want %s plus jitter under %s", waits[0], tc.wait, limit-tc.wait)
+			}
+		})
+	}
+}
+
 func TestTransportDoesNotRetryADenied403(t *testing.T) {
 	script := newScript().on("api.example.com/users", respond(403, "denied", http.Header{"X-RateLimit-Remaining": []string{"4999"}}))
 	c := testContext(script)

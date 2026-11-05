@@ -31,6 +31,12 @@ func TestNextLink(t *testing.T) {
 		{"only the first rel counts",
 			[]string{`<https://acme.okta.test/p1>; rel="self"; rel="next"`},
 			""},
+		{"Sentry's next link on a page with more results",
+			[]string{`<https://sentry.test/api/0/organizations/acme/members/?cursor=0:0:1>; rel="previous"; results="false"; cursor="0:0:1", <https://sentry.test/api/0/organizations/acme/members/?cursor=0:100:0>; rel="next"; results="true"; cursor="0:100:0"`},
+			"https://sentry.test/api/0/organizations/acme/members/?cursor=0:100:0"},
+		{"Sentry's next link on its last page",
+			[]string{`<https://sentry.test/api/0/organizations/acme/members/?cursor=0:100:1>; rel="previous"; results="true"; cursor="0:100:1", <https://sentry.test/api/0/organizations/acme/members/?cursor=0:200:0>; rel="next"; results="false"; cursor="0:200:0"`},
+			""},
 		{"no next page", []string{`<https://acme.okta.test/p1>; rel="self"`}, ""},
 		{"no Link header", nil, ""},
 	}

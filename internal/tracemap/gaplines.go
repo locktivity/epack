@@ -65,3 +65,37 @@ func gapLines(traces []*FieldTrace, src *source, lines Lines) ([]string, error) 
 	sort.Slice(refs, func(i, j int) bool { return lineLess(refs[i], refs[j]) })
 	return refs, nil
 }
+
+// StaleLines returns each line of m whose text no longer matches the
+// module's source under root, as file:line in file and line order. A line
+// whose file or line number is gone is stale too.
+func StaleLines(root string, m *Map) []string {
+	src := newSource(root)
+	var stale []string
+	for ref, want := range m.Lines {
+		if text, err := src.line(ref); err != nil || text != want {
+			stale = append(stale, ref)
+		}
+	}
+	sort.Slice(stale, func(i, j int) bool { return lineLess(stale[i], stale[j]) })
+	return stale
+}
+
+// FindModuleRoot returns the nearest directory at or above dir that holds a
+// go.mod file. It reports false when there is none.
+func FindModuleRoot(dir string) (string, bool) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", false
+	}
+	for {
+		if info, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil && !info.IsDir() {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}

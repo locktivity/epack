@@ -33,7 +33,7 @@ func TestGapNoiseIsListedApart(t *testing.T) {
 	if len(rep.Gaps) != 0 {
 		t.Errorf("gaps = %+v, want none: the gap differs between the locked runs", rep.Gaps)
 	}
-	want := GapRef{FieldRef: FieldRef{Kind: "demo", File: "artifacts/demo.json", Pointer: "/regions"}, Status: "partial", Code: "rate_limited"}
+	want := GapRef{FieldRef: FieldRef{Kind: "details", File: "artifacts/demo.json", Pointer: "/regions"}, Status: "partial", Code: "rate_limited"}
 	if len(rep.GapNoise) != 1 || rep.GapNoise[0] != want {
 		t.Errorf("gap noise = %+v, want the rate_limited gap that one locked run recorded", rep.GapNoise)
 	}
@@ -135,8 +135,8 @@ func TestCompareKinds(t *testing.T) {
 	// run and the candidate's.
 	rep, _ := Compare("acme", "trust", locked(file("acme.flaky.json", "acme/flaky@v1")), locked(file("acme.blip.json", "acme/blip@v1")), candidate)
 	want := []KindChange{
-		{Kind: "acme", File: "artifacts/acme.json", Change: "unchanged"},
 		{Kind: "audit", File: "artifacts/acme.audit.json", Change: "added", Candidate: "acme/audit@v1"},
+		{Kind: "details", File: "artifacts/acme.json", Change: "unchanged"},
 		// One document gone and another new read as unchanged, since both
 		// paths share a pattern.
 		{Kind: "document", File: "artifacts/documents/{id}", Change: "unchanged", Locked: "acme/document@v1", Candidate: "acme/document@v1"},
@@ -172,7 +172,7 @@ func TestCompareFields(t *testing.T) {
 	candidate := run(candidateSchema, `{"collected_at":"t3","mfa_pct":100,"users_present":true,"users":[{"name":"bob","mfa":true},{"name":"alice","mfa":true}]}`)
 
 	at := func(pointer string) FieldRef {
-		return FieldRef{Kind: "demo", File: "artifacts/demo.json", Pointer: pointer}
+		return FieldRef{Kind: "details", File: "artifacts/demo.json", Pointer: pointer}
 	}
 	rep, preview := Compare("demo", "trust", locked("t1"), locked("t2"), candidate)
 	wantFields := []FieldChange{
@@ -189,11 +189,11 @@ func TestCompareFields(t *testing.T) {
 	if want := []FieldRef{at("/collected_at")}; !reflect.DeepEqual(rep.Noise, want) {
 		t.Errorf("noise = %+v, want %+v", rep.Noise, want)
 	}
-	if want := []KindChange{{Kind: "demo", File: "artifacts/demo.json", Change: "unchanged"}}; !reflect.DeepEqual(rep.Kinds, want) {
+	if want := []KindChange{{Kind: "details", File: "artifacts/demo.json", Change: "unchanged"}}; !reflect.DeepEqual(rep.Kinds, want) {
 		t.Errorf("kinds = %+v, want %+v", rep.Kinds, want)
 	}
 	value := func(pointer, field, from, to string) ValueChange {
-		return ValueChange{Kind: "demo", File: "artifacts/demo.json", Pointer: pointer, Field: field, From: from, To: to}
+		return ValueChange{Kind: "details", File: "artifacts/demo.json", Pointer: pointer, Field: field, From: from, To: to}
 	}
 	wantValues := []ValueChange{
 		value("/mfa_pct", "/mfa_pct", "50", "100"),
@@ -277,10 +277,10 @@ func TestCompareGaps(t *testing.T) {
 		demoRun(t, stay, fresh, flakyA, notShared, noPath),
 	)
 	at := func(pointer string) FieldRef {
-		return FieldRef{Kind: "demo", File: "artifacts/demo.json", Pointer: pointer}
+		return FieldRef{Kind: "details", File: "artifacts/demo.json", Pointer: pointer}
 	}
 	wantGaps := []GapChange{
-		{GapRef: GapRef{FieldRef: FieldRef{Kind: "demo"}, Status: "partial", Code: "vendor_error"}, Change: "added"},
+		{GapRef: GapRef{FieldRef: FieldRef{Kind: "details"}, Status: "partial", Code: "vendor_error"}, Change: "added"},
 		{GapRef: GapRef{FieldRef: at("/regions"), Status: "partial", Code: "vendor_error"}, Change: "removed"},
 		{GapRef: GapRef{FieldRef: at("/regions/{key}/enabled"), Status: "not_collected", Code: "permission_denied", MissingPermission: "demo:ReadRegions"}, Change: "added"},
 	}

@@ -12,14 +12,15 @@ import (
 // vendors differ. Okta sends self and next on separate lines, and GitHub
 // lists first, prev, next, and last on one line. A rel holds space-separated
 // relation types, which are matched without regard to case. A quoted
-// parameter may hold commas and semicolons.
+// parameter may hold commas and semicolons. A next link with results="false"
+// offers no page, since Sentry marks its last page that way.
 func NextLink(resp *http.Response) (*url.URL, bool) {
 	if resp == nil {
 		return nil, false
 	}
 	for _, line := range resp.Header.Values("Link") {
 		for _, l := range parseLinks(line) {
-			if !l.has("next") {
+			if !l.has("next") || strings.EqualFold(l.results, "false") {
 				continue
 			}
 			u, err := url.Parse(l.target)
@@ -40,6 +41,9 @@ func NextLink(resp *http.Response) (*url.URL, bool) {
 type link struct {
 	target string
 	rels   []string
+	// results is the link's results parameter, which Sentry sets to "false"
+	// on the next link of its last page.
+	results string
 }
 
 func (l link) has(rel string) bool {
@@ -79,9 +83,12 @@ func parseLinks(s string) []link {
 			i++
 			name, value, next := linkParam(s, i)
 			i = next
-			if strings.EqualFold(name, "rel") && !sawRel {
+			switch {
+			case strings.EqualFold(name, "rel") && !sawRel:
 				sawRel = true
 				l.rels = strings.Fields(value)
+			case strings.EqualFold(name, "results"):
+				l.results = value
 			}
 		}
 		out = append(out, l)

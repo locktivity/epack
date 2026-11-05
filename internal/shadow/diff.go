@@ -290,7 +290,7 @@ func (c comparison) declares(path string) bool {
 }
 
 func (c comparison) kind(schemaID string) string {
-	return componentsdk.KindOf(schemaID, c.collector)
+	return componentsdk.KindOf(schemaID)
 }
 
 func (c comparison) leftOut(kind string) bool {

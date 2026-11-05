@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-05
+
 ### ENHANCEMENTS
 
+- The test kit's new `redaction` check reports a run of letters and digits
+  that redaction hid as a possible secret from a gap, its advice, a run
+  warning, or a failure message. In a scenario such a run is almost always an
+  identifier the reader needs, such as an API error code. A run inside a URL
+  is left out. `InProcessResult.Redacted` lists the runs
 - A collector's schema can describe how the collector measures a value with
   `x-epack-method`, one plain sentence such as "Reads each S3 bucket's
   default encryption setting." The test kit's new `methods` check asks for
@@ -20,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copied value's method in the detailed artifact's schema, so it holds when
   that artifact is not written
 - A new reserved config key, `collect`, lists the kinds of evidence a
-  collector collects, such as `[cloud-posture]`, at every level. A
-  collector's own detailed file goes by the collector's name. Without the
+  collector collects, such as `[cloud-posture, details]`, at every level.
+  A collector's own detailed file is the kind `details`. Without the
   key, a collector collects every kind its level allows. A key that is not a
   list of kinds fails the run with `config_invalid`. Each kind it leaves out
   gets a gap with the new code `not_shared`, and the collector result's new
@@ -74,12 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `x-epack-level: audit`. The SDK leaves out exactly the fields the
   schema marks
 - `evidencepack/cloud-posture@v1` marks `account_id`, `accounts_expected`,
-  the IAM `user_count`, `access_key_user_count`, and `saml_provider_count`,
-  and the workforce sign-in `user_count` as audit-level. It adds
-  `all_accounts_collected` and the IAM
-  `users_present`, `access_keys_present`, and `saml_providers_present`, so a
-  trust artifact can say whether a population is empty without counting it.
-  An account no longer requires `account_id`
+  and the counts behind its percentages as audit-level. It adds
+  `all_accounts_collected`. An account no longer requires `account_id`
 - `InProcessResult.Operations` counts each operation's calls at every level.
   The test kit's fault matrix and credential checks read it, so they work for
   a suite that runs at the trust level
@@ -104,14 +107,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and every-domain booleans, point to their counts with `x-epack-numerator`
   and `x-epack-denominator`. The `ratios` check recomputes them from those
   counts
-- `cloud-posture`'s `mfa_coverage_pct` and
-  `access_key_rotation_compliant_pct`, and `idp-posture`'s privileged MFA
-  percentages, point to the count they are taken over. The `population`
-  check reports one that is set when that count is 0
+- `idp-posture`'s privileged MFA percentages point to the count they are
+  taken over. The `population` check reports one that is set when that
+  count is 0
 - The `x-epack-present` annotation points to a boolean field that is true
   when a value's population has any members. The `population` and `nulls`
   checks treat a false flag like a denominator of 0. At the trust level,
-  `cloud-posture` leaves out its user counts, and the checks use the flag
+  the normalized schemas leave out their counts, and the checks use the flag
   instead
 - The `population` check reports a value that is set although its
   denominator or `x-epack-present` flag was not read. A denominator or flag
@@ -153,13 +155,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose missing permission differs from the one its operation declares
 - The SDK has a normalized schema for `evidencepack/endpoint-posture@v1`,
   based on the JumpCloud collector's schema. Emit checks artifacts of that
-  type against it. The fleet counts, `metric_coverage`, device rows,
-  policies, events, and inventories are audit-level. Local admin accounts
-  are internal-level. At the trust level, an artifact has
-  `fleet.devices_present` and no counts. The schema adds
-  `fleet.mdm_enrolled_pct`, the percentage of `devices_count` enrolled in
-  MDM. Every percentage and count allows null, for a fleet with no devices.
-  Every percentage rounds down and requires `devices_present` to be true
+  type against it. It covers the fleet, compliance, hardening, patching, and
+  protection. The fleet counts, `metric_coverage`,
+  and device rows are audit-level. Local admin accounts are internal-level.
+  At the trust level, an artifact has `fleet.devices_present` and no counts.
+  The schema adds `fleet.mdm_enrolled_pct`, the percentage of
+  `fleet.device_count` enrolled in MDM. Every percentage and count allows
+  null, for a fleet with no devices. Every percentage rounds down and
+  requires `devices_present` to be true
+- A schema can give each value a label and a summary for readers of the
+  pack with `x-epack-label`, a few words such as "Disk encryption", and
+  `x-epack-summary`, one or two plain sentences on what the value counts or
+  says. `x-epack-goal` is the better value where one is better. It is
+  `true` or `false` on a true-or-false value, and `higher` or `lower` on a
+  count. A percentage takes its direction from `x-epack-rounding`. The schemas ship
+  in the build file, so the labels travel with each build. Every field in
+  the SDK's normalized schemas has a label, and every number and
+  true-or-false value has a summary
+- The test kit's new `labels` check reports each number and true-or-false
+  value the clean scenario writes that has no `x-epack-label` or no
+  `x-epack-summary`, and a goal that does not fit its value. A normalized
+  artifact passes with the SDK's own labels. New scaffolds label their
+  example schema
+- Every data artifact a collector writes sits at
+  `artifacts/<collector>.<kind>.json`, where the kind is the name in its
+  schema ID, or `details` for the collector's own detailed file.
+  `componentsdk.ArtifactPath(collector, schemaID)` gives the path. A run
+  configured under another name in `epack.yaml` writes its files under
+  that name, and the SDK moves every path in the output to match, so two
+  runs of one collector in a pack no longer collide.
+  `componentsdk.RunPath` gives the path a run writes. The test kit's new
+  `paths` check reports an artifact written anywhere else
+- Two new gap codes. `unsupported` marks a value the vendor does not report
+  at all, such as a normalized field it has no data for. Its owner is
+  `nobody`, and it does not make a run partial. `too_large` marks a value
+  the collector's own read limit cut short, such as an audit log longer
+  than the collector reads. Its owner is `publisher`
+- `x-epack-rollup` takes `among`, a list of conditions that pick the rows a
+  rollup covers. Each is `{"where": pointer, "equals": value}` or
+  `{"where": pointer, "not_equals": value}`. A count or percentage over
+  active apps only, for example, can now be checked against its rows
+- `HTTPOptions.ThrottleWait` sets the wait before retrying a throttled
+  response that still has requests left in its rate limit. GitHub answers
+  this way over a secondary rate limit and asks for a minute's wait. Without
+  it, such a response waits only as long as the primary limit's reset
+  header says, or backs off for at most 8 seconds
+- `CollectorSpec.Methods` gives a collector's `x-epack-method` sentences
+  for a normalized artifact, keyed by schema ID and then by field, with `*`
+  for any array index. Emit checks the artifact against the SDK's schema
+  with the sentences added, and the build file carries that schema. A
+  collector no longer copies a normalized schema to describe how it
+  measures it. `CollectorSpec.ArtifactSchemas` returns the schemas Emit
+  uses, and `NormalizedSchemaWithMethods` returns one type's
+- The test kit's new `normalized` check reports a copy of a normalized
+  schema in `CollectorSpec.Schemas`, which replaces the SDK's and falls
+  behind it. It also reports a `Methods` entry it cannot place on a field
+- The gap code `not_read` means the vendor reports a value but the collector
+  does not read it, such as a value behind a call the collector does not
+  make. Its owner is the publisher, who can add the read. Like
+  `unsupported`, it does not make a run partial. `unsupported` keeps its
+  meaning, a value the vendor never reports
+- The SDK has normalized schemas for `evidencepack/access-posture@v1` and
+  `evidencepack/vuln-scanning@v1`, and Emit checks artifacts of those types
+  against them. `access-posture` covers who can get into one system and how
+  they sign in. It has sections for sign-in rules, members, admins, root
+  accounts, machine credentials, and connected apps. A collector writes one
+  for each system it reads, such as GitHub, AWS, or ClickHouse. Its
+  `system_type` says what kind of system it is, such as `code_host` or
+  `saas`. `vuln-scanning` lists each scanner a system runs, with its
+  coverage and its open findings by severity. In both, the counts and the
+  per-account `scopes` are audit-level, and the `*_present` flags are
+  written at every level
 - `evidencepack/idp-posture@v1` accepts `jumpcloud` as a provider
 - `CollectorSpec.ConfigSchema` is a JSON Schema for the collector's config.
   The SDK checks the config against it before the handler runs, and skips
@@ -258,6 +324,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rounded with `RoundDown`, `RoundUp`, or `RoundNearest`. It returns nil
   when there is nothing to count
 
+### BUG FIXES
+
+- Redaction no longer hides a long run that reads as words, such as the AWS
+  error code `ServerSideEncryptionConfigurationNotFoundError` or the
+  Microsoft Graph path `/reports/authenticationMethods/userRegistrationDetails`.
+  A gap's detail showed such a run as `[REDACTED]`, which hid the call or
+  error to act on. A run with digits, `+`, or `=` that does not read as words
+  is still hidden
+- `Recorder.Mirror` no longer copies the `not_shared` gap of an artifact the
+  `collect` key left out onto the value it copies. A collector that called
+  `Selected` on its detailed artifact before mirroring from it failed in
+  `Emit`, with the copied value written and a gap on it
+
+- `CollectorSpec.Methods` places a sentence on a map's values, through the
+  map's `additionalProperties`, with `*` or any key as the last token, such
+  as `/fleet/devices_by_os/*`
+
+- `epack sdk map` finds the code behind an artifact whose path comes from
+  `componentsdk.ArtifactPath`, called in place or through a package-level
+  variable. It used to find code only for a path written as a constant, so
+  a detailed artifact named that way had no code lines in its trace map
+
+- `componentsdk.NextLink`, and the test kit's `pages` check with it, skip a
+  next link marked `results="false"`. Sentry's API marks its last page that
+  way, so a Sentry list stops there
+
+- The test kit's `tracemap` check now reports a committed map whose source
+  lines no longer match the collector's code, and a gap line the map does
+  not list. It used to miss stale line numbers that `epack sdk map --check`
+  caught
+- Two suites in one package that share a name no longer overwrite each
+  other's output under `COLLECTORTEST_OUT`. The second is an `export`
+  violation that asks for a `Suite.Name` of its own
+
 ### UPGRADE NOTES
 
 - A collector that writes a normalized artifact fails the test kit's
@@ -268,13 +368,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   root when a normalized artifact carries what profiles read
 - A collector that writes an artifact with a schema ID fails the test kit's
   `writes` check until `CollectorSpec.Writes` lists it
-- A reader of collector results finds the new gap code `not_shared` and the
-  new `collect` object. A `not_shared` gap is the customer's choice, so it
+- A reader of collector results finds the new gap codes `not_shared` and
+  `not_read` and the new `collect` object. A `not_read` gap names a value the
+  collector could read in a later release, so a page can say so instead of
+  saying the vendor doesn't report it. A `not_shared` gap is the customer's choice, so it
   needs no fix and does not count against collector health
 - A collector that writes `evidencepack/cloud-posture@v1` fails the test
   kit's `levels` check at the trust level until it leaves out the fields the
-  schema marks audit. Write `users_present`, `access_keys_present`, and
-  `saml_providers_present` beside the counts
+  schema marks audit. Write the present flags, such as
+  `storage_resources_present`, beside the counts
+- `evidencepack/cloud-posture@v1` no longer has `iam`, `vuln_scanning`, or
+  `workforce_sign_in`. `evidencepack/vcs-posture@v1` no longer has
+  `org_security` or `security_features`. Sign-in, members, admins, root
+  accounts, and machine credentials are in `evidencepack/access-posture@v1`,
+  and scanner coverage is in `evidencepack/vuln-scanning@v1`. A collector
+  writes those files instead. A profile or field guide that reads an old
+  field reads its new one. Each field moves as follows
+  - cloud-posture's `accounts[*].iam` `users_present`, `user_count`,
+    `mfa_user_count`, and `mfa_coverage_pct` move to access-posture's
+    `members.local_members_present`, `local_member_count`,
+    `local_mfa_member_count`, and `local_mfa_coverage_pct`
+  - `iam.root_mfa_enabled` moves to `root.root_mfa_coverage_pct`.
+    `iam.root_access_protected` is now `root_mfa_coverage_pct` at 100 with
+    `root_access_keys_present` false
+  - `iam.access_keys_present` and `access_key_user_count` move to
+    `credentials.credentials_present` and `credential_count`
+  - `iam.access_key_rotation_compliant_pct` and
+    `rotation_compliant_user_count` move to `credentials.rotation_overdue_pct`
+    and `rotation_overdue_credential_count`, which count the keys that are
+    not rotated in time
+  - `iam.saml_providers_present` and `workforce_sign_in.in_use` move to
+    `sign_in.sso_configured`. `iam.saml_provider_count` has no new field.
+    `workforce_sign_in.user_count` moves to `members.sso_member_count`.
+    `workforce_sign_in.mfa_source` has no new field, since idp-posture holds
+    MFA for sign-ins through an identity provider
+  - cloud-posture's `vuln_scanning` moves to a vuln-scanning scanner entry.
+    `enabled` becomes the entry's `enabled`, `scanned_resources_present` its
+    `resources_present`, and `scanned_resource_count` its
+    `scanned_resource_count`. `unpatched_resource_count` and `unpatched_pct`
+    have no new field. The entry's open findings by severity, and
+    `overdue_present`, take their place
+  - vcs-posture's `org_security.two_factor_required` moves to
+    access-posture's `sign_in.mfa_required`
+  - vcs-posture's `security_features` moves to vuln-scanning entries for
+    Dependabot, secret scanning, and code scanning. Each `*_pct` becomes the
+    entry's `coverage_pct`, and each `*_repository_count` its
+    `scanned_resource_count`, with the repositories collected as its
+    `resource_count`
+  - A system with several accounts or subscriptions lists each one in
+    access-posture's and vuln-scanning's `scopes`, at the audit level
+- In `evidencepack/access-posture@v1`, a member or admin is local when they
+  can sign in without SSO, even if their account is linked to SSO. Local and
+  SSO members can overlap when the system doesn't require SSO. A credential
+  is unrestricted when it has neither an IP limit nor a scope narrower than
+  full access. A credential limited to chosen permissions or resources has a
+  narrower scope. With scopes, each top-level `sign_in` value is false when
+  any scope's is false, null when any other is null, and true otherwise
+- A member of `evidencepack/access-posture@v1` or a user of
+  `evidencepack/idp-posture@v1` is inactive with no sign-in or other recorded
+  activity in the last 90 days. access-posture leaves out the rotation counts
+  with a gap when the system doesn't record when a credential was created
+- In `evidencepack/vuln-scanning@v1`, a scanner turned on per resource, such
+  as per repository, is `enabled` when it is on for at least one resource.
+  `coverage_pct` gives the share it covers
+- `evidencepack/endpoint-posture@v1`'s `scope.discovery_complete` may be
+  null, so a collector that can't tell writes null with a gap
+- `evidencepack/endpoint-posture@v1`'s `availability` reasons include
+  `not_read`, for a metric the vendor reports but the collector doesn't read
 - A reader of trust-level collector results finds operations without
   `calls`, `attempts`, or `retries` and steps without times or counts. Read
   `retried`, `status_codes`, `error_codes`, and `any_failed` instead
@@ -298,8 +458,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to match and lists each changed value in its changelog
 - A collector that writes `evidencepack/endpoint-posture@v1` fails the test
   kit's `levels` check at the trust level until it leaves out the fleet
-  counts, `scope.observed_devices_count`, and `metric_coverage`. It must
+  counts, `scope.observed_device_count`, and `metric_coverage`. It must
   also write `fleet.devices_present`
+- `evidencepack/endpoint-posture@v1` has no `policies`, `threat_events`,
+  `device_actions`, `history`, or `inventories`, and a device row has no
+  `prohibited_apps`. A collector keeps these in its own file. Counts use the
+  same names as the other normalized schemas, so `fleet.devices_count` is
+  `fleet.device_count`. The others are `scope.observed_device_count`,
+  `fleet.managed_device_count`, `fleet.mdm_enrolled_device_count`, and the
+  `metric_coverage` counts such as `passing_device_count`. The JumpCloud
+  collector writes the old names and these sections until it updates to
+  this SDK. A profile or field guide that reads them needs the new names
 - `email-dns`'s `with_dmarc_count` and `with_all_three_count` count a domain
   when a DMARC record applies to it. That record is the domain's own or the
   one the DNS tree walk finds above it. `enforced` uses the same record
@@ -337,6 +506,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing at a level, as GitHub's is at trust. The normalized schemas do not
   declare `collected_at_level`, `endpoint-posture` rejects it, and new
   scaffolds do not write it
+- A collector fails the test kit's `labels` check until each number and
+  true-or-false value in its own artifacts has an `x-epack-label` and an
+  `x-epack-summary`. `SkipChecks: []string{"labels"}` turns the check off
+- A collector whose `CollectorSpec.Schemas` holds its own copy of a
+  normalized schema fails the `normalized` check. Move its `x-epack-method`
+  sentences into `CollectorSpec.Methods` and drop the copy.
+  `SkipChecks: []string{"normalized"}` turns the check off
+- A collector fails the test kit's `paths` check until each data artifact
+  sits at `componentsdk.ArtifactPath(collector, schemaID)`. Its detailed
+  file moves from `artifacts/<collector>.json` to
+  `artifacts/<collector>.details.json`. A reader that finds artifacts by
+  path should find them by kind instead, or follow the new paths
+- A reader of collector results should accept the gap codes `unsupported`
+  and `too_large`. A run whose only gaps are `unsupported` is `collected`
 - `componentsdk.GapOption` is now `componentsdk.AdviceOption`, since run
   warnings take the same options. `GapOption` remains as a deprecated alias,
   so code that names it still compiles

@@ -3,7 +3,7 @@ package componentsdk
 import "github.com/locktivity/epack/internal/componenttypes"
 
 // Code says why a value could not be collected. Every collector uses the same
-// ten codes, so a reader can tell whose move it is without knowing the
+// thirteen codes, so a reader can tell whose move it is without knowing the
 // collector.
 type Code string
 
@@ -17,6 +17,13 @@ const (
 	CodeConfigInvalid Code = "config_invalid"
 	// CodeNotLicensed means the vendor plan or edition lacks the feature.
 	CodeNotLicensed Code = "not_licensed"
+	// CodeUnsupported means the vendor does not report the value at all, so
+	// no run of the collector can read it. It does not make a run partial.
+	CodeUnsupported Code = "unsupported"
+	// CodeNotRead means the vendor reports the value but the collector does
+	// not read it, such as a value behind a call the collector does not make.
+	// Its publisher can add it. It does not make a run partial.
+	CodeNotRead Code = "not_read"
 	// CodeRateLimited means the vendor was still throttling after retries.
 	CodeRateLimited Code = "rate_limited"
 	// CodeVendorError means the vendor kept failing, such as 5xx responses or
@@ -27,6 +34,9 @@ const (
 	// CodeInvalidResponse means the response did not have the shape the
 	// collector expects.
 	CodeInvalidResponse Code = "invalid_response"
+	// CodeTooLarge means the vendor holds more than the collector reads,
+	// such as an audit log past the number of events the collector reads.
+	CodeTooLarge Code = "too_large"
 	// CodeInternal means a bug in the collector.
 	CodeInternal Code = "internal"
 	// CodeNotShared means the customer left the value out of this pack with
@@ -57,10 +67,13 @@ var codeOwners = map[Code]Owner{
 	CodePermissionDenied: OwnerCustomer,
 	CodeConfigInvalid:    OwnerCustomer,
 	CodeNotLicensed:      OwnerNobody,
+	CodeUnsupported:      OwnerNobody,
+	CodeNotRead:          OwnerPublisher,
 	CodeRateLimited:      OwnerVendor,
 	CodeVendorError:      OwnerVendor,
 	CodeTimeout:          OwnerVendorOrRunner,
 	CodeInvalidResponse:  OwnerPublisher,
+	CodeTooLarge:         OwnerPublisher,
 	CodeInternal:         OwnerPublisher,
 	CodeNotShared:        OwnerNobody,
 }
@@ -68,12 +81,12 @@ var codeOwners = map[Code]Owner{
 // Codes lists every code, in the order the protocol documents them.
 func Codes() []Code {
 	return []Code{
-		CodeAuthFailed, CodePermissionDenied, CodeConfigInvalid, CodeNotLicensed,
-		CodeRateLimited, CodeVendorError, CodeTimeout, CodeInvalidResponse, CodeInternal, CodeNotShared,
+		CodeAuthFailed, CodePermissionDenied, CodeConfigInvalid, CodeNotLicensed, CodeUnsupported, CodeNotRead,
+		CodeRateLimited, CodeVendorError, CodeTimeout, CodeInvalidResponse, CodeTooLarge, CodeInternal, CodeNotShared,
 	}
 }
 
-// Valid reports whether c is one of the ten codes.
+// Valid reports whether c is one of the thirteen codes.
 func (c Code) Valid() bool {
 	_, ok := codeOwners[c]
 	return ok
@@ -86,6 +99,13 @@ func (c Code) Owner() Owner {
 		return owner
 	}
 	return OwnerPublisher
+}
+
+// makesPartial reports whether a gap with code c makes a run partial. Every
+// code does except not_shared, which the customer chose, unsupported, which
+// no run could avoid, and not_read, which every run of the collector has.
+func (c Code) makesPartial() bool {
+	return c != CodeNotShared && c != CodeUnsupported && c != CodeNotRead
 }
 
 // ExitCode is the exit code for a run that c stops entirely: 2 for

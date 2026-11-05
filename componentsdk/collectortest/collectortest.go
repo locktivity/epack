@@ -60,7 +60,8 @@ type Suite struct {
 
 	// Name is the collector's configured name. It defaults to Spec.Name. It
 	// also names the suite's directory under COLLECTORTEST_OUT, so two
-	// suites of one collector in a package need names of their own.
+	// suites of one collector in a package need names of their own. The
+	// export check reports two that share one.
 	Name string
 
 	// Config is the configuration every run gets. A scenario's Config
@@ -370,9 +371,9 @@ func validateSuite(s Suite) (map[string]*outputcheck.Schema, error) {
 // the schemas, the clock, the scrub check on recordings, and the CA the
 // endpoints chain to.
 func newKit(s Suite, responseSchemas map[string]*outputcheck.Schema) (*kit, error) {
-	k := &kit{suite: s, report: &Report{}, seen: map[string]bool{}, reported: map[Violation]bool{}, canaries: canariesOf(s), ignore: newIgnoreSet(s.Ignore), responseSchemas: responseSchemas}
+	k := &kit{suite: s, report: &Report{}, seen: map[string]bool{}, reported: map[Violation]bool{}, canaries: canariesOf(s), ignore: newIgnoreSet(runKeys(s, s.Ignore)), responseSchemas: responseSchemas, specSchemas: runSchemas(s, s.Spec.ArtifactSchemas())}
 	if tracing(s) {
-		k.trace = newTracer()
+		k.trace = newTracer(s)
 	}
 	if k.suite.Clock.IsZero() {
 		k.suite.Clock = cmp.Or(s.Scenarios[0].recordedAt, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -394,9 +395,12 @@ func newKit(s Suite, responseSchemas map[string]*outputcheck.Schema) (*kit, erro
 }
 
 type kit struct {
-	suite        Suite
-	report       *Report
-	schemas      map[string]*outputcheck.Schema
+	suite   Suite
+	report  *Report
+	schemas map[string]*outputcheck.Schema
+	// specSchemas is Spec.ArtifactSchemas, the schemas Emit checks
+	// artifacts against, worked out once.
+	specSchemas  map[string][]byte
 	resultSchema *outputcheck.Schema
 	buildSchema  *outputcheck.Schema
 	ca           *testCA
@@ -634,7 +638,7 @@ func (k *kit) runScenarios() {
 			k.violate("scenario", label, "the collector made no calls through the SDK; make them with componentsdk.NewHTTPClient, NewResolver, or NewDialer")
 		}
 		k.runEachSuccess(label, sc, res, n)
-		for _, p := range pinned(res.Artifacts, sc.Expect) {
+		for _, p := range pinned(res.Artifacts, k.runPins(sc.Expect)) {
 			k.violate("scenario", label, "%s", p)
 		}
 		if i == 0 && res.Result != nil {
@@ -752,9 +756,46 @@ func (k *kit) loadSchemas() error {
 		if err != nil {
 			return fmt.Errorf("schema for %s: %w", key, err)
 		}
-		k.schemas[key] = sch
+		k.schemas[k.runPath(key)] = sch
 	}
 	return nil
+}
+
+// runPath gives a path the collector names as the suite's runs write it,
+// under the suite's configured name. See componentsdk.RunPath.
+func (k *kit) runPath(path string) string {
+	return componentsdk.RunPath(k.suite.Spec.Name, cmp.Or(k.suite.Name, k.suite.Spec.Name), path)
+}
+
+// runPins returns pins with each artifact path as the suite's runs write it,
+// so a suite under another configured name pins by the collector's paths.
+func (k *kit) runPins(pins map[string]map[string]any) map[string]map[string]any {
+	if len(pins) == 0 {
+		return pins
+	}
+	out := make(map[string]map[string]any, len(pins))
+	for path, values := range pins {
+		out[k.runPath(path)] = values
+	}
+	return out
+}
+
+// runSchemas returns schemas with each key that is an artifact path as the
+// suite's runs write it.
+func runSchemas(s Suite, schemas map[string][]byte) map[string][]byte {
+	return runKeys(s, schemas)
+}
+
+// runKeys returns m with each key that is an artifact path as the suite's
+// runs write it, so a suite under another configured name names artifacts
+// by the collector's paths.
+func runKeys[V any](s Suite, m map[string]V) map[string]V {
+	name := cmp.Or(s.Name, s.Spec.Name)
+	out := make(map[string]V, len(m))
+	for key, v := range m {
+		out[componentsdk.RunPath(s.Spec.Name, name, key)] = v
+	}
+	return out
 }
 
 func (k *kit) checkSchemas(check, name string, res componentsdk.InProcessResult) {
@@ -1034,7 +1075,7 @@ func unrecorded(op string, code componentsdk.Code) string {
 }
 
 func (k *kit) checkSemantic(label string, sem Semantic, res componentsdk.InProcessResult) {
-	for _, p := range pinned(res.Artifacts, sem.Expect) {
+	for _, p := range pinned(res.Artifacts, k.runPins(sem.Expect)) {
 		k.violate("faults", label, "%s (%s): %s", sem.Fault, sem.Meaning, p)
 	}
 }

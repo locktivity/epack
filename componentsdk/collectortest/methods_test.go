@@ -27,13 +27,13 @@ func (p methodsProbe) run(ctx componentsdk.CollectorContext) error {
 	_ = resp.Body.Close()
 	if p.mirror {
 		componentsdk.Records(ctx).Mirror(componentsdk.Location{Path: "artifacts/probe.json", Pointer: "/two_factor"},
-			componentsdk.Location{Path: "artifacts/probe.vcs-posture.json", Pointer: "/org_security/two_factor_required"})
+			componentsdk.Location{Path: "artifacts/probe.access-posture.json", Pointer: "/sign_in/mfa_required"})
 	}
 	return ctx.Emit([]componentsdk.CollectedArtifact{
 		{Path: "artifacts/probe.json", Data: map[string]any{"name": "probe", "two_factor": true}},
-		{Path: "artifacts/probe.vcs-posture.json", Schema: "evidencepack/vcs-posture@v1", Data: map[string]any{
-			"schema_version": "1.0.0", "collected_at": "2026-11-03T00:00:00Z", "provider": "github", "organization": "probe",
-			"org_security": map[string]any{"two_factor_required": true},
+		{Path: "artifacts/probe.access-posture.json", Schema: "evidencepack/access-posture@v1", Data: map[string]any{
+			"schema_version": "1.0.0", "collected_at": "2026-11-03T00:00:00Z", "provider": "github", "system_type": "code_host",
+			"sign_in": map[string]any{"mfa_required": true},
 		}},
 	})
 }
@@ -65,7 +65,7 @@ func TestTheMethodsCheckFollowsCopiesToTheDetailedSchema(t *testing.T) {
 	if got := violationsOf(checkSuite(t, methodSuite(methodsProbe{mirror: true, method: true})), "methods"); len(got) != 0 {
 		t.Errorf("a copied value whose source has a method: %+v", got)
 	}
-	want := "artifacts/probe.vcs-posture.json has no x-epack-method for /org_security/two_factor_required"
+	want := "artifacts/probe.access-posture.json has no x-epack-method for /sign_in/mfa_required"
 	expectViolation(t, checkSuite(t, methodSuite(methodsProbe{mirror: false, method: true})), "methods", want)
 	expectViolation(t, checkSuite(t, methodSuite(methodsProbe{mirror: true, method: false})), "methods", want)
 }
@@ -88,7 +88,7 @@ func TestACopyFindsItsMethodWhenItsSourceIsNotWritten(t *testing.T) {
 		t.Errorf("the trust run leaves out the detailed artifact, and its schema still gives the copy's method: %+v", got)
 	}
 	expectViolation(t, checkSuite(t, methodSuite(methodsProbe{mirror: true, wholeAudit: true})), "methods",
-		"artifacts/probe.vcs-posture.json has no x-epack-method for /org_security/two_factor_required")
+		"artifacts/probe.access-posture.json has no x-epack-method for /sign_in/mfa_required")
 }
 
 func TestAnyIndex(t *testing.T) {

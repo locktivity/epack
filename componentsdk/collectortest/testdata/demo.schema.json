@@ -5,11 +5,19 @@
   "required": ["org"],
   "properties": {
     "org": { "type": "string" },
-    "mfa_enforced": { "type": ["boolean", "null"], "x-epack-method": "Reads the organization's MFA requirement." },
+    "mfa_enforced": {
+      "type": ["boolean", "null"],
+      "x-epack-method": "Reads the organization's MFA requirement.",
+      "x-epack-label": "MFA required",
+      "x-epack-summary": "Whether the organization requires MFA from every user.",
+      "x-epack-goal": true
+    },
     "users": {
       "type": ["integer", "null"],
       "minimum": 0,
       "x-epack-method": "Counts the users the user list returns, every page included.",
+      "x-epack-label": "Users",
+      "x-epack-summary": "Users in the organization.",
       "x-epack-rollup": { "rows": "user_mfa", "as": "count" }
     },
     "mfa_pct": {
@@ -18,9 +26,17 @@
       "maximum": 100,
       "x-epack-denominator": "users",
       "x-epack-method": "Divides the users with MFA on by users.",
+      "x-epack-label": "MFA coverage",
+      "x-epack-summary": "Share of users with MFA on.",
       "x-epack-rollup": { "rows": "user_mfa", "where": "/mfa", "as": "pct" }
     },
-    "score": { "type": ["integer", "null"], "x-epack-method": "Reads the organization's security score." },
+    "score": {
+      "type": ["integer", "null"],
+      "x-epack-method": "Reads the organization's security score.",
+      "x-epack-label": "Security score",
+      "x-epack-summary": "The security score the vendor gives the organization, from 0 to 100.",
+      "x-epack-goal": "higher"
+    },
     "user_mfa": {
       "type": "array",
       "x-epack-level": "audit",
@@ -31,7 +47,7 @@
     "user": {
       "type": "object",
       "required": ["mfa"],
-      "properties": { "mfa": { "type": "boolean" } }
+      "properties": { "mfa": { "type": "boolean", "x-epack-label": "MFA on", "x-epack-summary": "Whether the user has MFA on.", "x-epack-goal": true } }
     }
   }
 }

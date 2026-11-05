@@ -68,14 +68,17 @@ var normalizedFiles = map[string]string{
 	"evidencepack/email-dns@v1":        "schema/normalized/email-dns.v1.json",
 	"evidencepack/tls@v1":              "schema/normalized/tls.v1.json",
 	"evidencepack/endpoint-posture@v1": "schema/normalized/endpoint-posture.v1.json",
+	"evidencepack/access-posture@v1":   "schema/normalized/access-posture.v1.json",
+	"evidencepack/vuln-scanning@v1":    "schema/normalized/vuln-scanning.v1.json",
 }
 
 // NormalizedSchemaJSON returns the SDK's JSON Schema for a normalized artifact
 // type, such as "evidencepack/idp-posture@v1", or nil for a type it has none
 // for. These schemas require only the fields that say what was collected and
 // allow null on every metric, so a collector can leave out what it could not
-// read. Emit checks artifacts of these types against them unless
-// CollectorSpec.Schemas has a schema for the type or the path.
+// read. Emit checks artifacts of these types against them, with the
+// collector's CollectorSpec.Methods added, unless CollectorSpec.Schemas has
+// a schema for the type or the path.
 func NormalizedSchemaJSON(schemaID string) []byte {
 	file, ok := normalizedFiles[schemaID]
 	if !ok {
@@ -86,6 +89,46 @@ func NormalizedSchemaJSON(schemaID string) []byte {
 		return nil
 	}
 	return raw
+}
+
+// NormalizedSchemaWithMethods returns the SDK's schema for a normalized type
+// with methods written as each field's x-epack-method, keyed by JSON pointer
+// with * for any array index. It also returns a problem for each pointer it
+// could not place, which it skips. It returns nil for a type the SDK has no
+// schema for.
+func NormalizedSchemaWithMethods(schemaID string, methods map[string]string) ([]byte, []string) {
+	raw := NormalizedSchemaJSON(schemaID)
+	if raw == nil {
+		return nil, nil
+	}
+	if len(methods) == 0 {
+		return raw, nil
+	}
+	out, problems, err := outputcheck.AddMethods(raw, methods)
+	if err != nil {
+		return raw, []string{err.Error()}
+	}
+	return out, problems
+}
+
+// ArtifactSchemas returns the schemas Emit checks the collector's artifacts
+// against and the build file carries. They are Schemas, and for each type in
+// Methods that Schemas has no schema for, the SDK's schema for the type with
+// those methods added.
+func (spec CollectorSpec) ArtifactSchemas() map[string][]byte {
+	out := make(map[string][]byte, len(spec.Schemas)+len(spec.Methods))
+	for key, raw := range spec.Schemas {
+		out[key] = raw
+	}
+	for _, schemaID := range sortedKeys(spec.Methods) {
+		if _, ok := out[schemaID]; ok {
+			continue
+		}
+		if raw, _ := NormalizedSchemaWithMethods(schemaID, spec.Methods[schemaID]); raw != nil {
+			out[schemaID] = raw
+		}
+	}
+	return out
 }
 
 // artifactSchema is one schema Emit checks artifacts against.

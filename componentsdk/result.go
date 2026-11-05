@@ -78,7 +78,9 @@ type ResultCollector struct {
 
 // ResultOutcome summarizes the run. Code and owner come from the first gap
 // when the outcome is partial. A not_shared gap does not make a run partial,
-// since the customer chose to leave the value out.
+// since the customer chose to leave the value out. An unsupported gap does
+// not either, since no run could read the value, and neither does a not_read
+// gap, since every run of the collector has it.
 type ResultOutcome struct {
 	Status string `json:"status"`
 	Code   Code   `json:"code,omitempty"`
@@ -175,6 +177,7 @@ func buildResult(in resultInput) (CollectorResult, error) {
 		if gaps[i].guidanceConflict {
 			checks = append(checks, guidanceConflictFinding("the gap", gaps[i].Location))
 		}
+		r.noteHidden("the gap at "+gaps[i].Path+" "+gaps[i].Pointer, secrets, gaps[i].texts()...)
 		gaps[i].redact(secrets)
 	}
 	warnings := r.records.Warnings()
@@ -182,6 +185,7 @@ func buildResult(in resultInput) (CollectorResult, error) {
 		if warnings[i].guidanceConflict {
 			checks = append(checks, guidanceConflictFinding("a run warning", Location{}))
 		}
+		r.noteHidden("a run warning", secrets, warnings[i].texts()...)
 		warnings[i].redact(secrets)
 	}
 	// Advice appears at every level, so below audit it leaves out the
@@ -229,7 +233,7 @@ func buildResult(in resultInput) (CollectorResult, error) {
 	}
 	result.Collect = r.collect.result(r.name, r.collector)
 	for _, g := range gaps {
-		if g.Code != CodeNotShared {
+		if g.Code.makesPartial() {
 			result.Outcome = ResultOutcome{Status: OutcomePartial, Code: g.Code, Owner: g.Owner}
 			break
 		}
@@ -459,6 +463,28 @@ func accountIdentifiers(p *Principal, gaps []Gap, warnings []RunWarning, config 
 func guidanceConflictFinding(what string, at Location) CheckFinding {
 	return CheckFinding{Check: CheckGuidance, Path: at.Path, Pointer: at.Pointer,
 		Message: what + " was given more than one of fix, no_action, and choice, or a choice with fewer than two options, so the SDK kept only the first valid advice"}
+}
+
+// texts returns the gap's text and advice, which redact scans.
+func (g *Gap) texts() []string {
+	return append([]string{g.Detail, g.Warning}, g.Guidance.texts()...)
+}
+
+// texts returns the warning's message and advice, which redact scans.
+func (w *RunWarning) texts() []string {
+	return append([]string{w.Message}, w.Guidance.texts()...)
+}
+
+// texts returns the advice's text.
+func (g Guidance) texts() []string {
+	out := []string{g.Fix, g.Scope}
+	if g.Choice != nil {
+		out = append(out, g.Choice.Question)
+		for _, o := range g.Choice.Options {
+			out = append(out, o.Label, o.Consequence)
+		}
+	}
+	return out
 }
 
 // redact removes the run's secrets from the gap's text and advice.

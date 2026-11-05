@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -228,8 +230,8 @@ func TestNormalizedSchemas(t *testing.T) {
 		{
 			"evidencepack/cloud-posture@v1",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "azure",
-			  "accounts": [{"account_id": "sub-1", "iam": {"mfa_coverage_pct": null}, "storage": null}]}`,
-			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "accounts": [{"iam": {}}]}`,
+			  "accounts": [{"account_id": "sub-1", "storage": {"encryption_pct": null}, "database": null}]}`,
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "accounts": [{"storage": {}}]}`,
 		},
 		{
 			"evidencepack/vcs-posture@v1",
@@ -255,6 +257,18 @@ func TestNormalizedSchemas(t *testing.T) {
 			  "scope": {"discovery_complete": true, "description": "provider_visible_devices", "max_observation_age_seconds": 604800},
 			  "hardening": {"disk_encryption_pct": null}, "availability": []}`,
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "jumpcloud", "availability": []}`,
+		},
+		{
+			"evidencepack/access-posture@v1",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "clickhouse", "system_type": "database",
+			  "sign_in": {"sso_required": false, "mfa_required": true, "scim_enabled": null}, "members": {"members_present": true, "inactive_pct": null}, "root": null}`,
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "clickhouse"}`,
+		},
+		{
+			"evidencepack/vuln-scanning@v1",
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "github",
+			  "scanners": [{"scanner": "dependabot", "category": "dependencies", "enabled": true, "coverage_pct": null}]}`,
+			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "github", "scanners": [{"enabled": true}]}`,
 		},
 	}
 	for _, tc := range cases {
@@ -335,8 +349,8 @@ func TestNormalizedSummariesCheckTheirPercentages(t *testing.T) {
 		{
 			"evidencepack/cloud-posture@v1",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
-			  "accounts": [{"iam": {"users_present": false, "mfa_coverage_pct": 100}}]}`,
-			outputcheck.CheckPopulation, "/accounts/0/iam/mfa_coverage_pct",
+			  "accounts": [{"storage": {"storage_resources_present": false, "encryption_pct": 100, "public_access_blocked_pct": null}}]}`,
+			outputcheck.CheckPopulation, "/accounts/0/storage/encryption_pct",
 		},
 		{
 			"evidencepack/idp-posture@v1",
@@ -374,9 +388,7 @@ func TestCloudPostureTrustLevelLeavesOutCountsAndAccountIDs(t *testing.T) {
 	full := `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
 	  "accounts_expected": 2, "all_accounts_collected": true,
 	  "accounts": [{"account_id": "111111111111", "account_label": "production",
-	    "iam": {"users_present": true, "user_count": 4, "mfa_coverage_pct": 50, "access_keys_present": true, "access_key_user_count": 2,
-	            "saml_providers_present": false, "saml_provider_count": 0}}],
-	  "workforce_sign_in": {"in_use": true, "user_count": 12, "mfa_source": "sign_in_service"}}`
+	    "storage": {"storage_resources_present": true, "storage_resource_count": 4, "encrypted_storage_resource_count": 2, "encryption_pct": 50}}]}`
 	doc, err := outputcheck.Decode([]byte(full))
 	if err != nil {
 		t.Fatal(err)
@@ -393,11 +405,9 @@ func TestCloudPostureTrustLevelLeavesOutCountsAndAccountIDs(t *testing.T) {
 	}
 	want := []string{
 		"/accounts/0/account_id",
-		"/accounts/0/iam/access_key_user_count",
-		"/accounts/0/iam/saml_provider_count",
-		"/accounts/0/iam/user_count",
+		"/accounts/0/storage/encrypted_storage_resource_count",
+		"/accounts/0/storage/storage_resource_count",
 		"/accounts_expected",
-		"/workforce_sign_in/user_count",
 	}
 	if !reflect.DeepEqual(pointers, want) {
 		t.Errorf("above trust = %q, want %q", pointers, want)
@@ -405,8 +415,7 @@ func TestCloudPostureTrustLevelLeavesOutCountsAndAccountIDs(t *testing.T) {
 
 	trust := `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
 	  "all_accounts_collected": true,
-	  "accounts": [{"account_label": "production", "iam": {"users_present": true, "mfa_coverage_pct": 50, "access_keys_present": true, "saml_providers_present": false}}],
-	  "workforce_sign_in": {"in_use": true, "mfa_source": "sign_in_service"}}`
+	  "accounts": [{"account_label": "production", "storage": {"storage_resources_present": true, "encryption_pct": 50}}]}`
 	doc, err = outputcheck.Decode([]byte(trust))
 	if err != nil {
 		t.Fatal(err)
@@ -419,7 +428,7 @@ func TestCloudPostureTrustLevelLeavesOutCountsAndAccountIDs(t *testing.T) {
 	}
 }
 
-func TestCloudPostureCountsAndWorkforceSignInAreOptional(t *testing.T) {
+func TestCloudPostureCountsAreOptional(t *testing.T) {
 	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/cloud-posture@v1"))
 	if err != nil {
 		t.Fatal(err)
@@ -430,38 +439,31 @@ func TestCloudPostureCountsAndWorkforceSignInAreOptional(t *testing.T) {
 		bad  string
 	}{
 		{
-			"with the counts and workforce sign-in",
+			"with the counts",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
 			  "accounts": [
-			    {"account_id": "111111111111", "iam": {"users_present": false, "user_count": 0, "root_mfa_enabled": true, "access_keys_present": false, "access_key_user_count": 0, "saml_providers_present": false, "saml_provider_count": 0}},
-			    {"account_id": "222222222222", "iam": {"users_present": true, "user_count": 4, "mfa_coverage_pct": 50, "access_keys_present": true, "access_key_user_count": 2, "access_key_rotation_compliant_pct": 100, "saml_providers_present": true, "saml_provider_count": 1}}],
-			  "workforce_sign_in": {"in_use": true, "user_count": 12, "mfa_source": "sign_in_service"}}`,
+			    {"account_id": "111111111111", "storage": {"storage_resources_present": false, "storage_resource_count": 0, "encrypted_storage_resource_count": 0}},
+			    {"account_id": "222222222222", "storage": {"storage_resources_present": true, "storage_resource_count": 4, "encrypted_storage_resource_count": 2, "encryption_pct": 50},
+			     "database": {"databases_present": true, "database_count": 2, "encrypted_database_count": 2, "encryption_pct": 100}}]}`,
 			"",
 		},
 		{
 			"with them null",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
-			  "accounts": [{"account_id": "111111111111", "iam": {"user_count": null, "access_key_user_count": null, "saml_provider_count": null}}],
-			  "workforce_sign_in": {"in_use": null, "user_count": null, "mfa_source": null}}`,
+			  "accounts": [{"account_id": "111111111111", "storage": {"storage_resource_count": null, "encrypted_storage_resource_count": null}}]}`,
 			"",
 		},
 		{
 			"without them",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
-			  "accounts": [{"account_id": "111111111111", "iam": {"mfa_coverage_pct": 100, "access_key_rotation_compliant_pct": 95}}]}`,
+			  "accounts": [{"account_id": "111111111111", "storage": {"encryption_pct": 100, "public_access_blocked_pct": 95}}]}`,
 			"",
 		},
 		{
 			"a negative count",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
-			  "accounts": [{"account_id": "111111111111", "iam": {"user_count": -1}}]}`,
-			"/accounts/0/iam/user_count",
-		},
-		{
-			"an unknown mfa source",
-			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
-			  "accounts": [], "workforce_sign_in": {"in_use": true, "mfa_source": "okta"}}`,
-			"/workforce_sign_in/mfa_source",
+			  "accounts": [{"account_id": "111111111111", "storage": {"storage_resource_count": -1}}]}`,
+			"/accounts/0/storage/storage_resource_count",
 		},
 	}
 	for _, tc := range cases {
@@ -538,11 +540,11 @@ func TestEndpointPostureKeepsFleetCountsAtTheAuditLevel(t *testing.T) {
 		}
 		return doc
 	}
-	scope := `"scope": {"discovery_complete": true, "observed_devices_count": 4, "description": "provider_visible_devices", "max_observation_age_seconds": 604800}`
+	scope := `"scope": {"discovery_complete": true, "observed_device_count": 4, "description": "provider_visible_devices", "max_observation_age_seconds": 604800}`
 	audit := decode(`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "jumpcloud", ` + scope + `,
-	  "fleet": {"devices_present": true, "devices_count": 4, "managed_devices_count": 4, "mdm_enrolled_devices_count": 3, "mdm_enrolled_pct": 75, "devices_by_os": {"macos": 3, "windows": 1}},
+	  "fleet": {"devices_present": true, "device_count": 4, "managed_device_count": 4, "mdm_enrolled_device_count": 3, "mdm_enrolled_pct": 75, "devices_by_os": {"macos": 3, "windows": 1}},
 	  "hardening": {"disk_encryption_pct": 50},
-	  "metric_coverage": {"hardening.disk_encryption_pct": {"passing_devices_count": 1, "failing_devices_count": 1, "unknown_devices_count": 2, "not_applicable_devices_count": 0}},
+	  "metric_coverage": {"hardening.disk_encryption_pct": {"passing_device_count": 1, "failing_device_count": 1, "unknown_device_count": 2, "not_applicable_device_count": 0}},
 	  "availability": [], "devices": [{"device_id": "d1", "os_family": "macos", "in_scope": true}]}`)
 	if got := outputcheck.Validate(s, "a.json", audit); len(got) != 0 {
 		t.Fatalf("an audit artifact should match: %+v", got)
@@ -554,8 +556,8 @@ func TestEndpointPostureKeepsFleetCountsAtTheAuditLevel(t *testing.T) {
 	for _, f := range outputcheck.AboveLevel(s, "a.json", audit, "trust") {
 		above = append(above, f.Pointer)
 	}
-	want := []string{"/devices", "/fleet/devices_by_os", "/fleet/devices_count", "/fleet/managed_devices_count",
-		"/fleet/mdm_enrolled_devices_count", "/metric_coverage", "/scope/observed_devices_count"}
+	want := []string{"/devices", "/fleet/device_count", "/fleet/devices_by_os", "/fleet/managed_device_count",
+		"/fleet/mdm_enrolled_device_count", "/metric_coverage", "/scope/observed_device_count"}
 	if !reflect.DeepEqual(above, want) {
 		t.Errorf("above trust = %q, want %q", above, want)
 	}
@@ -583,6 +585,94 @@ func TestEndpointPostureKeepsFleetCountsAtTheAuditLevel(t *testing.T) {
 	if got := outputcheck.Check(s, "a.json", wrong, nil, "audit"); len(got) != 1 || got[0].Check != outputcheck.CheckRatios {
 		t.Errorf("76 for 3 of 4 enrolled: %+v, want one ratios finding", got)
 	}
+}
+
+func TestAccessPostureKeepsCountsAndScopesAtTheAuditLevel(t *testing.T) {
+	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/access-posture@v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections := `"sign_in": {"sso_configured": true, "sso_required": false},
+	  "members": {"members_present": true, "member_count": 9, "sso_member_count": 6, "sso_coverage_pct": 66,
+	    "local_members_present": true, "local_member_count": 3, "local_mfa_member_count": 3, "local_mfa_coverage_pct": 100},
+	  "admins": {"admins_present": true, "admin_count": 2, "admin_share_pct": 23},
+	  "root": {"root_accounts_present": true, "root_account_count": 1, "root_mfa_account_count": 1, "root_mfa_coverage_pct": 100, "root_access_keys_present": false},
+	  "credentials": {"credentials_present": true, "credential_count": 6, "unused_credential_count": 1, "unused_pct": 17}`
+	audit := decode(t, `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws", "system_type": "cloud", `+sections+`,
+	  "scopes": [{"id": "111111111111", "name": "prod", "kind": "account", `+sections+`}]}`)
+	if got := outputcheck.Validate(s, "a.json", audit); len(got) != 0 {
+		t.Fatalf("an audit artifact should match: %+v", got)
+	}
+	if got := outputcheck.Check(s, "a.json", audit, nil, "audit"); len(got) != 0 {
+		t.Errorf("each percentage matches its counts: %+v", got)
+	}
+	var above []string
+	for _, f := range outputcheck.AboveLevel(s, "a.json", audit, "trust") {
+		above = append(above, f.Pointer)
+	}
+	want := []string{"/admins/admin_count", "/credentials/credential_count", "/credentials/unused_credential_count",
+		"/members/local_member_count", "/members/local_mfa_member_count", "/members/member_count", "/members/sso_member_count",
+		"/root/root_account_count", "/root/root_mfa_account_count", "/scopes"}
+	if !reflect.DeepEqual(above, want) {
+		t.Errorf("above trust = %q, want %q", above, want)
+	}
+
+	// admin_share_pct's denominator is member_count in the members section
+	// beside it, so a scope's share is checked against that scope's members.
+	wrong := decode(t, strings.Replace(string(mustJSONText(t, audit)), `"admin_share_pct":23`, `"admin_share_pct":22`, 1))
+	got := outputcheck.Check(s, "a.json", wrong, nil, "audit")
+	if len(got) != 1 || got[0].Check != outputcheck.CheckRatios || got[0].Pointer != "/admins/admin_share_pct" {
+		t.Errorf("2 admins of 9 members rounds up to 23: %+v, want one ratios finding", got)
+	}
+
+	sso := decode(t, `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "github", "system_type": "code_host",
+	  "members": {"members_present": true, "local_members_present": false, "local_mfa_coverage_pct": 100, "sso_coverage_pct": 100}}`)
+	got = outputcheck.Check(s, "a.json", sso, nil, "trust")
+	if len(got) != 1 || got[0].Check != outputcheck.CheckPopulation || got[0].Pointer != "/members/local_mfa_coverage_pct" {
+		t.Errorf("local MFA coverage with no local members: %+v, want one population finding", got)
+	}
+}
+
+func TestVulnScanningKeepsCountsAndScopesAtTheAuditLevel(t *testing.T) {
+	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/vuln-scanning@v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := `{"scanner": "inspector", "category": "hosts", "enabled": true, "resources_present": true, "resource_count": 40, "scanned_resource_count": 39,
+	  "coverage_pct": 97, "open_critical_present": true, "open_high_present": false, "overdue_present": true,
+	  "open_critical_count": 2, "open_high_count": 0, "overdue_critical_count": 1}`
+	doc := decode(t, `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+	  "scanners": [`+scanner+`], "scopes": [{"id": "111111111111", "kind": "account", "scanners": [`+scanner+`]}]}`)
+	if got := outputcheck.Validate(s, "a.json", doc); len(got) != 0 {
+		t.Fatalf("an audit artifact should match: %+v", got)
+	}
+	if got := outputcheck.Check(s, "a.json", doc, nil, "audit"); len(got) != 0 {
+		t.Errorf("39 of 40 covered rounds down to 97: %+v", got)
+	}
+	up := decode(t, strings.ReplaceAll(string(mustJSONText(t, doc)), `"coverage_pct":97`, `"coverage_pct":98`))
+	got := outputcheck.Check(s, "a.json", up, nil, "audit")
+	if len(got) != 2 || got[0].Check != outputcheck.CheckRatios || got[0].Pointer != "/scanners/0/coverage_pct" ||
+		got[1].Pointer != "/scopes/0/scanners/0/coverage_pct" {
+		t.Errorf("98 for 39 of 40: %+v, want a ratios finding in the summary and in the scope", got)
+	}
+	var above []string
+	for _, f := range outputcheck.AboveLevel(s, "a.json", doc, "trust") {
+		above = append(above, f.Pointer)
+	}
+	want := []string{"/scanners/0/open_critical_count", "/scanners/0/open_high_count", "/scanners/0/overdue_critical_count",
+		"/scanners/0/resource_count", "/scanners/0/scanned_resource_count", "/scopes"}
+	if !reflect.DeepEqual(above, want) {
+		t.Errorf("above trust = %q, want %q", above, want)
+	}
+}
+
+func decode(t *testing.T, raw string) any {
+	t.Helper()
+	doc, err := outputcheck.Decode([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
 }
 
 func mustJSONText(t *testing.T, doc any) []byte {
@@ -643,17 +733,21 @@ func TestNormalizedPercentagesNameTheirCounts(t *testing.T) {
 		if err := json.Unmarshal(NormalizedSchemaJSON(id), &doc); err != nil {
 			t.Fatal(err)
 		}
-		// defined reports whether ref points to a property the schema
-		// defines. A relative ref names a key in siblings. An absolute ref is
-		// a pointer through properties from the root.
-		defined := func(siblings map[string]any, ref string) bool {
-			if !strings.HasPrefix(ref, "/") {
-				_, ok := siblings[ref]
-				return ok
+		// deref follows a local $ref, so a section defined once in $defs is
+		// checked wherever it is used.
+		deref := func(node map[string]any) map[string]any {
+			ref, _ := node["$ref"].(string)
+			name, ok := strings.CutPrefix(ref, "#/$defs/")
+			if !ok {
+				return node
 			}
-			node := doc
-			for _, token := range strings.Split(strings.TrimPrefix(ref, "/"), "/") {
-				props, _ := node["properties"].(map[string]any)
+			defs, _ := doc["$defs"].(map[string]any)
+			target, _ := defs[name].(map[string]any)
+			return target
+		}
+		lookup := func(node map[string]any, path string) bool {
+			for _, token := range strings.Split(path, "/") {
+				props, _ := deref(node)["properties"].(map[string]any)
 				next, ok := props[token].(map[string]any)
 				if !ok {
 					return false
@@ -662,9 +756,25 @@ func TestNormalizedPercentagesNameTheirCounts(t *testing.T) {
 			}
 			return true
 		}
-		var walk func(node map[string]any, at string)
-		walk = func(node map[string]any, at string) {
-			props, _ := node["properties"].(map[string]any)
+		// defined reports whether ref points to a property the schema
+		// defines. objects holds the schemas from the root down to the one
+		// holding the value. A ref is a sibling's name, an absolute pointer
+		// through properties from the root, or a relative pointer "N/path"
+		// that goes up N levels first.
+		defined := func(objects []map[string]any, ref string) bool {
+			if path, ok := strings.CutPrefix(ref, "/"); ok {
+				return lookup(doc, path)
+			}
+			if up, path, ok := strings.Cut(ref, "/"); ok {
+				if n, err := strconv.Atoi(up); err == nil {
+					return n < len(objects) && lookup(objects[len(objects)-1-n], path)
+				}
+			}
+			return lookup(objects[len(objects)-1], ref)
+		}
+		var walk func(objects []map[string]any, at string)
+		walk = func(objects []map[string]any, at string) {
+			props, _ := deref(objects[len(objects)-1])["properties"].(map[string]any)
 			for name, raw := range props {
 				child, ok := raw.(map[string]any)
 				if !ok {
@@ -678,21 +788,120 @@ func TestNormalizedPercentagesNameTheirCounts(t *testing.T) {
 						switch {
 						case ref == "" && !endpointControl:
 							t.Errorf("%s %s has no %s", id, path, keyword)
-						case ref != "" && !defined(props, ref):
+						case ref != "" && !defined(objects, ref):
 							t.Errorf("%s %s: %s %q points to no property", id, path, keyword, ref)
 						}
 					}
-					if ref, _ := child["x-epack-present"].(string); ref != "" && !defined(props, ref) {
+					if ref, _ := child["x-epack-present"].(string); ref != "" && !defined(objects, ref) {
 						t.Errorf("%s %s: x-epack-present %q points to no property", id, path, ref)
 					}
 				}
-				walk(child, path)
-				if items, ok := child["items"].(map[string]any); ok {
-					walk(items, path+"/*")
+				below := append(append([]map[string]any(nil), objects...), child)
+				walk(below, path)
+				if items, ok := deref(child)["items"].(map[string]any); ok {
+					walk(append(below, items), path+"/*")
 				}
 			}
 		}
-		walk(doc, "")
+		walk([]map[string]any{doc}, "")
+	}
+}
+
+// TestNormalizedSchemasLabelEveryField checks that every field of every
+// normalized schema has an x-epack-label, and that each number and
+// true-or-false value also has an x-epack-summary. A collector's normalized
+// artifact then passes the kit's labels check with no annotations of its own.
+// It also checks that each x-epack-goal fits its value.
+func TestNormalizedSchemasLabelEveryField(t *testing.T) {
+	for id := range normalizedFiles {
+		var doc map[string]any
+		if err := json.Unmarshal(NormalizedSchemaJSON(id), &doc); err != nil {
+			t.Fatal(err)
+		}
+		defs, _ := doc["$defs"].(map[string]any)
+		// view lists node and the schemas its $ref and its branches reach,
+		// skipping the conditions of an if or a not.
+		view := func(node map[string]any) []map[string]any {
+			var out []map[string]any
+			todo := []map[string]any{node}
+			for len(todo) > 0 {
+				n := todo[0]
+				todo = todo[1:]
+				out = append(out, n)
+				if name, ok := strings.CutPrefix(fmt.Sprint(n["$ref"]), "#/$defs/"); ok {
+					if target, ok := defs[name].(map[string]any); ok {
+						todo = append(todo, target)
+					}
+				}
+				for _, keyword := range []string{"oneOf", "anyOf", "allOf"} {
+					branches, _ := n[keyword].([]any)
+					for _, raw := range branches {
+						b, _ := raw.(map[string]any)
+						if b["$ref"] != nil || b["properties"] != nil || b["items"] != nil || b["type"] != nil {
+							todo = append(todo, b)
+						}
+					}
+				}
+			}
+			return out
+		}
+		first := func(v []map[string]any, key string) any {
+			for _, n := range v {
+				if val, ok := n[key]; ok {
+					return val
+				}
+			}
+			return nil
+		}
+		seen := map[uintptr]bool{}
+		var walk func(node map[string]any, path string, row bool)
+		walk = func(node map[string]any, path string, row bool) {
+			if seen[reflect.ValueOf(node).Pointer()] {
+				return
+			}
+			seen[reflect.ValueOf(node).Pointer()] = true
+			v := view(node)
+			if path != "" {
+				var types []string
+				for _, n := range v {
+					switch tv := n["type"].(type) {
+					case string:
+						types = append(types, tv)
+					case []any:
+						for _, x := range tv {
+							types = append(types, fmt.Sprint(x))
+						}
+					}
+				}
+				measured := slices.Contains(types, "number") || slices.Contains(types, "integer") || slices.Contains(types, "boolean")
+				if label, _ := first(v, "x-epack-label").(string); label == "" && (!row || measured) {
+					t.Errorf("%s %s has no x-epack-label", id, path)
+				}
+				if summary, _ := first(v, "x-epack-summary").(string); summary == "" && measured {
+					t.Errorf("%s %s has no x-epack-summary", id, path)
+				}
+				rounding, _ := first(v, "x-epack-rounding").(string)
+				boolean := slices.Contains(types, "boolean") && !slices.Contains(types, "number") && !slices.Contains(types, "integer")
+				if problem := outputcheck.GoalProblem(outputcheck.Measured{Goal: first(v, "x-epack-goal"), Rounding: rounding, Boolean: boolean}); problem != "" {
+					t.Errorf("%s %s: %s", id, path, problem)
+				}
+			}
+			for _, n := range v {
+				props, _ := n["properties"].(map[string]any)
+				for name, raw := range props {
+					if child, ok := raw.(map[string]any); ok {
+						walk(child, path+"/"+name, false)
+					}
+				}
+				if items, ok := n["items"].(map[string]any); ok {
+					walk(items, path+"/*", true)
+				}
+				if values, ok := n["additionalProperties"].(map[string]any); ok {
+					walk(values, path+"/{key}", false)
+				}
+			}
+		}
+		walk(doc, "", false)
 	}
 }
 

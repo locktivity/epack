@@ -41,10 +41,14 @@ func init() {
 		{name: "coverage", afterBaseline: (*kit).checkCoverage},
 		{name: "levels", afterBaseline: (*kit).checkLevels},
 		{name: "methods", afterBaseline: (*kit).checkMethods},
+		{name: "labels", afterBaseline: (*kit).checkLabels},
+		{name: "normalized", afterBaseline: (*kit).checkNormalized},
+		{name: "paths", afterBaseline: (*kit).checkPaths},
 		{name: "writes", eachSuccess: func(k *kit, label string, _ Scenario, res componentsdk.InProcessResult, _ *network) {
 			k.checkWrites(label, res)
 		}},
 		{name: "permissions", eachRun: (*kit).checkPermissions},
+		{name: "redaction", eachRun: (*kit).checkRedaction},
 		{name: "credentials",
 			eachRun:       func(k *kit, _, _ string, res componentsdk.InProcessResult) { k.checkHostLists(res) },
 			afterBaseline: (*kit).checkCredentials},

@@ -2,7 +2,7 @@
 
 The `level` config key sets how much detail the collector writes. The levels are cumulative: each one holds everything the level below it holds.
 
-| Level | What `artifacts/{{.Name}}.json` holds |
+| Level | What `artifacts/{{.Name}}.details.json` holds |
 |-------|---------------------------------------|
 | `trust` (the default) | The organization's ID and name, and whether it requires MFA. The number of users, and how many have an active MFA factor, as a count and a percentage. No user names. |
 | `audit` | The same as `trust`. |

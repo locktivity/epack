@@ -37,15 +37,15 @@ func (t *transport) retries(req *http.Request, op Operation) (*http.Request, int
 }
 
 // delay returns how long to wait before the next attempt. It uses the
-// Retry-After value when the response has one. For a throttle with no
-// Retry-After, it waits until the rate limit resets. Otherwise it uses
-// exponential backoff. code is the code the ClassifyResponse hook returned
-// for the response.
+// Retry-After value when the response has one. A throttle with no
+// Retry-After waits as throttleDelay says. Otherwise it uses exponential
+// backoff. code is the code the ClassifyResponse hook returned for the
+// response.
 func (t *transport) delay(resp *http.Response, code Code, attempt int) time.Duration {
 	if resp != nil {
 		wait, ok := retryAfter(resp.Header.Get("Retry-After"))
 		if !ok && rateLimited(resp, code) {
-			wait, ok = rateLimitReset(resp.Header, t.run.now())
+			wait, ok = t.throttleDelay(resp.Header)
 		}
 		if ok {
 			if wait > t.retryAfterCap {
@@ -221,6 +221,34 @@ func rateLimitReset(header http.Header, now time.Time) (time.Duration, bool) {
 		return max(time.Unix(int64(whole), int64(frac*1e9)).Sub(now), 0), true
 	}
 	return 0, false
+}
+
+// throttleDelay returns how long a throttled response with no Retry-After
+// asks the client to wait. Without HTTPOptions.ThrottleWait, it is the time
+// until the rate limit resets. With it, that time applies only to a limit
+// the headers show used up, and ThrottleWait covers the rest.
+func (t *transport) throttleDelay(header http.Header) (time.Duration, bool) {
+	if t.throttleWait <= 0 || limitUsedUp(header) {
+		if wait, ok := rateLimitReset(header, t.run.now()); ok {
+			return wait, true
+		}
+	}
+	return t.throttleWait, t.throttleWait > 0
+}
+
+// rateLimitRemainingHeaders are the headers that give how many requests are
+// left in a vendor's rate limit. In order, they are GitHub's, Okta's, and
+// GitLab's and the IETF draft's.
+var rateLimitRemainingHeaders = []string{"X-RateLimit-Remaining", "X-Rate-Limit-Remaining", "RateLimit-Remaining"}
+
+// limitUsedUp reports whether a remaining header says no requests are left.
+func limitUsedUp(header http.Header) bool {
+	for _, name := range rateLimitRemainingHeaders {
+		if strings.TrimSpace(header.Get(name)) == "0" {
+			return true
+		}
+	}
+	return false
 }
 
 func fitsDeadline(ctx context.Context, delay time.Duration) bool {

@@ -124,10 +124,13 @@ func TestCodes(t *testing.T) {
 		CodePermissionDenied: OwnerCustomer,
 		CodeConfigInvalid:    OwnerCustomer,
 		CodeNotLicensed:      OwnerNobody,
+		CodeUnsupported:      OwnerNobody,
+		CodeNotRead:          OwnerPublisher,
 		CodeRateLimited:      OwnerVendor,
 		CodeVendorError:      OwnerVendor,
 		CodeTimeout:          OwnerVendorOrRunner,
 		CodeInvalidResponse:  OwnerPublisher,
+		CodeTooLarge:         OwnerPublisher,
 		CodeInternal:         OwnerPublisher,
 		CodeNotShared:        OwnerNobody,
 	}

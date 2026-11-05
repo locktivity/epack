@@ -118,6 +118,25 @@ func TestSuiteNamesKeepScenarioOutputApart(t *testing.T) {
 	}
 }
 
+func TestTwoSuitesWithOneNameCannotShareTheirOutput(t *testing.T) {
+	out := t.TempDir()
+	t.Setenv(outEnv, out)
+	first := demoSuite(demo{})
+	if got := violationsOf(checkSuite(t, first), "export"); len(got) != 0 {
+		t.Fatalf("the first suite: %+v", got)
+	}
+	if got := violationsOf(checkSuite(t, first), "export"); len(got) != 0 {
+		t.Errorf("the same suite run again, as -count does: %+v", got)
+	}
+	second := demoSuite(demo{})
+	second.Scenarios = second.Scenarios[:1]
+	expectViolation(t, checkSuite(t, second), "export", "another suite in this package already wrote to "+filepath.Join(out, "demo"))
+	index := readIndex(t, filepath.Join(out, "demo", "scenarios.json"))
+	if len(index.Scenarios) != len(first.Scenarios) {
+		t.Errorf("the first suite's output holds %d scenarios after the second suite ran, want %d", len(index.Scenarios), len(first.Scenarios))
+	}
+}
+
 func TestSlug(t *testing.T) {
 	for in, want := range map[string]string{
 		"clean": "clean", "No users": "no-users", "  DMARC lookup fails (SERVFAIL)  ": "dmarc-lookup-fails-servfail",

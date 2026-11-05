@@ -161,6 +161,29 @@ func TestKitChecksTheCommittedTraceMap(t *testing.T) {
 	expectViolation(t, report, "tracemap", "/score does not list demo.score.get, whose faults change it")
 	expectViolation(t, report, "tracemap", "Run epack sdk map")
 
+	gapLine := st.Artifacts["artifacts/demo.json"]["/score"].Gaps[0]
+	ungapped := traceMapOf(st)
+	ungapped.Artifacts["artifacts/demo.json"]["/score"].Gaps = nil
+	expectViolation(t, checkSuite(t, withMap(ungapped)), "tracemap", "/score does not list "+gapLine+", which recorded a gap on it")
+
+	file, n, _ := tracemap.SplitLine(gapLine)
+	source, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(file)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.TrimSuffix(strings.Split(string(source), "\n")[n-1], "\r")
+	lined := traceMapOf(st)
+	lined.Lines[gapLine] = text
+	if got := violationsOf(checkSuite(t, withMap(lined)), "tracemap"); len(got) != 0 {
+		t.Errorf("a map whose lines match the source: %+v", got)
+	}
+	moved := traceMapOf(st)
+	moved.Lines[gapLine] = text + " // an edit moved this line"
+	moved.Lines[file+":99999"] = "gone"
+	report = checkSuite(t, withMap(moved))
+	expectViolation(t, report, "tracemap", gapLine+" no longer holds the line the map shows")
+	expectViolation(t, report, "tracemap", file+":99999 no longer holds the line the map shows")
+
 	broken := demoSuite(demo{})
 	broken.Spec.TraceMap = []byte(`{"artifacts": [], "lines": {}}`)
 	report = checkSuite(t, broken)

@@ -155,7 +155,7 @@ func TestScaffold_CollectorUsesTheSharedLayout(t *testing.T) {
 	if err := json.Unmarshal([]byte(readFile(t, dir, "docs/schema/trace-map.json")), &traceMap); err != nil {
 		t.Fatal(err)
 	}
-	if ops := traceMap.Artifacts["artifacts/demo.json"]["/users/mfa_enabled_pct"].Operations; strings.Join(ops, ",") != "demo.users.factors.list,demo.users.list" || len(traceMap.Lines) == 0 {
+	if ops := traceMap.Artifacts["artifacts/demo.details.json"]["/users/mfa_enabled_pct"].Operations; strings.Join(ops, ",") != "demo.users.factors.list,demo.users.list" || len(traceMap.Lines) == 0 {
 		t.Errorf("the trace map should name the scaffold's calls behind each field, got %v with %d lines", ops, len(traceMap.Lines))
 	}
 	record := readFile(t, dir, "internal/collector/record_test.go")

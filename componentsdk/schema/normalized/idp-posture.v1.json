@@ -6,70 +6,93 @@
     "schema_version": {
       "type": "string",
       "const": "1.0.0",
-      "description": "Version of this schema, always 1.0.0."
+      "description": "Version of this schema, always 1.0.0.",
+      "x-epack-label": "Schema version"
     },
     "collected_at": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 timestamp when data was collected"
+      "description": "ISO 8601 timestamp when data was collected",
+      "x-epack-label": "Collected at"
     },
     "provider": {
       "type": "string",
       "enum": ["okta", "ping", "entra", "google_workspace", "auth0", "onelogin", "jumpcloud", "other"],
-      "description": "Identity provider vendor"
+      "description": "Identity provider vendor",
+      "x-epack-label": "Provider"
     },
     "org_domain": {
       "type": "string",
-      "description": "Organization domain or tenant identifier"
+      "description": "Organization domain or tenant identifier",
+      "x-epack-label": "Domain or tenant ID"
     },
     "user_security": {
       "type": ["object", "null"],
       "properties": {
         "users_present": {
           "type": ["boolean", "null"],
-          "description": "Whether the provider has any users the user_security percentages count. When false, those percentages are null"
+          "description": "Whether the provider has any users the user_security percentages count. When false, those percentages are null",
+          "x-epack-label": "Users present",
+          "x-epack-summary": "Whether the provider has any accounts that can sign in."
         },
         "user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Accounts that can sign in. The user_security percentages and policy.mfa_required_coverage_pct count these"
+          "description": "Accounts that can sign in. The user_security percentages and policy.mfa_required_coverage_pct count these",
+          "x-epack-label": "Users",
+          "x-epack-summary": "Accounts that can sign in."
         },
         "mfa_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Users with any MFA factor enrolled"
+          "description": "Users with any MFA factor enrolled",
+          "x-epack-label": "Users with MFA",
+          "x-epack-summary": "Users enrolled in MFA."
         },
         "phishing_resistant_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Users with phishing-resistant MFA (WebAuthn or FIDO2) enrolled"
+          "description": "Users with phishing-resistant MFA (WebAuthn or FIDO2) enrolled",
+          "x-epack-label": "Users with phishing-resistant MFA",
+          "x-epack-summary": "Users enrolled in phishing-resistant MFA, such as a security key or passkey."
         },
         "inactive_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Users inactive for 90 days or more"
+          "description": "Users inactive for 90 days or more",
+          "x-epack-label": "Inactive users",
+          "x-epack-summary": "Users with no sign-in or other recorded activity in the last 90 days.",
+          "x-epack-goal": "lower"
         },
         "locked_out_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Users currently locked out"
+          "description": "Users currently locked out",
+          "x-epack-label": "Locked-out users",
+          "x-epack-summary": "Users who are currently locked out."
         },
         "weak_password_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Users with weak passwords"
+          "description": "Users with weak passwords",
+          "x-epack-label": "Users with weak passwords",
+          "x-epack-summary": "Users with a weak password.",
+          "x-epack-goal": "lower"
         },
         "password_policy_noncompliant_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Users whose passwords do not meet current password policy requirements"
+          "description": "Users whose passwords do not meet current password policy requirements",
+          "x-epack-label": "Users not meeting password policy",
+          "x-epack-summary": "Users whose password does not meet the current password policy.",
+          "x-epack-goal": "lower"
         },
         "mfa_coverage_pct": {
           "type": ["number", "null"],
@@ -77,6 +100,8 @@
           "maximum": 100,
           "x-epack-rounding": "floor",
           "description": "Percentage of users with any MFA factor enrolled",
+          "x-epack-label": "MFA enrollment",
+          "x-epack-summary": "Share of users enrolled in MFA.",
           "x-epack-numerator": "mfa_user_count",
           "x-epack-denominator": "user_count",
           "x-epack-present": "users_present"
@@ -87,6 +112,8 @@
           "maximum": 100,
           "x-epack-rounding": "floor",
           "description": "Percentage of users with phishing-resistant MFA (WebAuthn/FIDO2)",
+          "x-epack-label": "Phishing-resistant MFA",
+          "x-epack-summary": "Share of users enrolled in phishing-resistant MFA, such as a security key or passkey.",
           "x-epack-numerator": "phishing_resistant_user_count",
           "x-epack-denominator": "user_count",
           "x-epack-present": "users_present"
@@ -97,6 +124,8 @@
           "maximum": 100,
           "x-epack-rounding": "ceil",
           "description": "Percentage of users inactive for 90+ days",
+          "x-epack-label": "Inactive user rate",
+          "x-epack-summary": "Share of users with no sign-in or other recorded activity in the last 90 days.",
           "x-epack-numerator": "inactive_user_count",
           "x-epack-denominator": "user_count",
           "x-epack-present": "users_present"
@@ -107,6 +136,8 @@
           "maximum": 100,
           "x-epack-rounding": "ceil",
           "description": "Percentage of users currently locked out",
+          "x-epack-label": "Locked-out user rate",
+          "x-epack-summary": "Share of users who are currently locked out.",
           "x-epack-numerator": "locked_out_user_count",
           "x-epack-denominator": "user_count",
           "x-epack-present": "users_present"
@@ -117,6 +148,8 @@
           "maximum": 100,
           "x-epack-rounding": "ceil",
           "description": "Percentage of users with weak passwords",
+          "x-epack-label": "Weak passwords",
+          "x-epack-summary": "Share of users with a weak password.",
           "x-epack-numerator": "weak_password_user_count",
           "x-epack-denominator": "user_count",
           "x-epack-present": "users_present"
@@ -127,43 +160,57 @@
           "maximum": 100,
           "x-epack-rounding": "ceil",
           "description": "Percentage of users whose passwords do not meet current password policy requirements",
+          "x-epack-label": "Password-policy noncompliant",
+          "x-epack-summary": "Share of users whose password does not meet the current password policy.",
           "x-epack-numerator": "password_policy_noncompliant_user_count",
           "x-epack-denominator": "user_count",
           "x-epack-present": "users_present"
         }
       },
-      "description": "Percentages of the provider's users with MFA, with phishing-resistant MFA, inactive, locked out, and with weak or noncompliant passwords."
+      "description": "Percentages of the provider's users with MFA, with phishing-resistant MFA, inactive, locked out, and with weak or noncompliant passwords.",
+      "x-epack-label": "User security",
+      "x-epack-summary": "Sign-in security across the provider's users."
     },
     "app_security": {
       "type": ["object", "null"],
       "properties": {
         "apps_present": {
           "type": ["boolean", "null"],
-          "description": "Whether the provider has any applications the app_security percentages count. When false, those percentages are null"
+          "description": "Whether the provider has any applications the app_security percentages count. When false, those percentages are null",
+          "x-epack-label": "Apps present",
+          "x-epack-summary": "Whether the provider has any connected apps."
         },
         "app_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Applications the app_security percentages count"
+          "description": "Applications the app_security percentages count",
+          "x-epack-label": "Apps",
+          "x-epack-summary": "Apps connected to the provider."
         },
         "sso_app_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Applications using federated SSO (SAML or OIDC)"
+          "description": "Applications using federated SSO (SAML or OIDC)",
+          "x-epack-label": "Apps using SSO",
+          "x-epack-summary": "Apps set up for SSO through SAML or OIDC."
         },
         "provisioning_app_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Applications with automated provisioning"
+          "description": "Applications with automated provisioning",
+          "x-epack-label": "Apps with automated provisioning",
+          "x-epack-summary": "Apps with automated user provisioning."
         },
         "deprovisioning_app_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Applications with automated deprovisioning"
+          "description": "Applications with automated deprovisioning",
+          "x-epack-label": "Apps with automated deprovisioning",
+          "x-epack-summary": "Apps where access is removed automatically when a user is deprovisioned."
         },
         "sso_coverage_pct": {
           "type": ["number", "null"],
@@ -171,6 +218,8 @@
           "maximum": 100,
           "x-epack-rounding": "floor",
           "description": "Percentage of applications using federated SSO (SAML/OIDC)",
+          "x-epack-label": "SSO coverage",
+          "x-epack-summary": "Share of connected apps set up for SSO through SAML or OIDC.",
           "x-epack-numerator": "sso_app_count",
           "x-epack-denominator": "app_count",
           "x-epack-present": "apps_present"
@@ -181,6 +230,8 @@
           "maximum": 100,
           "x-epack-rounding": "floor",
           "description": "Percentage of applications with automated provisioning",
+          "x-epack-label": "Provisioning enabled",
+          "x-epack-summary": "Share of apps with automated user provisioning.",
           "x-epack-numerator": "provisioning_app_count",
           "x-epack-denominator": "app_count",
           "x-epack-present": "apps_present"
@@ -191,6 +242,8 @@
           "maximum": 100,
           "x-epack-rounding": "floor",
           "description": "Percentage of applications with automated deprovisioning",
+          "x-epack-label": "Deprovisioning enabled",
+          "x-epack-summary": "Share of apps where access is removed automatically when a user is deprovisioned.",
           "x-epack-numerator": "deprovisioning_app_count",
           "x-epack-denominator": "app_count",
           "x-epack-present": "apps_present"
@@ -199,41 +252,55 @@
           "type": ["integer", "null"],
           "minimum": 0,
           "description": "Count of authorized third-party applications or OAuth integrations",
+          "x-epack-label": "Authorized third-party apps",
+          "x-epack-summary": "Third-party apps and OAuth integrations that users have authorized.",
           "x-epack-level": "audit"
         }
       },
-      "description": "How the provider's apps sign users in and provision them, and how many third-party apps users have authorized."
+      "description": "How the provider's apps sign users in and provision them, and how many third-party apps users have authorized.",
+      "x-epack-label": "Application security",
+      "x-epack-summary": "SSO and automated provisioning for connected apps, and the third-party apps users have authorized."
     },
     "privileged_access": {
       "type": ["object", "null"],
       "properties": {
         "privileged_users_present": {
           "type": ["boolean", "null"],
-          "description": "Whether the provider has any users with privileged administrative access. When false, the privileged percentages are null"
+          "description": "Whether the provider has any users with privileged administrative access. When false, the privileged percentages are null",
+          "x-epack-label": "Admins present",
+          "x-epack-summary": "Whether the provider has any users with admin access."
         },
         "privileged_users_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "description": "Count of users with privileged administrative access",
+          "x-epack-label": "Admins",
+          "x-epack-summary": "Users with admin access.",
           "x-epack-level": "audit"
         },
         "super_admin_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "description": "Count of highest-privilege administrative accounts (for example Global Admin or Super Admin)",
+          "x-epack-label": "Highest-privilege admins",
+          "x-epack-summary": "Admins in the highest-privilege role, such as Global Admin or Super Admin.",
           "x-epack-level": "audit"
         },
         "privileged_mfa_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Privileged users with MFA enabled or enforced"
+          "description": "Privileged users with MFA enabled or enforced",
+          "x-epack-label": "Admins with MFA",
+          "x-epack-summary": "Admins with MFA enabled or enforced."
         },
         "privileged_phishing_resistant_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Privileged users with phishing-resistant MFA"
+          "description": "Privileged users with phishing-resistant MFA",
+          "x-epack-label": "Admins with phishing-resistant MFA",
+          "x-epack-summary": "Admins with phishing-resistant MFA, such as a security key or passkey."
         },
         "privileged_mfa_coverage_pct": {
           "type": ["number", "null"],
@@ -242,6 +309,8 @@
           "x-epack-rounding": "floor",
           "x-epack-denominator": "privileged_users_count",
           "description": "Percentage of privileged users with MFA enabled or enforced",
+          "x-epack-label": "Admin MFA coverage",
+          "x-epack-summary": "Share of admins with MFA enabled or enforced.",
           "x-epack-numerator": "privileged_mfa_user_count",
           "x-epack-present": "privileged_users_present"
         },
@@ -252,46 +321,64 @@
           "x-epack-rounding": "floor",
           "x-epack-denominator": "privileged_users_count",
           "description": "Percentage of privileged users with phishing-resistant MFA",
+          "x-epack-label": "Admin phishing-resistant MFA",
+          "x-epack-summary": "Share of admins with phishing-resistant MFA.",
           "x-epack-numerator": "privileged_phishing_resistant_user_count",
           "x-epack-present": "privileged_users_present"
         },
         "standing_privileged_users_present": {
           "type": ["boolean", "null"],
-          "description": "Whether any user holds standing privileged access, as standing_privileged_users_count defines it"
+          "description": "Whether any user holds standing privileged access, as standing_privileged_users_count defines it",
+          "x-epack-label": "Standing admin access",
+          "x-epack-summary": "Whether any user has admin access that is always on.",
+          "x-epack-goal": false
         },
         "standing_privileged_users_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "description": "Count of users with standing privileged access instead of just-in-time or eligible access",
+          "x-epack-label": "Standing admins",
+          "x-epack-summary": "Users who hold admin access at all times. Just-in-time and eligible access do not count.",
+          "x-epack-goal": "lower",
           "x-epack-level": "audit"
         }
       },
-      "description": "Counts of privileged users and the share of them with MFA and with phishing-resistant MFA."
+      "description": "Counts of privileged users and the share of them with MFA and with phishing-resistant MFA.",
+      "x-epack-label": "Privileged access",
+      "x-epack-summary": "Admins and the share of them with MFA."
     },
     "lifecycle": {
       "type": ["object", "null"],
       "properties": {
         "accounts_present": {
           "type": ["boolean", "null"],
-          "description": "Whether the provider has any accounts, in any state. When false, the lifecycle percentages are null"
+          "description": "Whether the provider has any accounts, in any state. When false, the lifecycle percentages are null",
+          "x-epack-label": "Accounts present",
+          "x-epack-summary": "Whether the provider has any accounts in any state."
         },
         "account_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Accounts in every state, including suspended and archived accounts. The lifecycle percentages count these"
+          "description": "Accounts in every state, including suspended and archived accounts. The lifecycle percentages count these",
+          "x-epack-label": "Accounts",
+          "x-epack-summary": "Accounts in every state, including suspended and archived accounts."
         },
         "suspended_account_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Accounts in a suspended or disabled state"
+          "description": "Accounts in a suspended or disabled state",
+          "x-epack-label": "Suspended accounts",
+          "x-epack-summary": "Accounts that are suspended or disabled."
         },
         "archived_account_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Accounts in an archived, retained, or soft-deleted state"
+          "description": "Accounts in an archived, retained, or soft-deleted state",
+          "x-epack-label": "Archived accounts",
+          "x-epack-summary": "Accounts that are archived, retained or soft-deleted."
         },
         "suspended_pct": {
           "type": ["number", "null"],
@@ -299,6 +386,8 @@
           "maximum": 100,
           "x-epack-rounding": "ceil",
           "description": "Percentage of accounts in suspended or disabled state",
+          "x-epack-label": "Suspended account rate",
+          "x-epack-summary": "Share of accounts that are suspended or disabled.",
           "x-epack-numerator": "suspended_account_count",
           "x-epack-denominator": "account_count",
           "x-epack-present": "accounts_present"
@@ -309,25 +398,34 @@
           "maximum": 100,
           "x-epack-rounding": "ceil",
           "description": "Percentage of accounts in archived, retained, or soft-deleted state",
+          "x-epack-label": "Archived account rate",
+          "x-epack-summary": "Share of accounts that are archived, retained or soft-deleted.",
           "x-epack-numerator": "archived_account_count",
           "x-epack-denominator": "account_count",
           "x-epack-present": "accounts_present"
         }
       },
-      "description": "Percentages of users suspended and archived."
+      "description": "Percentages of users suspended and archived.",
+      "x-epack-label": "Account lifecycle",
+      "x-epack-summary": "Share of accounts that are suspended or archived."
     },
     "policy": {
       "type": ["object", "null"],
       "properties": {
         "mfa_required": {
           "type": ["boolean", "null"],
-          "description": "Whether the tenant enforces MFA for all covered users"
+          "description": "Whether the tenant enforces MFA for all covered users",
+          "x-epack-label": "MFA required",
+          "x-epack-summary": "Whether every user must use MFA to sign in.",
+          "x-epack-goal": true
         },
         "mfa_required_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Users covered by policies that require MFA, out of user_security.user_count"
+          "description": "Users covered by policies that require MFA, out of user_security.user_count",
+          "x-epack-label": "Users required to use MFA",
+          "x-epack-summary": "Users covered by a policy that requires MFA."
         },
         "mfa_required_coverage_pct": {
           "type": ["number", "null"],
@@ -335,6 +433,8 @@
           "maximum": 100,
           "x-epack-rounding": "floor",
           "description": "Percentage of users covered by policies that require MFA",
+          "x-epack-label": "MFA enforcement",
+          "x-epack-summary": "Share of users covered by a policy that requires MFA.",
           "x-epack-numerator": "mfa_required_user_count",
           "x-epack-denominator": "/user_security/user_count",
           "x-epack-present": "/user_security/users_present"
@@ -342,37 +442,59 @@
         "session_lifetime_max_min": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Maximum session lifetime across all policies (minutes)"
+          "description": "Maximum session lifetime across all policies (minutes)",
+          "x-epack-label": "Max session lifetime (min)",
+          "x-epack-summary": "Longest session any sign-in policy allows before the user must sign in again, in minutes.",
+          "x-epack-goal": "lower"
         },
         "idle_timeout_max_min": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Maximum idle timeout across all policies (minutes)"
+          "description": "Maximum idle timeout across all policies (minutes)",
+          "x-epack-label": "Max idle timeout (min)",
+          "x-epack-summary": "Longest idle time any sign-in policy allows before a session ends, in minutes.",
+          "x-epack-goal": "lower"
         },
         "legacy_auth_blocked": {
           "type": ["boolean", "null"],
-          "description": "Whether legacy authentication protocols are blocked"
+          "description": "Whether legacy authentication protocols are blocked",
+          "x-epack-label": "Legacy sign-in blocked",
+          "x-epack-summary": "Whether sign-in through legacy authentication protocols is blocked.",
+          "x-epack-goal": true
         },
         "phishing_resistant_required_for_privileged": {
           "type": ["boolean", "null"],
-          "description": "Whether phishing-resistant authentication is required for privileged users"
+          "description": "Whether phishing-resistant authentication is required for privileged users",
+          "x-epack-label": "Phishing-resistant MFA for admins",
+          "x-epack-summary": "Whether admins must use phishing-resistant MFA to sign in.",
+          "x-epack-goal": true
         }
       },
-      "description": "Sign-in policy settings: MFA requirements, session limits, and legacy authentication."
+      "description": "Sign-in policy settings: MFA requirements, session limits, and legacy authentication.",
+      "x-epack-label": "Sign-in policy",
+      "x-epack-summary": "What the provider's sign-in policies require."
     },
     "device_access": {
       "type": ["object", "null"],
       "properties": {
         "managed_device_required": {
           "type": ["boolean", "null"],
-          "description": "Whether access to core corporate resources requires a managed or compliant device"
+          "description": "Whether access to core corporate resources requires a managed or compliant device",
+          "x-epack-label": "Managed device required",
+          "x-epack-summary": "Whether access to core company resources requires a managed or compliant device.",
+          "x-epack-goal": true
         },
         "managed_device_required_for_admins": {
           "type": ["boolean", "null"],
-          "description": "Whether privileged access requires a managed or compliant device"
+          "description": "Whether privileged access requires a managed or compliant device",
+          "x-epack-label": "Managed device required for admins",
+          "x-epack-summary": "Whether admin access requires a managed or compliant device.",
+          "x-epack-goal": true
         }
       },
-      "description": "Whether sign-in policies require a managed device, for all users and for administrators."
+      "description": "Whether sign-in policies require a managed device, for all users and for administrators.",
+      "x-epack-label": "Device access",
+      "x-epack-summary": "Whether users and admins need a managed device for access."
     }
   }
 }

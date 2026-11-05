@@ -1,6 +1,9 @@
 package redact
 
 import (
+	"math/rand/v2"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -221,6 +224,12 @@ func TestSensitiveLeavesProseAndDigests(t *testing.T) {
 		{"error code after a colon and a space", "requesting token: invalid_client", "requesting token: invalid_client"},
 		{"digest in a path", "artifacts/documents/" + digest + "/policy.pdf", "artifacts/documents/" + digest + "/policy.pdf"},
 		{"digest in a URL", "GET https://storage.example.com/blobs/" + digest + " failed", "GET https://storage.example.com/blobs/" + digest + " failed"},
+		{"long error code", "GetBucketEncryption: ServerSideEncryptionConfigurationNotFoundError", "GetBucketEncryption: ServerSideEncryptionConfigurationNotFoundError"},
+		{"long error code with short words", "ListDelegatedAdministrators: AccountNotManagementOrDelegatedAdministratorException", "ListDelegatedAdministrators: AccountNotManagementOrDelegatedAdministratorException"},
+		{"long field name", "the GraphQL field EnterpriseOwnerInfo.samlIdentityProviderSettingOrganizations", "the GraphQL field EnterpriseOwnerInfo.samlIdentityProviderSettingOrganizations"},
+		{"long name with an acronym", "LoadBalancedGroupsWithoutELBHealthCheckCount is 0", "LoadBalancedGroupsWithoutELBHealthCheckCount is 0"},
+		{"long API path", "GET /reports/authenticationMethods/userRegistrationDetails returned status 403", "GET /reports/authenticationMethods/userRegistrationDetails returned status 403"},
+		{"long pointer", "/accounts/0/cloudfront/distributions/0/https is missing", "/accounts/0/cloudfront/distributions/0/https is missing"},
 
 		// Values stay redacted.
 		{"keyword before a value", "auth failed with token abc123def456ghi", "auth failed with token " + Placeholder},
@@ -237,6 +246,10 @@ func TestSensitiveLeavesProseAndDigests(t *testing.T) {
 		{"long token with slashes", "key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "key " + Placeholder},
 		{"long token beside a digest", "blobs/" + digest + "/wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "blobs/" + digest + "/" + Placeholder},
 		{"hex of another length", "commit 0123456789abcdef0123456789abcdef01234567", "commit " + Placeholder},
+		{"long base64", "secret dGhpc2lzYXZlcnlsb25nYmFzZTY0ZW5jb2RlZHNlY3JldHZhbHVl", "secret " + Placeholder},
+		{"long base64 of letters only", "key ZmFrZWtleVpmYWtla2V5WmZha2VrZXlaZmFrZWtleVpm", "key " + Placeholder},
+		{"long base64 with padding", "value QWxhZGRpbjpvcGVuIHNlc2FtZQQWxhZGRpbjpvcGVuIHNl==", "value " + Placeholder},
+		{"word path beside a secret", "/reports/wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY/details", Placeholder},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -379,5 +392,31 @@ func TestIsSensitiveParam(t *testing.T) {
 		if result != tt.expected {
 			t.Errorf("isSensitiveParam(%q) = %v, want %v", tt.param, result, tt.expected)
 		}
+	}
+}
+
+// TestSensitiveHidesRandomBase64 checks that runs of random base64 stay
+// hidden, so leaving runs that read as words readable lets no secret through.
+func TestSensitiveHidesRandomBase64(t *testing.T) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := 0; i < 20000; i++ {
+		b := make([]byte, 40+rng.IntN(25))
+		for j := range b {
+			b[j] = alphabet[rng.IntN(len(alphabet))]
+		}
+		in := "key " + string(b)
+		if got := SensitiveAlways(in); strings.Contains(got, string(b)) {
+			t.Fatalf("SensitiveAlways(%q) = %q, want the run hidden", in, got)
+		}
+	}
+}
+
+func TestLongRunsHidden(t *testing.T) {
+	got := LongRunsHidden("GET /reports/authenticationMethods/userRegistrationDetails failed, key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY, token=abc123def456ghi789jkl012mno345pqr678stu, " +
+		`Post "https://guardduty.us-east-1.amazonaws.com/detector/12abc34d567e8fa901bc2d34e56789f0/findings": timeout`)
+	want := []string{"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}
+	if !slices.Equal(got, want) {
+		t.Errorf("LongRunsHidden = %q, want %q", got, want)
 	}
 }

@@ -5,27 +5,34 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.0.0"
+      "const": "1.0.0",
+      "x-epack-label": "Schema version"
     },
     "collected_at": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 timestamp when data was collected"
+      "description": "ISO 8601 timestamp when data was collected",
+      "x-epack-label": "Collected at"
     },
     "provider": {
       "type": "string",
       "enum": ["aws", "gcp", "azure", "other"],
-      "description": "Cloud provider vendor"
+      "description": "Cloud provider vendor",
+      "x-epack-label": "Provider"
     },
     "accounts_expected": {
       "type": ["integer", "null"],
       "minimum": 0,
       "x-epack-level": "audit",
-      "description": "Number of accounts the collection was configured to cover"
+      "description": "Number of accounts the collection was configured to cover",
+      "x-epack-label": "Accounts expected",
+      "x-epack-summary": "Accounts the collection was configured to cover."
     },
     "all_accounts_collected": {
       "type": ["boolean", "null"],
-      "description": "Whether every account the collection was configured to cover answered"
+      "description": "Whether every account the collection was configured to cover answered",
+      "x-epack-label": "All accounts collected",
+      "x-epack-summary": "Whether data was collected from every account the collection was configured to cover."
     },
     "accounts": {
       "type": "array",
@@ -35,107 +42,41 @@
           "account_id": {
             "type": "string",
             "x-epack-level": "audit",
-            "description": "Account/project/subscription identifier"
-          },
-          "iam": {
-            "type": ["object", "null"],
-            "properties": {
-              "users_present": {
-                "type": ["boolean", "null"],
-                "description": "Whether the account has any human user identities that can sign in to it. When false, mfa_coverage_pct has no users to count"
-              },
-              "user_count": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "x-epack-level": "audit",
-                "description": "Number of human user identities that can sign in to the account. mfa_coverage_pct counts these users"
-              },
-              "mfa_user_count": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "x-epack-level": "audit",
-                "description": "Users counted in user_count who have MFA enabled"
-              },
-              "mfa_coverage_pct": {
-                "type": ["number", "null"],
-                "minimum": 0,
-                "maximum": 100,
-                "x-epack-rounding": "floor",
-                "x-epack-denominator": "user_count",
-                "x-epack-present": "users_present",
-                "description": "Percentage of human user identities that can sign in to the account and have MFA enabled",
-                "x-epack-numerator": "mfa_user_count"
-              },
-              "root_mfa_enabled": {
-                "type": ["boolean", "null"],
-                "description": "Whether the account's highest-privilege owner identity (the AWS root user, a Google Cloud organization administrator, an Azure Global Administrator) has MFA enabled"
-              },
-              "root_access_protected": {
-                "type": ["boolean", "null"],
-                "description": "Whether the account's highest-privilege owner identity (the AWS root user, a Google Cloud organization administrator, an Azure Global Administrator) is protected from password-only use, by MFA or by having no standing credentials"
-              },
-              "access_keys_present": {
-                "type": ["boolean", "null"],
-                "description": "Whether any user has an active long-lived programmatic credential (access keys, service account keys, client secrets). When false, access_key_rotation_compliant_pct has no users to count"
-              },
-              "access_key_user_count": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "x-epack-level": "audit",
-                "description": "Number of users with an active long-lived programmatic credential (access keys, service account keys, client secrets). access_key_rotation_compliant_pct counts these users"
-              },
-              "rotation_compliant_user_count": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "x-epack-level": "audit",
-                "description": "Users counted in access_key_user_count whose active credentials are all rotated within policy"
-              },
-              "access_key_rotation_compliant_pct": {
-                "type": ["number", "null"],
-                "minimum": 0,
-                "maximum": 100,
-                "x-epack-rounding": "floor",
-                "x-epack-denominator": "access_key_user_count",
-                "x-epack-present": "access_keys_present",
-                "description": "Percentage of users with an active long-lived programmatic credential (access keys, service account keys, client secrets) whose active credentials are all rotated within policy (typically 90 days)",
-                "x-epack-numerator": "rotation_compliant_user_count"
-              },
-              "saml_providers_present": {
-                "type": ["boolean", "null"],
-                "description": "Whether the account trusts any SAML identity provider directly for sign-in. A provider created by a workforce sign-in service such as AWS IAM Identity Center is not counted"
-              },
-              "saml_provider_count": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "x-epack-level": "audit",
-                "description": "Number of SAML identity providers the account trusts directly for sign-in. A provider created by a workforce sign-in service such as AWS IAM Identity Center is not counted"
-              }
-            }
+            "description": "Account/project/subscription identifier",
+            "x-epack-label": "Account ID"
           },
           "storage": {
             "type": ["object", "null"],
             "properties": {
               "storage_resources_present": {
                 "type": ["boolean", "null"],
-                "description": "Whether the account has any storage resources. When false, the storage percentages are null"
+                "description": "Whether the account has any storage resources. When false, the storage percentages are null",
+                "x-epack-label": "Storage resources present",
+                "x-epack-summary": "Whether the account has any storage resources."
               },
               "storage_resource_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Storage resources the storage percentages count, such as S3 buckets or Azure storage accounts"
+                "description": "Storage resources the storage percentages count, such as S3 buckets or Azure storage accounts",
+                "x-epack-label": "Storage resources",
+                "x-epack-summary": "Storage resources in the account, such as S3 buckets or Azure storage accounts."
               },
               "encrypted_storage_resource_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Storage resources with encryption at rest"
+                "description": "Storage resources with encryption at rest",
+                "x-epack-label": "Encrypted storage resources",
+                "x-epack-summary": "Storage resources with encryption at rest."
               },
               "public_access_blocked_storage_resource_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Storage resources with public access blocked"
+                "description": "Storage resources with public access blocked",
+                "x-epack-label": "Storage resources with public access blocked",
+                "x-epack-summary": "Storage resources that have public access blocked."
               },
               "encryption_pct": {
                 "type": ["number", "null"],
@@ -143,6 +84,8 @@
                 "maximum": 100,
                 "x-epack-rounding": "floor",
                 "description": "Percentage of storage resources with encryption at rest",
+                "x-epack-label": "Storage encryption",
+                "x-epack-summary": "Share of storage resources with encryption at rest.",
                 "x-epack-numerator": "encrypted_storage_resource_count",
                 "x-epack-denominator": "storage_resource_count",
                 "x-epack-present": "storage_resources_present"
@@ -153,30 +96,40 @@
                 "maximum": 100,
                 "x-epack-rounding": "floor",
                 "description": "Percentage of storage resources with public access blocked",
+                "x-epack-label": "Storage public access blocked",
+                "x-epack-summary": "Share of storage resources that have public access blocked.",
                 "x-epack-numerator": "public_access_blocked_storage_resource_count",
                 "x-epack-denominator": "storage_resource_count",
                 "x-epack-present": "storage_resources_present"
               }
-            }
+            },
+            "x-epack-label": "Storage",
+            "x-epack-summary": "Storage encryption and public access for the account."
           },
           "database": {
             "type": ["object", "null"],
             "properties": {
               "databases_present": {
                 "type": ["boolean", "null"],
-                "description": "Whether the account has any managed databases, such as RDS instances, Aurora clusters, or Azure SQL databases. When false, the database percentages are null"
+                "description": "Whether the account has any managed databases, such as RDS instances, Aurora clusters, or Azure SQL databases. When false, the database percentages are null",
+                "x-epack-label": "Databases present",
+                "x-epack-summary": "Whether the account has any managed databases, such as RDS instances or Azure SQL databases."
               },
               "database_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Managed databases in the account. The database percentages count these"
+                "description": "Managed databases in the account. The database percentages count these",
+                "x-epack-label": "Databases",
+                "x-epack-summary": "Managed databases in the account."
               },
               "encrypted_database_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Databases encrypted at rest, judged by the storage encryption type where the provider reports one"
+                "description": "Databases encrypted at rest, judged by the storage encryption type where the provider reports one",
+                "x-epack-label": "Encrypted databases",
+                "x-epack-summary": "Databases encrypted at rest."
               },
               "encryption_pct": {
                 "type": ["number", "null"],
@@ -186,13 +139,17 @@
                 "x-epack-denominator": "database_count",
                 "x-epack-present": "databases_present",
                 "x-epack-rounding": "floor",
-                "description": "Percentage of databases encrypted at rest. Null when the account has no databases"
+                "description": "Percentage of databases encrypted at rest. Null when the account has no databases",
+                "x-epack-label": "Database encryption",
+                "x-epack-summary": "Share of databases encrypted at rest."
               },
               "public_access_blocked_database_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Databases that cannot be reached from the public internet"
+                "description": "Databases that cannot be reached from the public internet",
+                "x-epack-label": "Databases with public access blocked",
+                "x-epack-summary": "Databases that cannot be reached from the public internet."
               },
               "public_access_blocked_pct": {
                 "type": ["number", "null"],
@@ -202,13 +159,17 @@
                 "x-epack-denominator": "database_count",
                 "x-epack-present": "databases_present",
                 "x-epack-rounding": "floor",
-                "description": "Percentage of databases that cannot be reached from the public internet. Null when the account has no databases"
+                "description": "Percentage of databases that cannot be reached from the public internet. Null when the account has no databases",
+                "x-epack-label": "Database public access blocked",
+                "x-epack-summary": "Share of databases that cannot be reached from the public internet."
               },
               "multi_az_database_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Databases that run across availability zones. For Aurora, this is read from the cluster"
+                "description": "Databases that run across availability zones. For Aurora, this is read from the cluster",
+                "x-epack-label": "Multi-AZ databases",
+                "x-epack-summary": "Databases that run across more than one availability zone."
               },
               "multi_az_pct": {
                 "type": ["number", "null"],
@@ -219,57 +180,85 @@
                 "x-epack-denominator": "database_count",
                 "x-epack-present": "databases_present",
                 "x-epack-rounding": "floor",
-                "description": "Percentage of databases that run across availability zones. It is evidence about configuration only and does not show that recovery works. Null when the account has no databases"
+                "description": "Percentage of databases that run across availability zones. It is evidence about configuration only and does not show that recovery works. Null when the account has no databases",
+                "x-epack-label": "Database multi-AZ coverage",
+                "x-epack-summary": "Share of databases that run across more than one availability zone."
               }
-            }
+            },
+            "x-epack-label": "Database",
+            "x-epack-summary": "Security and availability of the account's managed databases."
           },
           "logging": {
             "type": ["object", "null"],
             "properties": {
               "audit_log_enabled": {
                 "type": ["boolean", "null"],
-                "description": "Whether an account-wide audit log of management activity is enabled, for example CloudTrail, Cloud Audit Logs, or an exported Azure Activity Log"
+                "description": "Whether an account-wide audit log of management activity is enabled, for example CloudTrail, Cloud Audit Logs, or an exported Azure Activity Log",
+                "x-epack-label": "Audit logging",
+                "x-epack-summary": "Whether an account-wide audit log of management activity, such as AWS CloudTrail, is enabled.",
+                "x-epack-goal": true
               },
               "audit_log_all_regions": {
                 "type": ["boolean", "null"],
-                "description": "Whether the audit log covers every region the account uses. True where the provider's audit log is global"
+                "description": "Whether the audit log covers every region the account uses. True where the provider's audit log is global",
+                "x-epack-label": "Audit logging in every region",
+                "x-epack-summary": "Whether the audit log covers every region the account uses. A global audit log covers every region.",
+                "x-epack-goal": true
               },
               "cloudtrail_enabled": {
                 "type": ["boolean", "null"],
                 "deprecated": true,
-                "description": "Deprecated alias of audit_log_enabled, with the same value. Removed in v2"
+                "description": "Deprecated alias of audit_log_enabled, with the same value. Removed in v2",
+                "x-epack-label": "Audit logging (earlier name)",
+                "x-epack-summary": "Whether an account-wide audit log of management activity is enabled. It is the earlier name of Audit logging and has the same value.",
+                "x-epack-goal": true
               },
               "cloudtrail_multiregion": {
                 "type": ["boolean", "null"],
                 "deprecated": true,
-                "description": "Deprecated alias of audit_log_all_regions, with the same value. Removed in v2"
+                "description": "Deprecated alias of audit_log_all_regions, with the same value. Removed in v2",
+                "x-epack-label": "Audit logging, every region (earlier name)",
+                "x-epack-summary": "Whether the audit log covers every region the account uses. It is the earlier name of Audit logging in every region and has the same value.",
+                "x-epack-goal": true
               }
-            }
+            },
+            "x-epack-label": "Logging",
+            "x-epack-summary": "Audit logging for the account."
           },
           "network": {
             "type": ["object", "null"],
             "properties": {
               "security_groups_present": {
                 "type": ["boolean", "null"],
-                "description": "Whether the account has any security groups or network security groups, or firewall rules on Google Cloud. When false, the network percentages are null"
+                "description": "Whether the account has any security groups or network security groups, or firewall rules on Google Cloud. When false, the network percentages are null",
+                "x-epack-label": "Security groups present",
+                "x-epack-summary": "Whether the account has any security groups. On Google Cloud these are firewall rules."
               },
               "security_group_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Security groups or network security groups, or firewall rules on Google Cloud. The network percentages count these"
+                "description": "Security groups or network security groups, or firewall rules on Google Cloud. The network percentages count these",
+                "x-epack-label": "Security groups",
+                "x-epack-summary": "Security groups in the account. On Google Cloud these are firewall rules."
               },
               "ssh_open_security_group_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Security groups with a rule that allows SSH (port 22) from any address"
+                "description": "Security groups with a rule that allows SSH (port 22) from any address",
+                "x-epack-label": "Security groups open to SSH",
+                "x-epack-summary": "Security groups with a rule that allows SSH (port 22) from any address.",
+                "x-epack-goal": "lower"
               },
               "rdp_open_security_group_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Security groups with a rule that allows RDP (port 3389) from any address"
+                "description": "Security groups with a rule that allows RDP (port 3389) from any address",
+                "x-epack-label": "Security groups open to RDP",
+                "x-epack-summary": "Security groups with a rule that allows RDP (port 3389) from any address.",
+                "x-epack-goal": "lower"
               },
               "ssh_open_to_world_pct": {
                 "type": ["number", "null"],
@@ -277,6 +266,8 @@
                 "maximum": 100,
                 "x-epack-rounding": "ceil",
                 "description": "Percentage of security groups or network security groups (firewall rules on Google Cloud) with a rule that allows SSH (port 22) from any address",
+                "x-epack-label": "SSH exposed to internet",
+                "x-epack-summary": "Share of security groups with a rule that allows SSH (port 22) from any address.",
                 "x-epack-numerator": "ssh_open_security_group_count",
                 "x-epack-denominator": "security_group_count",
                 "x-epack-present": "security_groups_present"
@@ -287,11 +278,15 @@
                 "maximum": 100,
                 "x-epack-rounding": "ceil",
                 "description": "Percentage of security groups or network security groups (firewall rules on Google Cloud) with a rule that allows RDP (port 3389) from any address",
+                "x-epack-label": "RDP exposed to internet",
+                "x-epack-summary": "Share of security groups with a rule that allows RDP (port 3389) from any address.",
                 "x-epack-numerator": "rdp_open_security_group_count",
                 "x-epack-denominator": "security_group_count",
                 "x-epack-present": "security_groups_present"
               }
-            }
+            },
+            "x-epack-label": "Network",
+            "x-epack-summary": "Internet exposure of the account's security groups."
           },
           "backup": {
             "type": ["object", "null"],
@@ -300,77 +295,32 @@
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "description": "Minimum backup retention period across all backup-enabled resources (days). Null when no resource has backups enabled. Left out with a gap when a read failed",
+                "x-epack-label": "Minimum retention (days)",
+                "x-epack-summary": "Shortest backup retention period, in days, across the account's resources that have backups enabled.",
                 "x-epack-null": "No resources have backups enabled"
               }
-            }
-          },
-          "vuln_scanning": {
-            "type": ["object", "null"],
-            "properties": {
-              "enabled": {
-                "type": ["boolean", "null"],
-                "description": "Whether vulnerability scanning is enabled (Inspector/Security Command Center/Defender)"
-              },
-              "scanned_resources_present": {
-                "type": ["boolean", "null"],
-                "description": "Whether the scanner covered any resources. When false, unpatched_pct is null"
-              },
-              "scanned_resource_count": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "x-epack-level": "audit",
-                "description": "Resources the vulnerability scanner covered. unpatched_pct counts these"
-              },
-              "unpatched_resource_count": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "x-epack-level": "audit",
-                "description": "Scanned resources with unpatched vulnerabilities"
-              },
-              "unpatched_pct": {
-                "type": ["number", "null"],
-                "minimum": 0,
-                "maximum": 100,
-                "x-epack-rounding": "ceil",
-                "description": "Percentage of scanned resources with unpatched vulnerabilities",
-                "x-epack-numerator": "unpatched_resource_count",
-                "x-epack-denominator": "scanned_resource_count",
-                "x-epack-present": "scanned_resources_present"
-              }
-            }
+            },
+            "x-epack-label": "Backup",
+            "x-epack-summary": "Backup retention for the account."
           },
           "threat_detection": {
             "type": ["object", "null"],
             "properties": {
               "enabled": {
                 "type": ["boolean", "null"],
-                "description": "True when threat detection, such as Amazon GuardDuty, is on in every enabled region"
+                "description": "True when threat detection, such as Amazon GuardDuty, is on in every enabled region",
+                "x-epack-label": "Threat detection enabled",
+                "x-epack-summary": "Whether threat detection, such as Amazon GuardDuty, is on in every region the account has enabled.",
+                "x-epack-goal": true
               }
-            }
+            },
+            "x-epack-label": "Threat detection",
+            "x-epack-summary": "Threat detection for the account."
           }
         }
-      }
-    },
-    "workforce_sign_in": {
-      "type": ["object", "null"],
-      "description": "A central sign-in service that signs people in to the accounts, such as AWS IAM Identity Center. Left out when the collector does not report one",
-      "properties": {
-        "in_use": {
-          "type": ["boolean", "null"],
-          "description": "Whether people can sign in to any of the accounts through the workforce sign-in service"
-        },
-        "user_count": {
-          "type": ["integer", "null"],
-          "minimum": 0,
-          "x-epack-level": "audit",
-          "description": "Number of users in the workforce sign-in service's directory"
-        },
-        "mfa_source": {
-          "type": ["string", "null"],
-          "enum": ["sign_in_service", "external_idp", "unknown", null],
-          "description": "Where the workforce sign-in service's users have MFA set. It is sign_in_service when the service itself sets it, external_idp when an external identity provider that the users come from sets it, and unknown when the collector cannot tell"
-        }
-      }
+      },
+      "x-epack-label": "Accounts",
+      "x-epack-summary": "Security posture for each cloud account in scope."
     }
   }
 }

@@ -488,6 +488,46 @@ func TestRollups(t *testing.T) {
 	}
 }
 
+const amongSchema = `{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"active_count": {"type": "integer", "x-epack-rollup": {"rows": "apps", "among": [{"where": "/status", "equals": "ACTIVE"}]}},
+		"sso_count": {"type": "integer", "x-epack-rollup": {"rows": "apps", "among": [{"where": "/status", "not_equals": "INACTIVE"}], "where": "/sso"}},
+		"sso_pct": {"type": "number", "x-epack-rollup": {"rows": "apps", "among": [{"where": "/status", "equals": "ACTIVE"}], "where": "/sso", "as": "pct"}},
+		"web_sso_count": {"type": "integer", "x-epack-rollup": {"rows": "apps", "among": [{"where": "/status", "equals": "ACTIVE"}, {"where": "/kind", "equals": "web"}], "where": "/sso"}},
+		"broken_count": {"type": "integer", "x-epack-rollup": {"rows": "apps", "among": {"where": "/status"}}}
+	}
+}`
+
+const fourApps = `[{"status": "ACTIVE", "sso": true, "kind": "web"}, {"status": "ACTIVE", "sso": false, "kind": "web"},
+	{"status": "INACTIVE", "sso": true, "kind": "web"}, {"status": "ACTIVE", "sso": true, "kind": "api"}]`
+
+func TestRollupsAmongTheRowsTheirConditionsPick(t *testing.T) {
+	good := findingsOf(t, amongSchema, `{"apps": `+fourApps+`, "active_count": 3, "sso_count": 2, "sso_pct": 66, "web_sso_count": 1, "broken_count": 99}`)
+	if len(good) != 0 {
+		t.Errorf("matching rollups got %+v", good)
+	}
+	bad := findingsOf(t, amongSchema, `{"apps": `+fourApps+`, "active_count": 4, "sso_count": 3, "sso_pct": 75, "web_sso_count": 2}`)
+	messages := map[string]string{}
+	for _, f := range bad {
+		messages[f.Pointer] = f.Message
+	}
+	for at, want := range map[string]string{
+		"/active_count":  `value 4, but 3 of the 4 rows at /apps have /status equal to "ACTIVE"`,
+		"/sso_count":     `value 3, but 2 of the 3 rows at /apps with /status other than "INACTIVE" have /sso equal to true`,
+		"/sso_pct":       `value 75, but 2 of the 3 rows at /apps with /status equal to "ACTIVE" have /sso equal to true, which is 66.67`,
+		"/web_sso_count": `value 2, but 1 of the 2 rows at /apps with /status equal to "ACTIVE" and /kind equal to "web" have /sso equal to true`,
+	} {
+		if messages[at] != want {
+			t.Errorf("%s message = %q, want %q", at, messages[at], want)
+		}
+	}
+	if len(bad) != 4 {
+		t.Errorf("findings = %+v, want one for each wrong rollup and none for an among that is not a list", bad)
+	}
+}
+
 func TestRollupsSkipWhatTheyCannotRecompute(t *testing.T) {
 	doc := `{"users": ` + threeUsers + `, "users_count": 4}`
 	if got := findingsOf(t, rollupSchema, doc, Gap{Path: "a.json", Pointer: "/users"}); len(got) != 0 {

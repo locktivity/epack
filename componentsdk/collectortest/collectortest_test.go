@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -60,6 +61,7 @@ type demo struct {
 	broadHosts   bool // lists "*.com" among its CredentialHosts
 	callErrors   bool // builds its errors from responses with componentsdk.ResponseError, so their gaps name the call
 	normalized   bool // emits a normalized artifact whose score is copied from the detailed one with Mirror
+	longCode     string // names the score call's failure with this vendor error code
 
 	// base is the transport the demo's real runs would send through.
 	base http.RoundTripper
@@ -319,6 +321,8 @@ func (d demo) run(ctx componentsdk.CollectorContext) error {
 		out["score"] = 0
 	case err != nil && d.wrongHint:
 		rec.NotCollected(at("/score"), err, componentsdk.MissingPermission("scores.write"))
+	case err != nil && d.longCode != "":
+		rec.NotCollected(at("/score"), fmt.Errorf("%w: %s", err, d.longCode))
 	case err != nil:
 		record("/score", err)
 	case d.ignoreScore:
@@ -412,8 +416,12 @@ func kitOnly(s Suite) Suite {
 	return s
 }
 
+// checkSuite runs Check on a suite of one of the kit's demo collectors. Those
+// predate the paths check and name their artifacts freely, so it skips that
+// check. TestThePathsCheck runs it.
 func checkSuite(t *testing.T, s Suite) *Report {
 	t.Helper()
+	s.SkipChecks = append(slices.Clone(s.SkipChecks), "paths")
 	report, err := Check(s)
 	if err != nil {
 		t.Fatal(err)
@@ -593,7 +601,7 @@ func TestTheKitReportsFindingsTheResultDropped(t *testing.T) {
 	if res.Result == nil || res.Result.ChecksDropped != 50 {
 		t.Fatalf("result = %+v", res.Result)
 	}
-	k := &kit{suite: Suite{Spec: spec}, report: &Report{}, reported: map[Violation]bool{}}
+	k := &kit{suite: Suite{Spec: spec}, report: &Report{}, reported: map[Violation]bool{}, specSchemas: spec.ArtifactSchemas()}
 	k.checkOutput("scenario", "clean", res, componentsdk.LevelTrust)
 	if got := len(violationsOf(k.report, "nulls")); got != 150 {
 		t.Errorf("nulls violations = %d, want all 150", got)

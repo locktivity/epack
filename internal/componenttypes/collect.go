@@ -3,10 +3,14 @@ package componenttypes
 import "errors"
 
 // CollectKey is the config key that lists the kinds of evidence a collector
-// collects, such as [cloud-posture]. A kind is the name in a schema ID. A
-// collector's own detailed file has no schema ID and goes by the
-// collector's name.
+// collects, such as [cloud-posture, details]. A kind is the name in a schema
+// ID. A collector's own detailed file has no schema ID and is the kind
+// details.
 const CollectKey = "collect"
+
+// DetailsKind is the kind of a collector's own detailed file, the one
+// artifact with no schema ID.
+const DetailsKind = "details"
 
 // ErrCollectKey is the error for a collect key that is not a list of kinds.
 var ErrCollectKey = errors.New("collect must be a list of kinds of evidence, such as [cloud-posture]")
@@ -41,15 +45,14 @@ func CollectOf(config map[string]any) (kinds []string, set bool, err error) {
 	return kinds, true, nil
 }
 
-// KindOf returns the kind of an artifact with schema ID schemaID written by
-// the collector named collector: the name in the schema ID, or the
-// collector's name for an artifact with no schema ID.
-func KindOf(schemaID, collector string) string {
+// KindOf returns the kind of an artifact with schema ID schemaID: the name
+// in the schema ID, or details for an artifact with no schema ID.
+func KindOf(schemaID string) string {
 	if kind, ok := SchemaKind(schemaID); ok {
 		return kind
 	}
 	if schemaID != "" {
 		return schemaID
 	}
-	return collector
+	return DetailsKind
 }

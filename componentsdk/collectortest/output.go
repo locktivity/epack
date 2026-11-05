@@ -91,9 +91,9 @@ func (k *kit) suiteSchema(path, schemaID string) *outputcheck.Schema {
 // way Emit picks it, and whether Emit has one. A schema that does not compile
 // counts as one, so the artifact is left to the result's findings.
 func (k *kit) sdkSchema(path, schemaID string) (*outputcheck.Schema, bool) {
-	raw, ok := k.suite.Spec.Schemas[path]
+	raw, ok := k.specSchemas[path]
 	if !ok && schemaID != "" {
-		raw, ok = k.suite.Spec.Schemas[schemaID]
+		raw, ok = k.specSchemas[schemaID]
 	}
 	if !ok && schemaID != "" {
 		raw = componentsdk.NormalizedSchemaJSON(schemaID)

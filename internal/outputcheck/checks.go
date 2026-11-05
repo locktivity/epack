@@ -253,8 +253,9 @@ func expectedPercent(exact float64, rounding string) (percent, bool) {
 // rollup recomputes a count or percentage from the rows it covers. It skips
 // rollups taken at another time, rows or rollups a gap covers, rows that
 // were cut short, which are those a "truncated" reference marks and those as
-// long as their schema's maxItems, and rows or a where field the schema
-// places above the level the artifact was emitted at, where they are absent.
+// long as their schema's maxItems, and rows or a condition's field the
+// schema places above the level the artifact was emitted at, where they are
+// absent.
 func (w *walker) rollup(v view, tokens []string, at string, got float64, value any) {
 	raw, _ := v.keyword("x-epack-rollup")
 	spec, ok := raw.(map[string]any)
@@ -269,10 +270,17 @@ func (w *walker) rollup(v view, tokens []string, at string, got float64, value a
 	if as != "count" && as != "pct" {
 		return
 	}
-	where, _ := spec["where"].(string)
-	equals, ok := spec["equals"]
+	among, ok := rollupConditions(spec["among"])
 	if !ok {
-		equals = true
+		return
+	}
+	var match []condition
+	if where, ok := spec["where"].(string); ok && where != "" {
+		equals, ok := spec["equals"]
+		if !ok {
+			equals = true
+		}
+		match = []condition{{where: where, value: equals}}
 	}
 	if asOf, ok := w.reference(v, "x-epack-as-of", tokens); ok && asOf.found && asOf.value != nil {
 		return
@@ -283,37 +291,113 @@ func (w *walker) rollup(v view, tokens []string, at string, got float64, value a
 	}
 	found, _ := Resolve(w.doc, rowsAt)
 	rows, ok := found.([]any)
-	if !ok || w.covered(rowsAt) || w.covered(at) || w.truncated(spec, tokens, rowsAt, len(rows)) || w.aboveLevel(rowsAt, where) {
+	if !ok || w.covered(rowsAt) || w.covered(at) || w.truncated(spec, tokens, rowsAt, len(rows)) || w.aboveLevel(rowsAt, append(among, match...)) {
 		return
 	}
-	matching := 0
+	covered, matching := 0, 0
 	for _, row := range rows {
-		if where == "" {
-			matching++
+		if !meets(row, among) {
 			continue
 		}
-		if field, ok := Resolve(row, where); ok && jsonEqual(field, equals) {
+		covered++
+		if meets(row, match) {
 			matching++
 		}
 	}
 	rowsText := fmt.Sprintf("there are %d rows at %s", len(rows), rowsAt)
-	if where != "" {
-		rowsText = fmt.Sprintf("%d of the %d rows at %s have %s equal to %s", matching, len(rows), rowsAt, where, show(equals))
+	if len(among) > 0 {
+		rowsText = fmt.Sprintf("%d of the %d rows at %s have %s", covered, len(rows), rowsAt, describe(among))
+	}
+	if len(match) > 0 {
+		of := fmt.Sprintf("the %d rows at %s", len(rows), rowsAt)
+		if len(among) > 0 {
+			of = fmt.Sprintf("the %d rows at %s with %s", covered, rowsAt, describe(among))
+		}
+		rowsText = fmt.Sprintf("%d of %s have %s", matching, of, describe(match))
 	}
 	switch as {
 	case "count":
-		if got != float64(matching) {
+		want := covered
+		if len(match) > 0 {
+			want = matching
+		}
+		if got != float64(want) {
 			w.add(CheckRollups, at, fmt.Sprintf("value %s, but %s", show(value), rowsText))
 		}
 	case "pct":
-		if len(rows) == 0 {
+		if covered == 0 {
 			return
 		}
-		want := 100 * float64(matching) / float64(len(rows))
+		want := 100 * float64(matching) / float64(covered)
 		if math.Abs(got-want) > 1 {
 			w.add(CheckRollups, at, fmt.Sprintf("value %s, but %s, which is %s", show(value), rowsText, strconv.FormatFloat(math.Round(want*100)/100, 'f', -1, 64)))
 		}
 	}
+}
+
+// condition is one test a rollup puts to each row: the field at where, a
+// pointer within the row, equals value, or with not set, differs from it.
+type condition struct {
+	where string
+	value any
+	not   bool
+}
+
+// rollupConditions reads a rollup's "among" list. Each entry names a field
+// with "where" and gives "equals" or "not_equals", with equals true by
+// default. It reports false for a list it cannot read, so the rollup is
+// skipped rather than checked against the wrong rows.
+func rollupConditions(raw any) ([]condition, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]condition, 0, len(list))
+	for _, entry := range list {
+		obj, ok := entry.(map[string]any)
+		where, _ := obj["where"].(string)
+		if !ok || where == "" {
+			return nil, false
+		}
+		c := condition{where: where, value: true}
+		if v, ok := obj["equals"]; ok {
+			c.value = v
+		}
+		if v, ok := obj["not_equals"]; ok {
+			c.value, c.not = v, true
+		}
+		out = append(out, c)
+	}
+	return out, true
+}
+
+// meets reports whether row passes every condition. A row without the field
+// fails an equals condition and passes a not_equals one.
+func meets(row any, conditions []condition) bool {
+	for _, c := range conditions {
+		field, ok := Resolve(row, c.where)
+		if (ok && jsonEqual(field, c.value)) == c.not {
+			return false
+		}
+	}
+	return true
+}
+
+// describe names conditions in a finding, such as "/status equal to
+// "ACTIVE" and /sso equal to true".
+func describe(conditions []condition) string {
+	parts := make([]string, len(conditions))
+	for i, c := range conditions {
+		relation := "equal to"
+		if c.not {
+			relation = "other than"
+		}
+		parts[i] = fmt.Sprintf("%s %s %s", c.where, relation, show(c.value))
+	}
+	return strings.Join(parts, " and ")
 }
 
 // truncated reports whether the rows at rowsAt, n of them, stop short of all
@@ -336,10 +420,10 @@ func (w *walker) truncated(spec map[string]any, tokens []string, rowsAt string, 
 	return ok && maxItems == float64(n)
 }
 
-// aboveLevel reports whether the schema places the rows at rowsAt, or the
-// field where names in each of them, above the walker's level with
+// aboveLevel reports whether the schema places the rows at rowsAt, or a
+// field a condition names in each of them, above the walker's level with
 // x-epack-level, on the value itself or on one that holds it.
-func (w *walker) aboveLevel(rowsAt, where string) bool {
+func (w *walker) aboveLevel(rowsAt string, conditions []condition) bool {
 	rows, rank, ok := w.schema.levelAt(w.doc, rowsAt)
 	if !ok {
 		return false
@@ -347,20 +431,25 @@ func (w *walker) aboveLevel(rowsAt, where string) bool {
 	if rank > w.level {
 		return true
 	}
-	if where == "" || !strings.HasPrefix(where, "/") {
-		return false
-	}
-	v := w.schema.item(rows, 0)
-	rank = max(rank, levelOf(v))
-	for _, token := range jsonpointer.Tokens(where) {
-		if idx, err := strconv.Atoi(token); err == nil && idx >= 0 {
-			v = append(w.schema.member(v, token), w.schema.item(v, idx)...)
-		} else {
-			v = w.schema.member(v, token)
+	for _, c := range conditions {
+		if !strings.HasPrefix(c.where, "/") {
+			continue
 		}
-		rank = max(rank, levelOf(v))
+		v := w.schema.item(rows, 0)
+		fieldRank := max(rank, levelOf(v))
+		for _, token := range jsonpointer.Tokens(c.where) {
+			if idx, err := strconv.Atoi(token); err == nil && idx >= 0 {
+				v = append(w.schema.member(v, token), w.schema.item(v, idx)...)
+			} else {
+				v = w.schema.member(v, token)
+			}
+			fieldRank = max(fieldRank, levelOf(v))
+		}
+		if fieldRank > w.level {
+			return true
+		}
 	}
-	return rank > w.level
+	return false
 }
 
 type resolved struct {

@@ -46,6 +46,16 @@ type HTTPOptions struct {
 	// is 60 seconds.
 	RetryAfterCap time.Duration
 
+	// ThrottleWait is the wait before retrying a throttled response that has
+	// no Retry-After header and still has requests left in its rate limit.
+	// GitHub answers this way over a secondary rate limit, and its docs ask
+	// clients to wait a minute. A throttled response whose limit is used up
+	// waits until its reset header's time, or for ThrottleWait when it has
+	// none. RetryAfterCap bounds the wait. With ThrottleWait unset, every
+	// throttled response waits until the reset header's time, or backs off
+	// as other retries do.
+	ThrottleWait time.Duration
+
 	// TemplateRoute replaces TemplateRoute for the routes in this client's
 	// per-request rows. Set it when the vendor's paths carry names the
 	// default cannot recognize, such as Azure resource group and resource
@@ -121,7 +131,10 @@ type Operation struct {
 	// from the call's error lists it as the missing permission. This covers
 	// errors the client returns and errors ResponseError builds. When
 	// HTTPOptions.NamesPermission returns false, the gap leaves it out. A
-	// MissingPermission option on the gap overrides it.
+	// MissingPermission option on the gap overrides it. A response the
+	// transport would read otherwise, such as a 401 for a role the token
+	// lacks, names the permission only when HTTPOptions.ClassifyResponse
+	// reads it as permission_denied.
 	Permission string
 }
 
@@ -193,6 +206,7 @@ func NewTransport(ctx CollectorContext, opts HTTPOptions) http.RoundTripper {
 		maxAttempts:      opts.MaxAttempts,
 		attemptTimeout:   opts.AttemptTimeout,
 		retryAfterCap:    opts.RetryAfterCap,
+		throttleWait:     opts.ThrottleWait,
 		nameOperation:    opts.NameOperation,
 		templateRoute:    opts.TemplateRoute,
 		classifyResponse: opts.ClassifyResponse,
@@ -226,6 +240,7 @@ type transport struct {
 	maxAttempts      int
 	attemptTimeout   time.Duration
 	retryAfterCap    time.Duration
+	throttleWait     time.Duration
 	nameOperation    func(*http.Request) (Operation, bool)
 	templateRoute    func(string) string
 	classifyResponse func(*http.Response, []byte) (Code, bool)

@@ -97,6 +97,20 @@ func TestFieldLinesFindAnArtifactByItsSchema(t *testing.T) {
 	}
 }
 
+func TestFieldLinesFindAnArtifactNamedByArtifactPath(t *testing.T) {
+	a := fixtureAnalysis(t)
+	for path, want := range map[string]map[string]string{
+		"artifacts/fixture.details.json": {"/count": "assign d.Count = n"},
+		"artifacts/fixture.other.json":   {"/total": "assign o.Total = n + 1"},
+	} {
+		for pattern, line := range want {
+			if got := linesOf(t, a, path, "", pattern); !contains(got, line) {
+				t.Errorf("%s %s lines lack %q:\n%s", path, pattern, line, strings.Join(got, "\n"))
+			}
+		}
+	}
+}
+
 func TestFieldAtStopsWhereTheJSONIsNotTheFields(t *testing.T) {
 	a := fixtureAnalysis(t)
 	for _, pattern := range []string{"/raw", "/raw/v", "/Hidden", "/hidden", "/users/inventory/0/login", "/users/nothing", ""} {

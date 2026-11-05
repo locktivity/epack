@@ -8,23 +8,31 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.0.0"
+      "const": "1.0.0",
+      "x-epack-label": "Schema version"
     },
     "collected_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "x-epack-label": "Collected at"
     },
     "domains": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/DomainResult"
-      }
+      },
+      "x-epack-label": "Domains",
+      "x-epack-summary": "Email authentication posture for each domain."
     },
     "summary": {
-      "$ref": "#/$defs/Summary"
+      "$ref": "#/$defs/Summary",
+      "x-epack-label": "Summary",
+      "x-epack-summary": "Email authentication coverage across all domains."
     },
     "diagnostics": {
-      "$ref": "#/$defs/Diagnostics"
+      "$ref": "#/$defs/Diagnostics",
+      "x-epack-label": "Diagnostics",
+      "x-epack-summary": "Errors and warnings raised during collection."
     }
   },
   "$defs": {
@@ -34,40 +42,52 @@
       "properties": {
         "domain": {
           "type": "string",
-          "description": "The domain name"
+          "description": "The domain name",
+          "x-epack-label": "Domain"
         },
         "mx": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/MXRecord"
-          }
+          },
+          "x-epack-label": "MX records",
+          "x-epack-summary": "Mail servers that receive mail for the domain."
         },
         "spf": {
           "oneOf": [
             { "$ref": "#/$defs/SPFRecord" },
             { "type": "null" }
-          ]
+          ],
+          "x-epack-label": "SPF",
+          "x-epack-summary": "The domain's SPF record. It lists the servers allowed to send mail for the domain."
         },
         "dmarc": {
           "oneOf": [
             { "$ref": "#/$defs/DMARCRecord" },
             { "type": "null" }
-          ]
+          ],
+          "x-epack-label": "DMARC",
+          "x-epack-summary": "The DMARC record and the policy it sets for mail that fails authentication."
         },
         "dkim": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/DKIMRecord"
-          }
+          },
+          "x-epack-label": "DKIM records",
+          "x-epack-summary": "DKIM signing keys published for the domain."
         },
         "assessment": {
-          "$ref": "#/$defs/Assessment"
+          "$ref": "#/$defs/Assessment",
+          "x-epack-label": "Assessment",
+          "x-epack-summary": "Email authentication assessment for the domain."
         },
         "errors": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "x-epack-label": "Errors"
         }
       }
     },
@@ -77,13 +97,16 @@
       "properties": {
         "host": {
           "type": "string",
-          "description": "Mail server hostname"
+          "description": "Mail server hostname",
+          "x-epack-label": "Mail server"
         },
         "priority": {
           "type": "integer",
           "minimum": 0,
           "maximum": 65535,
-          "description": "MX priority (lower is higher priority)"
+          "description": "MX priority (lower is higher priority)",
+          "x-epack-label": "MX priority",
+          "x-epack-summary": "Priority of this mail server. A lower value means a higher priority."
         }
       }
     },
@@ -93,11 +116,15 @@
       "properties": {
         "record": {
           "type": "string",
-          "description": "The SPF TXT record value"
+          "description": "The SPF TXT record value",
+          "x-epack-label": "SPF record"
         },
         "valid": {
           "type": ["boolean", "null"],
-          "description": "Whether the record is valid"
+          "description": "Whether the record is valid",
+          "x-epack-label": "SPF record valid",
+          "x-epack-summary": "Whether the domain's SPF record is valid.",
+          "x-epack-goal": true
         }
       }
     },
@@ -107,35 +134,45 @@
       "properties": {
         "record": {
           "type": "string",
-          "description": "The DMARC TXT record value"
+          "description": "The DMARC TXT record value",
+          "x-epack-label": "DMARC record"
         },
         "policy": {
           "type": "string",
           "enum": ["none", "quarantine", "reject", "unknown"],
-          "description": "The policy the record requests for the domain, from its p tag. For a record without a valid p tag, this is none when the record lists a valid rua URI, as RFC 9989 specifies. It is unknown when no DMARC processing applies to the record"
+          "description": "The policy the record requests for the domain, from its p tag. For a record without a valid p tag, this is none when the record lists a valid rua URI, as RFC 9989 specifies. It is unknown when no DMARC processing applies to the record",
+          "x-epack-label": "DMARC policy"
         },
         "subdomain_policy": {
           "type": "string",
           "enum": ["none", "quarantine", "reject", "unknown", ""],
-          "description": "The policy the record requests for existing subdomains, from its sp tag. When the record has no sp tag, this is the same as policy"
+          "description": "The policy the record requests for existing subdomains, from its sp tag. When the record has no sp tag, this is the same as policy",
+          "x-epack-label": "Subdomain policy"
         },
         "pct": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "The pct tag defined in RFC 7489. RFC 9989 drops it, and receivers ignore it. It is recorded for reference and does not affect any other value"
+          "description": "The pct tag defined in RFC 7489. RFC 9989 drops it, and receivers ignore it. It is recorded for reference and does not affect any other value",
+          "x-epack-label": "DMARC pct tag",
+          "x-epack-summary": "Percentage set by the record's pct tag. RFC 9989 removed this tag, and receivers ignore it."
         },
         "rua": {
           "type": "string",
-          "description": "The aggregate report URIs from the rua tag, as written"
+          "description": "The aggregate report URIs from the rua tag, as written",
+          "x-epack-label": "Aggregate report addresses"
         },
         "ruf": {
           "type": "string",
-          "description": "The failure report URIs from the ruf tag, as written"
+          "description": "The failure report URIs from the ruf tag, as written",
+          "x-epack-label": "Failure report addresses"
         },
         "valid": {
           "type": ["boolean", "null"],
-          "description": "Whether the record is valid"
+          "description": "Whether the record is valid",
+          "x-epack-label": "DMARC record valid",
+          "x-epack-summary": "Whether the DMARC record is valid.",
+          "x-epack-goal": true
         }
       }
     },
@@ -145,15 +182,20 @@
       "properties": {
         "selector": {
           "type": "string",
-          "description": "DKIM selector name"
+          "description": "DKIM selector name",
+          "x-epack-label": "DKIM selector"
         },
         "record": {
           "type": "string",
-          "description": "The DKIM TXT record value"
+          "description": "The DKIM TXT record value",
+          "x-epack-label": "DKIM record"
         },
         "valid": {
           "type": ["boolean", "null"],
-          "description": "Whether the record is valid"
+          "description": "Whether the record is valid",
+          "x-epack-label": "DKIM record valid",
+          "x-epack-summary": "Whether this DKIM record is valid.",
+          "x-epack-goal": true
         }
       }
     },
@@ -162,18 +204,25 @@
       "properties": {
         "enforced": {
           "type": ["boolean", "null"],
-          "description": "True if the DMARC policy that applies to the domain rejects failing mail. That is p=reject on the domain's own record, or a subdomain policy of reject on the record that RFC 9989's DNS tree walk finds above the domain. The subdomain policy is sp, or p when the record has no sp. In either case the record must not set t=y. With t=y, receivers apply the policy one level lower"
+          "description": "True if the DMARC policy that applies to the domain rejects failing mail. That is p=reject on the domain's own record, or a subdomain policy of reject on the record that RFC 9989's DNS tree walk finds above the domain. The subdomain policy is sp, or p when the record has no sp. In either case the record must not set t=y. With t=y, receivers apply the policy one level lower",
+          "x-epack-label": "DMARC enforced",
+          "x-epack-summary": "Whether the DMARC policy that applies to the domain rejects failing mail. A policy marked for testing with t=y is not enforced.",
+          "x-epack-goal": true
         },
         "has_reporting": {
           "type": ["boolean", "null"],
-          "description": "True if the DMARC record that applies to the domain lists at least one valid rua URI, such as mailto:dmarc@example.com. An address without a scheme is not a URI, and receivers do not send reports to it"
+          "description": "True if the DMARC record that applies to the domain lists at least one valid rua URI, such as mailto:dmarc@example.com. An address without a scheme is not a URI, and receivers do not send reports to it",
+          "x-epack-label": "DMARC reporting",
+          "x-epack-summary": "Whether the DMARC record that applies to the domain lists a valid aggregate report address.",
+          "x-epack-goal": true
         },
         "issues": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "List of problems found"
+          "description": "List of problems found",
+          "x-epack-label": "Issues"
         }
       }
     },
@@ -183,12 +232,16 @@
         "total_domains": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Total number of domains scanned"
+          "description": "Total number of domains scanned",
+          "x-epack-label": "Total domains",
+          "x-epack-summary": "Domains included in the scan."
         },
         "with_mx_count": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Number of domains with at least one MX record"
+          "description": "Number of domains with at least one MX record",
+          "x-epack-label": "Domains with MX records",
+          "x-epack-summary": "Domains with at least one MX record."
         },
         "with_mx_pct": {
           "type": ["integer", "null"],
@@ -197,12 +250,16 @@
           "x-epack-numerator": "with_mx_count",
           "x-epack-denominator": "total_domains",
           "x-epack-rounding": "floor",
-          "description": "Percentage of domains with MX records"
+          "description": "Percentage of domains with MX records",
+          "x-epack-label": "MX coverage",
+          "x-epack-summary": "Share of domains with at least one MX record."
         },
         "with_spf_count": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Number of domains with an SPF record, valid or not"
+          "description": "Number of domains with an SPF record, valid or not",
+          "x-epack-label": "Domains with SPF",
+          "x-epack-summary": "Domains with an SPF record, whether or not it is valid."
         },
         "with_spf_pct": {
           "type": ["integer", "null"],
@@ -211,12 +268,16 @@
           "x-epack-numerator": "with_spf_count",
           "x-epack-denominator": "total_domains",
           "x-epack-rounding": "floor",
-          "description": "Percentage of domains with SPF records"
+          "description": "Percentage of domains with SPF records",
+          "x-epack-label": "SPF coverage",
+          "x-epack-summary": "Share of domains with an SPF record, whether or not it is valid."
         },
         "with_dmarc_count": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Number of domains that a DMARC record applies to, valid or not. The record is the domain's own, or the one RFC 9989's DNS tree walk finds above it"
+          "description": "Number of domains that a DMARC record applies to, valid or not. The record is the domain's own, or the one RFC 9989's DNS tree walk finds above it",
+          "x-epack-label": "Domains with DMARC",
+          "x-epack-summary": "Domains that a DMARC record applies to, whether or not it is valid. The record can be the domain's own or a parent domain's."
         },
         "with_dmarc_pct": {
           "type": ["integer", "null"],
@@ -225,12 +286,16 @@
           "x-epack-numerator": "with_dmarc_count",
           "x-epack-denominator": "total_domains",
           "x-epack-rounding": "floor",
-          "description": "Percentage of domains that a DMARC record applies to, counted as in with_dmarc_count"
+          "description": "Percentage of domains that a DMARC record applies to, counted as in with_dmarc_count",
+          "x-epack-label": "DMARC coverage",
+          "x-epack-summary": "Share of domains that a DMARC record applies to, whether or not it is valid. The record can be the domain's own or a parent domain's."
         },
         "with_dkim_count": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Number of domains with a DKIM record at one of the common selectors"
+          "description": "Number of domains with a DKIM record at one of the common selectors",
+          "x-epack-label": "Domains with DKIM",
+          "x-epack-summary": "Domains with a DKIM record at a common selector."
         },
         "with_dkim_pct": {
           "type": ["integer", "null"],
@@ -239,12 +304,16 @@
           "x-epack-numerator": "with_dkim_count",
           "x-epack-denominator": "total_domains",
           "x-epack-rounding": "floor",
-          "description": "Percentage of domains with DKIM records"
+          "description": "Percentage of domains with DKIM records",
+          "x-epack-label": "DKIM coverage",
+          "x-epack-summary": "Share of domains with a DKIM record at a common selector."
         },
         "with_all_three_count": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Number of domains with MX and SPF records and a DMARC record that applies to them"
+          "description": "Number of domains with MX and SPF records and a DMARC record that applies to them",
+          "x-epack-label": "Domains with MX, SPF, and DMARC",
+          "x-epack-summary": "Domains with MX and SPF records and a DMARC record that applies to them."
         },
         "with_all_three_pct": {
           "type": ["integer", "null"],
@@ -253,12 +322,16 @@
           "x-epack-numerator": "with_all_three_count",
           "x-epack-denominator": "total_domains",
           "x-epack-rounding": "floor",
-          "description": "Percentage of domains with MX and SPF records and a DMARC record that applies to them"
+          "description": "Percentage of domains with MX and SPF records and a DMARC record that applies to them",
+          "x-epack-label": "MX, SPF, and DMARC coverage",
+          "x-epack-summary": "Share of domains with MX and SPF records and a DMARC record that applies to them."
         },
         "enforced_count": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Number of domains whose applicable DMARC policy rejects failing mail (assessment.enforced is true)"
+          "description": "Number of domains whose applicable DMARC policy rejects failing mail (assessment.enforced is true)",
+          "x-epack-label": "Domains enforcing DMARC",
+          "x-epack-summary": "Domains whose DMARC policy rejects failing mail."
         },
         "enforced_pct": {
           "type": ["integer", "null"],
@@ -267,12 +340,16 @@
           "x-epack-numerator": "enforced_count",
           "x-epack-denominator": "total_domains",
           "x-epack-rounding": "floor",
-          "description": "Percentage of domains whose applicable DMARC policy rejects failing mail (assessment.enforced is true)"
+          "description": "Percentage of domains whose applicable DMARC policy rejects failing mail (assessment.enforced is true)",
+          "x-epack-label": "DMARC enforcement",
+          "x-epack-summary": "Share of domains whose DMARC policy rejects failing mail."
         },
         "with_reporting_count": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Number of domains whose applicable DMARC record lists a valid rua URI (assessment.has_reporting is true)"
+          "description": "Number of domains whose applicable DMARC record lists a valid rua URI (assessment.has_reporting is true)",
+          "x-epack-label": "Domains with DMARC reporting",
+          "x-epack-summary": "Domains whose DMARC record lists a valid aggregate report address."
         },
         "with_reporting_pct": {
           "type": ["integer", "null"],
@@ -281,13 +358,18 @@
           "x-epack-numerator": "with_reporting_count",
           "x-epack-denominator": "total_domains",
           "x-epack-rounding": "floor",
-          "description": "Percentage of domains whose applicable DMARC record lists a valid rua URI (assessment.has_reporting is true)"
+          "description": "Percentage of domains whose applicable DMARC record lists a valid rua URI (assessment.has_reporting is true)",
+          "x-epack-label": "DMARC reporting coverage",
+          "x-epack-summary": "Share of domains whose DMARC record lists a valid aggregate report address."
         },
         "all_enforced": {
           "type": ["boolean", "null"],
           "x-epack-numerator": "enforced_count",
           "x-epack-denominator": "total_domains",
-          "description": "True if every domain's applicable DMARC policy rejects failing mail (assessment.enforced is true for every domain)"
+          "description": "True if every domain's applicable DMARC policy rejects failing mail (assessment.enforced is true for every domain)",
+          "x-epack-label": "DMARC enforced on all domains",
+          "x-epack-summary": "Whether every domain's DMARC policy rejects failing mail.",
+          "x-epack-goal": true
         }
       }
     },
@@ -299,14 +381,16 @@
           "items": {
             "type": "string"
           },
-          "description": "Errors encountered for specific domains"
+          "description": "Errors encountered for specific domains",
+          "x-epack-label": "Domain errors"
         },
         "warnings": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Non-fatal warnings"
+          "description": "Non-fatal warnings",
+          "x-epack-label": "Warnings"
         }
       }
     }

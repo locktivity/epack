@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Normalized vulnerability scanning evidence for one system, such as AWS or GitHub. Each entry in scanners gives one scanner's coverage and its open findings by severity. A finding is overdue when it is critical and open more than 30 days, or high and open more than 90 days. When a system has several accounts, scanners holds totals across all of them, and scopes lists each account at the audit level. A *_present flag is then true when it is true in any scope. Every metric is optional. Below the audit level, counts are left out, and the *_present flags are written instead",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "provider", "scanners"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$",
+      "x-epack-label": "Schema version",
+      "x-epack-summary": "Output schema version this artifact was emitted at."
+    },
+    "collected_at": {
+      "$ref": "#/$defs/timestamp",
+      "x-epack-label": "Collected at",
+      "x-epack-summary": "When the collection ran."
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The system the scanners run in, such as aws or github",
+      "x-epack-label": "Provider",
+      "x-epack-summary": "The system the scanners run in, such as AWS or GitHub."
+    },
+    "scanners": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scanner"
+      },
+      "description": "One entry per scanner and category. In one scope, a scanner turned on per resource, such as per repository, is enabled when it is on for at least one resource, and coverage_pct gives the share it covers. When the system has scopes, the top-level enabled is true only when the scanner is enabled in every scope",
+      "x-epack-label": "Scanners",
+      "x-epack-summary": "One entry for each scanner and category, with its coverage and open findings. When the system has several accounts or subscriptions, a scanner counts as enabled only when it is enabled in all of them."
+    },
+    "scopes": {
+      "type": "array",
+      "x-epack-level": "audit",
+      "items": {
+        "$ref": "#/$defs/scope"
+      },
+      "description": "One entry per account or subscription. Each entry lists that account's scanners",
+      "x-epack-label": "Accounts and subscriptions",
+      "x-epack-summary": "One entry for each account or subscription. Each entry lists the scanners for that account or subscription alone."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "count": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "pct": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 100
+    },
+    "scanner": {
+      "type": "object",
+      "required": ["scanner", "category"],
+      "properties": {
+        "scanner": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$",
+          "description": "A fixed name for the scanner, such as inspector, dependabot, code_scanning, or secret_scanning",
+          "x-epack-label": "Scanner",
+          "x-epack-summary": "A fixed name for the scanner, such as inspector or dependabot."
+        },
+        "category": {
+          "enum": ["hosts", "containers", "functions", "dependencies", "code", "secrets"],
+          "description": "The kind of resource the entry covers. A scanner that covers several kinds has an entry for each",
+          "x-epack-label": "Category",
+          "x-epack-summary": "The kind of resource in this entry, such as hosts or dependencies."
+        },
+        "enabled": {
+          "type": ["boolean", "null"],
+          "description": "Whether the scanner is turned on for this category. A scanner turned on per resource, such as per repository, is on when it covers at least one resource",
+          "x-epack-label": "Scanner enabled",
+          "x-epack-summary": "Whether the scanner is enabled for this category.",
+          "x-epack-goal": true
+        },
+        "resources_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether there are resources the scanner could cover. When false, coverage_pct has none to count",
+          "x-epack-label": "Resources present",
+          "x-epack-summary": "Whether there are any resources in this category to scan."
+        },
+        "resource_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Resources the scanner could cover",
+          "x-epack-label": "Resources",
+          "x-epack-summary": "Resources in this category that could be scanned."
+        },
+        "scanned_resource_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Resources counted in resource_count that the scanner covers",
+          "x-epack-label": "Scanned resources",
+          "x-epack-summary": "Resources in this category that are scanned."
+        },
+        "coverage_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "scanned_resource_count",
+          "x-epack-denominator": "resource_count",
+          "x-epack-present": "resources_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of resources the scanner covers. Null when there are none",
+          "x-epack-label": "Scan coverage",
+          "x-epack-summary": "Share of resources in this category that are scanned."
+        },
+        "open_critical_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether the scanner has open critical findings",
+          "x-epack-label": "Open critical findings present",
+          "x-epack-summary": "Whether there are any open findings rated critical.",
+          "x-epack-goal": false
+        },
+        "open_high_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether the scanner has open high findings",
+          "x-epack-label": "Open high findings present",
+          "x-epack-summary": "Whether there are any open findings rated high.",
+          "x-epack-goal": false
+        },
+        "overdue_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether the scanner has overdue findings",
+          "x-epack-label": "Overdue findings present",
+          "x-epack-summary": "Whether there are any overdue findings. A finding is overdue when it is rated critical and open more than 30 days, or rated high and open more than 90 days.",
+          "x-epack-goal": false
+        },
+        "open_critical_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Open critical findings",
+          "x-epack-label": "Open critical findings",
+          "x-epack-summary": "Open findings rated critical.",
+          "x-epack-goal": "lower"
+        },
+        "open_high_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Open high findings",
+          "x-epack-label": "Open high findings",
+          "x-epack-summary": "Open findings rated high.",
+          "x-epack-goal": "lower"
+        },
+        "open_medium_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Open medium findings",
+          "x-epack-label": "Open medium findings",
+          "x-epack-summary": "Open findings rated medium.",
+          "x-epack-goal": "lower"
+        },
+        "open_low_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Open low findings",
+          "x-epack-label": "Open low findings",
+          "x-epack-summary": "Open findings rated low.",
+          "x-epack-goal": "lower"
+        },
+        "overdue_critical_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Critical findings open more than 30 days",
+          "x-epack-label": "Overdue critical findings",
+          "x-epack-summary": "Findings rated critical and open more than 30 days.",
+          "x-epack-goal": "lower"
+        },
+        "overdue_high_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "High findings open more than 90 days",
+          "x-epack-label": "Overdue high findings",
+          "x-epack-summary": "Findings rated high and open more than 90 days.",
+          "x-epack-goal": "lower"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The account or subscription ID",
+          "x-epack-label": "Account or subscription ID"
+        },
+        "kind": {
+          "enum": ["account", "subscription"],
+          "x-epack-label": "Type",
+          "x-epack-summary": "Whether this entry is an account or a subscription."
+        },
+        "scanners": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scanner"
+          },
+          "description": "The scanners for this scope alone, with the same fields",
+          "x-epack-label": "Scanners",
+          "x-epack-summary": "The scanners for this account or subscription alone."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

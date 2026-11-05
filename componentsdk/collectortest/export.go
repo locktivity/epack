@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/locktivity/epack/componentsdk"
 	"github.com/locktivity/epack/internal/limits"
@@ -55,8 +56,19 @@ type exportArtifact struct {
 	File   bool   `json:"file,omitempty"`
 }
 
+// exportClaims records which suite each directory under COLLECTORTEST_OUT
+// belongs to in this test binary, by the suite's scenario names. Two suites
+// that share a name would otherwise write to the same directory, and the
+// second would clear what the first wrote.
+var exportClaims = struct {
+	sync.Mutex
+	owners map[string]string
+}{owners: map[string]string{}}
+
 // newExporter returns the suite's exporter, or nil when COLLECTORTEST_OUT is
-// unset. It clears what an earlier run wrote for the suite.
+// unset. It clears what an earlier run wrote for the suite. It returns an
+// error when another suite in the test binary already wrote to the same
+// directory. Running the same suite again, as -count does, is allowed.
 func newExporter(s Suite) (*exporter, error) {
 	root := os.Getenv(outEnv)
 	if root == "" {
@@ -68,6 +80,9 @@ func newExporter(s Suite) (*exporter, error) {
 		dir:   cmp.Or(slug(name), "suite"),
 		used:  map[string]bool{},
 		index: exportIndex{Suite: name, Scenarios: []exportScenario{}},
+	}
+	if err := claimExportDir(filepath.Join(root, e.dir), suiteOwner(s)); err != nil {
+		return nil, err
 	}
 	if err := safefile.EnsureBaseDir(root); err != nil {
 		return nil, err
@@ -108,6 +123,27 @@ func (e *exporter) add(label string, res componentsdk.InProcessResult, outputDir
 	}
 	e.index.Scenarios = append(e.index.Scenarios, entry)
 	return nil
+}
+
+// claimExportDir records that owner writes to dir. It fails when a suite
+// with other scenarios claimed dir first.
+func claimExportDir(dir, owner string) error {
+	exportClaims.Lock()
+	defer exportClaims.Unlock()
+	if prev, ok := exportClaims.owners[dir]; ok && prev != owner {
+		return fmt.Errorf("another suite in this package already wrote to %s, and this run would clear it. Give each suite its own Suite.Name", dir)
+	}
+	exportClaims.owners[dir] = owner
+	return nil
+}
+
+// suiteOwner identifies a suite by its name and its scenarios' names.
+func suiteOwner(s Suite) string {
+	names := []string{cmp.Or(s.Name, s.Spec.Name)}
+	for i, sc := range s.Scenarios {
+		names = append(names, scenarioLabel(sc, i))
+	}
+	return strings.Join(names, "\x00")
 }
 
 func (e *exporter) finish() error {

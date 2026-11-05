@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/locktivity/epack/internal/redact"
 )
 
 // run is what one collector run shares between its context, the HTTP layer,
@@ -49,6 +51,7 @@ type run struct {
 	hostLists [][]string
 	waited    time.Duration
 	unlisted  []string
+	hidden    []Redacted
 }
 
 func newRun(spec CollectorSpec, name, runID string, base http.RoundTripper, seed uint64) *run {
@@ -64,7 +67,7 @@ func newRun(spec CollectorSpec, name, runID string, base http.RoundTripper, seed
 		started:   time.Now(),
 		base:      base,
 		calls:     newLedger(),
-		records:   &Recorder{},
+		records:   &Recorder{rename: func(p string) string { return RunPath(spec.Name, name, p) }},
 		secrets:   &secretSet{},
 		clock:     time.Now,
 		rng:       rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
@@ -232,6 +235,29 @@ func (r *run) noteUnlistedCredentials(op string) {
 	if !slices.Contains(r.unlisted, op) {
 		r.unlisted = append(r.unlisted, op)
 	}
+}
+
+// noteHidden records each run of letters and digits that redaction hides as
+// a possible secret in texts, which belong to where. Only an in-process run
+// reports them, so a test can tell an identifier hidden by mistake from a
+// secret.
+func (r *run) noteHidden(where string, secrets []string, texts ...string) {
+	for _, text := range texts {
+		if text == "" {
+			continue
+		}
+		for _, h := range redact.LongRunsHidden(redact.Values(text, secrets...)) {
+			r.mu.Lock()
+			r.hidden = append(r.hidden, Redacted{Where: where, Text: h})
+			r.mu.Unlock()
+		}
+	}
+}
+
+func (r *run) hiddenRuns() []Redacted {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]Redacted(nil), r.hidden...)
 }
 
 func (r *run) unlistedCredentialOps() []string {

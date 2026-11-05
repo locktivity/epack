@@ -11,7 +11,8 @@ import (
 
 // The methods check requires one plain sentence on how the collector
 // measures each number and true-or-false value that a profile can test. The
-// sentence is the value's x-epack-method in the collector's own schema.
+// sentence is the value's x-epack-method in the collector's own schema, or
+// for a normalized artifact, its entry in CollectorSpec.Methods.
 // Profiles test every such value in a normalized artifact. They also test a
 // detailed artifact's values that a trust run writes, since most collectors
 // have no normalized artifact yet. A normalized value that Recorder.Mirror
@@ -83,8 +84,8 @@ func (k *kit) checkMethods() {
 		}
 		if normalized {
 			k.violate("methods", path, "%s has no x-epack-method for %s%s. Add one plain sentence on how the collector measures "+
-				"each value to the collector's schema, or record the detailed value it copies with Recorder.Mirror",
-				path, strings.Join(shown, ", "), more)
+				"each value to CollectorSpec.Methods under %s, or record the detailed value it copies with Recorder.Mirror",
+				path, strings.Join(shown, ", "), more, a.Schema)
 			continue
 		}
 		k.violate("methods", path, "%s has no x-epack-method for %s%s, which a trust run writes and a profile can test. Add one "+

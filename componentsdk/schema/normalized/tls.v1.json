@@ -8,23 +8,31 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.0.0"
+      "const": "1.0.0",
+      "x-epack-label": "Schema version"
     },
     "collected_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "x-epack-label": "Collected at"
     },
     "endpoints": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/endpoint_result"
-      }
+      },
+      "x-epack-label": "Endpoints",
+      "x-epack-summary": "TLS posture for each configured endpoint."
     },
     "summary": {
-      "$ref": "#/$defs/summary"
+      "$ref": "#/$defs/summary",
+      "x-epack-label": "Summary",
+      "x-epack-summary": "TLS posture across all configured endpoints."
     },
     "diagnostics": {
-      "$ref": "#/$defs/diagnostics"
+      "$ref": "#/$defs/diagnostics",
+      "x-epack-label": "Diagnostics",
+      "x-epack-summary": "Errors and warnings raised during collection."
     }
   },
   "$defs": {
@@ -34,30 +42,42 @@
       "required": ["host", "port"],
       "properties": {
         "host": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Host"
         },
         "port": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 65535
+          "maximum": 65535,
+          "x-epack-label": "Port",
+          "x-epack-summary": "TCP port of the endpoint."
         },
         "reachable": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Reachable over TLS",
+          "x-epack-summary": "Whether a TLS 1.2 or TLS 1.3 handshake with the endpoint succeeded."
         },
         "tls": {
-          "$ref": "#/$defs/tls_details"
+          "$ref": "#/$defs/tls_details",
+          "x-epack-label": "TLS protocol",
+          "x-epack-summary": "The negotiated TLS version and cipher suite, and the TLS versions the endpoint supports."
         },
         "certificate": {
-          "$ref": "#/$defs/certificate"
+          "$ref": "#/$defs/certificate",
+          "x-epack-label": "Certificate",
+          "x-epack-summary": "The leaf certificate presented by the endpoint."
         },
         "assessment": {
-          "$ref": "#/$defs/assessment"
+          "$ref": "#/$defs/assessment",
+          "x-epack-label": "Assessment",
+          "x-epack-summary": "TLS assessment for the endpoint."
         },
         "errors": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "x-epack-label": "Errors"
         }
       }
     },
@@ -66,13 +86,17 @@
       "additionalProperties": false,
       "properties": {
         "negotiated_version": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Negotiated TLS version"
         },
         "negotiated_cipher_suite": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Negotiated cipher suite"
         },
         "protocol_support": {
-          "$ref": "#/$defs/protocol_support"
+          "$ref": "#/$defs/protocol_support",
+          "x-epack-label": "Supported TLS versions",
+          "x-epack-summary": "Which TLS versions the endpoint supports."
         }
       }
     },
@@ -81,16 +105,26 @@
       "additionalProperties": false,
       "properties": {
         "tls_1_0": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "TLS 1.0 support",
+          "x-epack-summary": "Whether the endpoint supports TLS 1.0.",
+          "x-epack-goal": false
         },
         "tls_1_1": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "TLS 1.1 support",
+          "x-epack-summary": "Whether the endpoint supports TLS 1.1.",
+          "x-epack-goal": false
         },
         "tls_1_2": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "TLS 1.2 support",
+          "x-epack-summary": "Whether the endpoint supports TLS 1.2."
         },
         "tls_1_3": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "TLS 1.3 support",
+          "x-epack-summary": "Whether the endpoint supports TLS 1.3."
         }
       }
     },
@@ -100,56 +134,76 @@
       "required": ["not_before", "not_after", "fingerprint_sha256"],
       "properties": {
         "subject_common_name": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Subject common name"
         },
         "issuer_common_name": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Issuer common name"
         },
         "serial_number": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Serial number"
         },
         "not_before": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "x-epack-label": "Valid from"
         },
         "not_after": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "x-epack-label": "Valid until"
         },
         "expires_in_days": {
-          "type": ["integer", "null"]
+          "type": ["integer", "null"],
+          "x-epack-label": "Days until expiry",
+          "x-epack-summary": "Whole days until the certificate expires. A negative value means it has expired."
         },
         "dns_names": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "x-epack-label": "DNS names"
         },
         "ip_addresses": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "x-epack-label": "IP addresses"
         },
         "fingerprint_sha256": {
           "type": "string",
-          "pattern": "^[A-F0-9]{64}$"
+          "pattern": "^[A-F0-9]{64}$",
+          "x-epack-label": "SHA-256 fingerprint"
         },
         "signature_algorithm": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Signature algorithm"
         },
         "public_key_algorithm": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Public key algorithm"
         },
         "chain_length": {
           "type": ["integer", "null"],
-          "minimum": 1
+          "minimum": 1,
+          "x-epack-label": "Chain length",
+          "x-epack-summary": "Certificates presented in the chain, including the leaf."
         },
         "trusted_chain": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Trusted chain",
+          "x-epack-summary": "Whether the certificate chains to a trusted root.",
+          "x-epack-goal": true
         },
         "hostname_valid": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Hostname valid",
+          "x-epack-summary": "Whether the certificate matches the endpoint's hostname.",
+          "x-epack-goal": true
         }
       }
     },
@@ -158,28 +212,47 @@
       "additionalProperties": false,
       "properties": {
         "certificate_valid": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Certificate valid",
+          "x-epack-summary": "Whether the certificate is trusted and matches the endpoint's hostname. It must also be within its validity period.",
+          "x-epack-goal": true
         },
         "hostname_valid": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Hostname valid",
+          "x-epack-summary": "Whether the certificate matches the endpoint's hostname.",
+          "x-epack-goal": true
         },
         "expired": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Certificate expired",
+          "x-epack-summary": "Whether the certificate has expired.",
+          "x-epack-goal": false
         },
         "expiring_soon": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Expiring soon",
+          "x-epack-summary": "Whether the certificate has not yet expired and expires within 30 days.",
+          "x-epack-goal": false
         },
         "modern_protocol": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Modern TLS supported",
+          "x-epack-summary": "Whether the endpoint supports TLS 1.2 or TLS 1.3.",
+          "x-epack-goal": true
         },
         "legacy_protocol_supported": {
-          "type": ["boolean", "null"]
+          "type": ["boolean", "null"],
+          "x-epack-label": "Legacy TLS supported",
+          "x-epack-summary": "Whether the endpoint supports TLS 1.0 or TLS 1.1.",
+          "x-epack-goal": false
         },
         "issues": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "x-epack-label": "Issues"
         }
       }
     },
@@ -189,11 +262,15 @@
       "properties": {
         "total_endpoints": {
           "type": ["integer", "null"],
-          "minimum": 0
+          "minimum": 0,
+          "x-epack-label": "Total endpoints",
+          "x-epack-summary": "Endpoints included in the scan."
         },
         "reachable_count": {
           "type": ["integer", "null"],
-          "minimum": 0
+          "minimum": 0,
+          "x-epack-label": "Reachable endpoints",
+          "x-epack-summary": "Endpoints where a TLS 1.2 or TLS 1.3 handshake succeeded."
         },
         "reachable_pct": {
           "type": ["integer", "null"],
@@ -201,11 +278,15 @@
           "maximum": 100,
           "x-epack-numerator": "reachable_count",
           "x-epack-denominator": "total_endpoints",
-          "x-epack-rounding": "floor"
+          "x-epack-rounding": "floor",
+          "x-epack-label": "Reachability",
+          "x-epack-summary": "Share of endpoints where a TLS 1.2 or TLS 1.3 handshake succeeded."
         },
         "certificate_valid_count": {
           "type": ["integer", "null"],
-          "minimum": 0
+          "minimum": 0,
+          "x-epack-label": "Endpoints with valid certificates",
+          "x-epack-summary": "Endpoints whose certificate is trusted and matches their hostname. The certificate must also be within its validity period."
         },
         "certificate_valid_pct": {
           "type": ["integer", "null"],
@@ -213,11 +294,15 @@
           "maximum": 100,
           "x-epack-numerator": "certificate_valid_count",
           "x-epack-denominator": "total_endpoints",
-          "x-epack-rounding": "floor"
+          "x-epack-rounding": "floor",
+          "x-epack-label": "Valid certificates",
+          "x-epack-summary": "Share of endpoints whose certificate is trusted and matches their hostname. The certificate must also be within its validity period."
         },
         "hostname_valid_count": {
           "type": ["integer", "null"],
-          "minimum": 0
+          "minimum": 0,
+          "x-epack-label": "Endpoints matching their hostname",
+          "x-epack-summary": "Endpoints whose certificate matches their hostname."
         },
         "hostname_valid_pct": {
           "type": ["integer", "null"],
@@ -225,11 +310,15 @@
           "maximum": 100,
           "x-epack-numerator": "hostname_valid_count",
           "x-epack-denominator": "total_endpoints",
-          "x-epack-rounding": "floor"
+          "x-epack-rounding": "floor",
+          "x-epack-label": "Hostname matches",
+          "x-epack-summary": "Share of endpoints whose certificate matches their hostname."
         },
         "modern_protocol_count": {
           "type": ["integer", "null"],
-          "minimum": 0
+          "minimum": 0,
+          "x-epack-label": "Endpoints with modern TLS",
+          "x-epack-summary": "Endpoints that support TLS 1.2 or TLS 1.3."
         },
         "modern_protocol_pct": {
           "type": ["integer", "null"],
@@ -237,11 +326,16 @@
           "maximum": 100,
           "x-epack-numerator": "modern_protocol_count",
           "x-epack-denominator": "total_endpoints",
-          "x-epack-rounding": "floor"
+          "x-epack-rounding": "floor",
+          "x-epack-label": "Modern TLS",
+          "x-epack-summary": "Share of endpoints that support TLS 1.2 or TLS 1.3."
         },
         "expiring_soon_count": {
           "type": ["integer", "null"],
-          "minimum": 0
+          "minimum": 0,
+          "x-epack-label": "Certificates expiring soon",
+          "x-epack-summary": "Endpoints whose certificate has not yet expired and expires within 30 days.",
+          "x-epack-goal": "lower"
         },
         "expiring_soon_pct": {
           "type": ["integer", "null"],
@@ -249,11 +343,16 @@
           "maximum": 100,
           "x-epack-numerator": "expiring_soon_count",
           "x-epack-denominator": "total_endpoints",
-          "x-epack-rounding": "ceil"
+          "x-epack-rounding": "ceil",
+          "x-epack-label": "Expiring soon",
+          "x-epack-summary": "Share of endpoints whose certificate has not yet expired and expires within 30 days."
         },
         "legacy_protocol_supported_count": {
           "type": ["integer", "null"],
-          "minimum": 0
+          "minimum": 0,
+          "x-epack-label": "Endpoints supporting legacy TLS",
+          "x-epack-summary": "Endpoints that support TLS 1.0 or TLS 1.1.",
+          "x-epack-goal": "lower"
         },
         "legacy_protocol_supported_pct": {
           "type": ["integer", "null"],
@@ -261,17 +360,25 @@
           "maximum": 100,
           "x-epack-numerator": "legacy_protocol_supported_count",
           "x-epack-denominator": "total_endpoints",
-          "x-epack-rounding": "ceil"
+          "x-epack-rounding": "ceil",
+          "x-epack-label": "Legacy TLS",
+          "x-epack-summary": "Share of endpoints that support TLS 1.0 or TLS 1.1."
         },
         "all_certificates_valid": {
           "type": ["boolean", "null"],
           "x-epack-numerator": "certificate_valid_count",
-          "x-epack-denominator": "total_endpoints"
+          "x-epack-denominator": "total_endpoints",
+          "x-epack-label": "All certificates valid",
+          "x-epack-summary": "Whether every endpoint has a valid certificate.",
+          "x-epack-goal": true
         },
         "all_modern_protocol": {
           "type": ["boolean", "null"],
           "x-epack-numerator": "modern_protocol_count",
-          "x-epack-denominator": "total_endpoints"
+          "x-epack-denominator": "total_endpoints",
+          "x-epack-label": "Modern TLS on all endpoints",
+          "x-epack-summary": "Whether every endpoint supports TLS 1.2 or TLS 1.3.",
+          "x-epack-goal": true
         }
       }
     },
@@ -283,13 +390,15 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "x-epack-label": "Endpoint errors"
         },
         "warnings": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "x-epack-label": "Warnings"
         }
       }
     }

@@ -34,11 +34,11 @@
       "properties": {
         "status": {
           "enum": ["collected", "partial"],
-          "description": "collected when the run read every value its level collects, or partial when it left values out. gaps lists each one. A not_shared gap does not make a run partial."
+          "description": "collected when the run read every value its level collects, or partial when it left values out. gaps lists each one. A not_shared or unsupported gap does not make a run partial."
         },
         "code": {
           "$ref": "#/$defs/code",
-          "description": "For a partial run, the code of the first gap other than a not_shared one, saying why its value was left out."
+          "description": "For a partial run, the code of the first gap other than a not_shared, unsupported, or not_read one, saying why its value was left out."
         },
         "owner": {
           "$ref": "#/$defs/owner",
@@ -220,7 +220,7 @@
   },
   "$defs": {
     "code": {
-      "enum": ["auth_failed", "permission_denied", "config_invalid", "not_licensed", "rate_limited", "vendor_error", "timeout", "invalid_response", "internal", "not_shared"]
+      "enum": ["auth_failed", "permission_denied", "config_invalid", "not_licensed", "unsupported", "not_read", "rate_limited", "vendor_error", "timeout", "invalid_response", "too_large", "internal", "not_shared"]
     },
     "owner": {
       "enum": ["customer", "nobody", "vendor", "vendor_or_runner", "publisher"]
@@ -249,7 +249,7 @@
         },
         "code": {
           "$ref": "#/$defs/code",
-          "description": "Why the value was left out: auth_failed, permission_denied, config_invalid, not_licensed, rate_limited, vendor_error, timeout, invalid_response, internal, or not_shared. not_shared means the customer left it out of this pack with the collect config key."
+          "description": "Why the value was left out: auth_failed, permission_denied, config_invalid, not_licensed, unsupported, not_read, rate_limited, vendor_error, timeout, invalid_response, too_large, internal, or not_shared. unsupported means the vendor does not report the value. too_large means the vendor holds more than the collector reads. not_shared means the customer left it out of this pack with the collect config key."
         },
         "owner": {
           "$ref": "#/$defs/owner",

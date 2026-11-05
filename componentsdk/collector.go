@@ -47,8 +47,19 @@ type CollectorSpec struct {
 	// go:embed. Emit checks each data artifact against its schema, or against
 	// the SDK's schema for a normalized type (see NormalizedSchemaJSON), and
 	// lists what it finds in the result artifact's checks. Each schema must be
-	// self-contained: refs to other files or URLs are not loaded.
+	// self-contained: refs to other files or URLs are not loaded. Leave the
+	// normalized types to the SDK and give their methods in Methods, since a
+	// copy here replaces the SDK's schema and falls behind it.
 	Schemas map[string][]byte
+
+	// Methods holds the collector's x-epack-method sentence for each value
+	// of a normalized artifact it writes, keyed by schema ID and then by
+	// field. A field is a JSON pointer with * for any array index, such as
+	// "/endpoints/*/port". Emit checks artifacts of the type against the
+	// SDK's schema with these sentences added, and the build file carries
+	// that schema. A value Recorder.Mirror copies from the detailed artifact
+	// needs no entry, since it uses the method of the value it copies.
+	Methods map[string]map[string]string
 
 	// TraceMap is the collector's trace map, which links each field of its
 	// artifacts to the calls and the code behind it. `epack sdk map` writes
@@ -392,7 +403,9 @@ const maxFailureMessage = 500
 // reportFailure prints err as a coded failure record. Its message is
 // redacted by the values the collector read through Secret and by pattern.
 func (c *collectorContext) reportFailure(err error) {
-	message := redact.SensitiveAlways(redact.Values(err.Error(), c.runState().secrets.list()...))
+	secrets := c.runState().secrets.list()
+	c.runState().noteHidden("the failure message", secrets, err.Error())
+	message := redact.SensitiveAlways(redact.Values(err.Error(), secrets...))
 	if len(message) > maxFailureMessage {
 		message = message[:maxFailureMessage] + "... [truncated]"
 	}
@@ -452,7 +465,7 @@ func (c *collectorContext) attach(r *run) {
 	c.run = r
 	c.ctx = withRun(c.ctx, r)
 	r.status = c.Status
-	r.schemas = compileSchemas(c.spec.Schemas, c.stderr())
+	r.schemas = compileSchemas(runSchemas(c.spec.ArtifactSchemas(), r.path), c.stderr())
 }
 
 func (c *collectorContext) runState() *run {
@@ -533,6 +546,7 @@ func (c *collectorContext) Emit(artifacts []CollectedArtifact) error {
 	if len(artifacts) == 0 && !c.runState().collect.leftAnyOut() {
 		return fmt.Errorf("at least one artifact is required")
 	}
+	artifacts = c.runState().located(artifacts)
 	artifacts, err := c.runState().share(artifacts, c.config)
 	if err != nil {
 		return err
@@ -585,7 +599,7 @@ func (c *collectorContext) buildArtifactEntry(artifacts []CollectedArtifact) (ma
 		}
 	}
 	return c.collectorArtifactEntry(CollectedArtifact{
-		Data:        newBuild(c.spec, c.stderr()),
+		Data:        newBuild(c.spec, c.runState().path, c.stderr()),
 		Schema:      BuildSchema,
 		Path:        path,
 		DisplayName: "Collector build",

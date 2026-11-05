@@ -107,7 +107,8 @@ func adviceOf(opts []AdviceOption) advice {
 // the customer knows what to grant. It applies only to a gap whose code is
 // permission_denied, and is dropped from any other. A permission holding
 // whitespace or more than 256 bytes is dropped too, since it appears at
-// every level.
+// every level. Name a role by its identifier, such as Owner, so no sentence
+// with a person's name in it reaches a trust pack.
 func MissingPermission(permission string) AdviceOption {
 	return AdviceOption{apply: func(a *advice) {
 		if permissionName(permission) {
@@ -194,6 +195,16 @@ type Recorder struct {
 	principal *Principal
 	mirrors   []Mirrored
 	warnings  []RunWarning
+	// rename gives an artifact path as the run writes it. See RunPath.
+	rename func(string) string
+}
+
+// located returns at with its path as the run writes it.
+func (r *Recorder) located(at Location) Location {
+	if r.rename != nil && at.Path != "" {
+		at.Path = r.rename(at.Path)
+	}
+	return at
 }
 
 // Records returns ctx's recorder. Contexts that RunCollector or RunInProcess
@@ -211,7 +222,12 @@ func (r *Recorder) NotCollected(at Location, err error, opts ...AdviceOption) {
 }
 
 // NotCollectedCode records a left-out value with a code the collector chose,
-// such as CodeNotLicensed for a feature the plan lacks.
+// such as CodeNotLicensed for a feature the plan lacks. Use CodeUnsupported
+// for a value the vendor never reports, such as a normalized field the
+// vendor has no data for. Use CodeNotRead for a value the vendor reports
+// that the collector does not read, such as one behind a call it does not
+// make. Use CodeTooLarge for a value the collector's own read limit cut
+// short.
 func (r *Recorder) NotCollectedCode(at Location, code Code, detail string, opts ...AdviceOption) {
 	r.add(Gap{Location: at, Status: GapNotCollected, Code: code, Detail: detail}, nil, opts)
 }
@@ -231,9 +247,12 @@ func (r *Recorder) Partial(at Location, unmeasured int, err error, opts ...Advic
 // from names its artifact the way from does, by the same Schema and Path,
 // and sits at from's pointer or, failing that, at the nearest value that
 // contains it. Mirror records nothing when no gap covers from, or when to
-// has a gap already. Call it for every value copied, gap or not: the test
-// kit reads the calls to map each copy to the value it copies.
+// has a gap already. The not_shared gap on an artifact the collect config
+// key left out is never copied, since it says what the pack holds and the
+// copied value is still written. Call it for every value copied, gap or
+// not: the test kit reads the calls to map each copy to the value it copies.
 func (r *Recorder) Mirror(from, to Location) {
+	from, to = r.located(from), r.located(to)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if pair := (Mirrored{From: from, To: to}); !slices.Contains(r.mirrors, pair) {
@@ -241,7 +260,7 @@ func (r *Recorder) Mirror(from, to Location) {
 	}
 	source := -1
 	for i, g := range r.gaps {
-		if g.Schema != from.Schema || g.Path != from.Path || !covers(g.Pointer, from.Pointer) {
+		if g.Code == CodeNotShared || g.Schema != from.Schema || g.Path != from.Path || !covers(g.Pointer, from.Pointer) {
 			continue
 		}
 		if source < 0 || len(g.Pointer) > len(r.gaps[source].Pointer) {
@@ -299,6 +318,7 @@ func (r *Recorder) signedIn() *Principal {
 // location, status, code, unmeasured count, and detail. add keeps g only if
 // it is the first gap recorded for its location.
 func (r *Recorder) add(g Gap, err error, opts []AdviceOption) {
+	g.Location = r.located(g.Location)
 	// Only the SDK records not_shared, for what the collect config key
 	// leaves out.
 	if !g.Code.Valid() || g.Code == CodeNotShared {

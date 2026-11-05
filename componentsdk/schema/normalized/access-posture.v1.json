@@ -1,0 +1,504 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Normalized access evidence for one system, such as GitHub, AWS, or ClickHouse. It covers sign-in rules, members, admins, root accounts, machine credentials, and connected apps. MFA here covers only people who sign in without SSO. The identity provider's MFA for SSO sign-ins is in idp-posture. When a system has several accounts or subscriptions, the sections hold totals across all of them, and scopes lists each one at the audit level. A *_present flag is then true when it is true in any scope. Each sign_in value is then false when it is false in any scope, null when it is null in any other, and true otherwise. Every metric is optional. Below the audit level, counts are left out, and the *_present flags are written instead",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "provider", "system_type"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$",
+      "x-epack-label": "Schema version",
+      "x-epack-summary": "Output schema version this artifact was emitted at."
+    },
+    "collected_at": {
+      "$ref": "#/$defs/timestamp",
+      "x-epack-label": "Collected at",
+      "x-epack-summary": "When the collection ran."
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The system's vendor, such as github, aws, or clickhouse",
+      "x-epack-label": "Provider",
+      "x-epack-summary": "The system's vendor, such as GitHub or AWS."
+    },
+    "system_type": {
+      "enum": ["cloud", "code_host", "database", "platform", "monitoring", "saas"],
+      "description": "The kind of system",
+      "x-epack-label": "System type",
+      "x-epack-summary": "The kind of system, such as a cloud provider or a code host."
+    },
+    "sign_in": {
+      "$ref": "#/$defs/sign_in",
+      "description": "How people sign in. When the system has scopes, each value is false when it is false in any scope, null when it is null in any other, and true otherwise",
+      "x-epack-label": "Sign-in",
+      "x-epack-summary": "How people sign in to the system. When the system has several accounts or subscriptions, a value is false when it is false in any of them. Otherwise it is null when any is unknown, and true when all are true."
+    },
+    "members": {
+      "$ref": "#/$defs/members",
+      "x-epack-label": "Members",
+      "x-epack-summary": "People with an account in the system. Service users and service accounts count as credentials."
+    },
+    "admins": {
+      "$ref": "#/$defs/admins",
+      "x-epack-label": "Admins",
+      "x-epack-summary": "Members who can administer the system."
+    },
+    "root": {
+      "$ref": "#/$defs/root",
+      "x-epack-label": "Root accounts",
+      "x-epack-summary": "Built-in accounts that bypass normal administration, such as the AWS root user."
+    },
+    "credentials": {
+      "$ref": "#/$defs/credentials",
+      "x-epack-label": "Machine credentials",
+      "x-epack-summary": "API keys, tokens, deploy keys, service users, and access keys."
+    },
+    "connected_apps": {
+      "$ref": "#/$defs/connected_apps",
+      "x-epack-label": "Connected apps",
+      "x-epack-summary": "Third-party apps with access to the system."
+    },
+    "scopes": {
+      "type": "array",
+      "x-epack-level": "audit",
+      "items": {
+        "$ref": "#/$defs/scope"
+      },
+      "description": "One entry per account or subscription. Each entry has the same sections, for that account or subscription alone",
+      "x-epack-label": "Accounts and subscriptions",
+      "x-epack-summary": "One entry for each account or subscription. Each entry has the same sections, for that account or subscription alone."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "count": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "pct": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 100
+    },
+    "sign_in": {
+      "type": ["object", "null"],
+      "description": "How people sign in",
+      "properties": {
+        "sso_configured": {
+          "type": ["boolean", "null"],
+          "description": "Whether SSO is set up for the system",
+          "x-epack-label": "SSO configured",
+          "x-epack-summary": "Whether sign-in through SSO is set up.",
+          "x-epack-goal": true
+        },
+        "sso_required": {
+          "type": ["boolean", "null"],
+          "description": "Whether everyone must sign in through SSO",
+          "x-epack-label": "SSO required",
+          "x-epack-summary": "Whether everyone must sign in through SSO.",
+          "x-epack-goal": true
+        },
+        "mfa_required": {
+          "type": ["boolean", "null"],
+          "description": "Whether the system requires MFA from anyone who signs in without SSO",
+          "x-epack-label": "MFA required without SSO",
+          "x-epack-summary": "Whether MFA is required for everyone who signs in without SSO.",
+          "x-epack-goal": true
+        },
+        "scim_enabled": {
+          "type": ["boolean", "null"],
+          "description": "Whether accounts are created and removed through SCIM",
+          "x-epack-label": "SCIM provisioning",
+          "x-epack-summary": "Whether member accounts are created and removed through SCIM.",
+          "x-epack-goal": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "members": {
+      "type": ["object", "null"],
+      "description": "People with an account. Service users and service accounts count as credentials",
+      "properties": {
+        "members_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether the system has any members. When false, the member percentages have no members to count",
+          "x-epack-label": "Members present",
+          "x-epack-summary": "Whether there are any members."
+        },
+        "member_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Members",
+          "x-epack-label": "Members",
+          "x-epack-summary": "People with an account."
+        },
+        "external_members_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether any members come from outside the organization, such as outside collaborators or guests",
+          "x-epack-label": "External members present",
+          "x-epack-summary": "Whether any members come from outside the organization, such as outside collaborators or guests."
+        },
+        "external_member_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Members from outside the organization",
+          "x-epack-label": "External members",
+          "x-epack-summary": "Members from outside the organization, such as outside collaborators or guests."
+        },
+        "sso_member_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Members whose account is linked to SSO",
+          "x-epack-label": "Members using SSO",
+          "x-epack-summary": "Members who sign in through SSO."
+        },
+        "sso_coverage_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "sso_member_count",
+          "x-epack-denominator": "member_count",
+          "x-epack-present": "members_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of members whose account is linked to SSO. Null when there are no members",
+          "x-epack-label": "SSO coverage",
+          "x-epack-summary": "Share of members who sign in through SSO."
+        },
+        "local_members_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether any members can sign in without SSO, with a password or a social login. A member linked to SSO counts too when the system still lets them sign in another way, so local and SSO members can overlap. When false, local_mfa_coverage_pct has no members to count",
+          "x-epack-label": "Non-SSO members present",
+          "x-epack-summary": "Whether any members can sign in without SSO, such as with a password or a social login."
+        },
+        "local_member_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Members who can sign in without SSO. A member linked to SSO counts when the system still lets them sign in another way",
+          "x-epack-label": "Non-SSO members",
+          "x-epack-summary": "Members who can sign in without SSO, such as with a password or a social login."
+        },
+        "local_mfa_member_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Members counted in local_member_count who have MFA",
+          "x-epack-label": "Non-SSO members with MFA",
+          "x-epack-summary": "Members who can sign in without SSO and have MFA."
+        },
+        "local_mfa_coverage_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "local_mfa_member_count",
+          "x-epack-denominator": "local_member_count",
+          "x-epack-present": "local_members_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of members who can sign in without SSO and have MFA. Null when no member can sign in without SSO",
+          "x-epack-label": "Non-SSO member MFA coverage",
+          "x-epack-summary": "Share of members able to sign in without SSO who have MFA."
+        },
+        "inactive_member_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Members with no sign-in or other recorded activity in the last 90 days",
+          "x-epack-label": "Inactive members",
+          "x-epack-summary": "Members with no sign-in or other recorded activity in the last 90 days.",
+          "x-epack-goal": "lower"
+        },
+        "inactive_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "inactive_member_count",
+          "x-epack-denominator": "member_count",
+          "x-epack-present": "members_present",
+          "x-epack-rounding": "ceil",
+          "description": "Percentage of members with no sign-in or other recorded activity in the last 90 days. Null when there are no members",
+          "x-epack-label": "Inactive member rate",
+          "x-epack-summary": "Share of members with no sign-in or other recorded activity in the last 90 days."
+        }
+      },
+      "additionalProperties": false
+    },
+    "admins": {
+      "type": ["object", "null"],
+      "description": "Members who can administer the system",
+      "properties": {
+        "admins_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether the system has any admins",
+          "x-epack-label": "Admins present",
+          "x-epack-summary": "Whether there are any admins."
+        },
+        "admin_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Admins",
+          "x-epack-label": "Admins",
+          "x-epack-summary": "Members with admin access."
+        },
+        "admin_share_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "admin_count",
+          "x-epack-denominator": "1/members/member_count",
+          "x-epack-present": "1/members/members_present",
+          "x-epack-rounding": "ceil",
+          "description": "Admins as a percentage of members. Null when there are no members",
+          "x-epack-label": "Admin share",
+          "x-epack-summary": "Share of members who are admins."
+        },
+        "local_admins_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether any admins can sign in without SSO. An admin linked to SSO counts too when the system still lets them sign in another way. When false, local_admin_mfa_coverage_pct has no admins to count",
+          "x-epack-label": "Non-SSO admins present",
+          "x-epack-summary": "Whether any admins can sign in without SSO."
+        },
+        "local_admin_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Admins who can sign in without SSO. An admin linked to SSO counts when the system still lets them sign in another way",
+          "x-epack-label": "Non-SSO admins",
+          "x-epack-summary": "Admins who can sign in without SSO."
+        },
+        "local_mfa_admin_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Admins counted in local_admin_count who have MFA",
+          "x-epack-label": "Non-SSO admins with MFA",
+          "x-epack-summary": "Admins who can sign in without SSO and have MFA."
+        },
+        "local_admin_mfa_coverage_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "local_mfa_admin_count",
+          "x-epack-denominator": "local_admin_count",
+          "x-epack-present": "local_admins_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of admins who can sign in without SSO and have MFA. Null when no admin can sign in without SSO",
+          "x-epack-label": "Non-SSO admin MFA coverage",
+          "x-epack-summary": "Share of admins able to sign in without SSO who have MFA."
+        }
+      },
+      "additionalProperties": false
+    },
+    "root": {
+      "type": ["object", "null"],
+      "description": "Built-in accounts that bypass normal administration, such as the AWS root user",
+      "properties": {
+        "root_accounts_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether the system has a built-in root account. When false, root_mfa_coverage_pct has no accounts to count",
+          "x-epack-label": "Root accounts present",
+          "x-epack-summary": "Whether there are any built-in root accounts."
+        },
+        "root_account_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Root accounts. A system with scopes has one per scope",
+          "x-epack-label": "Root accounts",
+          "x-epack-summary": "Built-in root accounts. A system with several accounts or subscriptions has one for each."
+        },
+        "root_mfa_account_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Root accounts with MFA",
+          "x-epack-label": "Root accounts with MFA",
+          "x-epack-summary": "Root accounts that have MFA."
+        },
+        "root_mfa_coverage_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "root_mfa_account_count",
+          "x-epack-denominator": "root_account_count",
+          "x-epack-present": "root_accounts_present",
+          "x-epack-rounding": "floor",
+          "description": "Percentage of root accounts with MFA. Null when there are none",
+          "x-epack-label": "Root MFA coverage",
+          "x-epack-summary": "Share of root accounts that have MFA."
+        },
+        "root_access_keys_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether any root account has access keys",
+          "x-epack-label": "Root access keys present",
+          "x-epack-summary": "Whether any root account has access keys.",
+          "x-epack-goal": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "credentials": {
+      "type": ["object", "null"],
+      "description": "API keys, tokens, deploy keys, service users, and access keys",
+      "properties": {
+        "credentials_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether the system has any machine credentials. When false, the credential percentages have none to count",
+          "x-epack-label": "Machine credentials present",
+          "x-epack-summary": "Whether there are any machine credentials."
+        },
+        "credential_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Machine credentials",
+          "x-epack-label": "Machine credentials",
+          "x-epack-summary": "Machine credentials such as API keys and service users."
+        },
+        "never_expiring_credential_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Credentials that never expire",
+          "x-epack-label": "Never-expiring credentials",
+          "x-epack-summary": "Credentials that never expire.",
+          "x-epack-goal": "lower"
+        },
+        "never_expiring_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "never_expiring_credential_count",
+          "x-epack-denominator": "credential_count",
+          "x-epack-present": "credentials_present",
+          "x-epack-rounding": "ceil",
+          "description": "Percentage of credentials that never expire. Null when there are none",
+          "x-epack-label": "Never-expiring credential rate",
+          "x-epack-summary": "Share of credentials that never expire."
+        },
+        "unused_credential_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Credentials never used, or unused in the last 90 days",
+          "x-epack-label": "Unused credentials",
+          "x-epack-summary": "Credentials that were never used or have not been used in the last 90 days.",
+          "x-epack-goal": "lower"
+        },
+        "unused_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "unused_credential_count",
+          "x-epack-denominator": "credential_count",
+          "x-epack-present": "credentials_present",
+          "x-epack-rounding": "ceil",
+          "description": "Percentage of credentials never used, or unused in the last 90 days. Null when there are none",
+          "x-epack-label": "Unused credential rate",
+          "x-epack-summary": "Share of credentials that were never used or have not been used in the last 90 days."
+        },
+        "unrestricted_credential_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Credentials with neither an IP limit nor a scope narrower than full access. A credential limited to chosen permissions or resources has a narrower scope. A credential with either limit is restricted",
+          "x-epack-label": "Unrestricted credentials",
+          "x-epack-summary": "Credentials with no IP limit and no scope limit.",
+          "x-epack-goal": "lower"
+        },
+        "unrestricted_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "unrestricted_credential_count",
+          "x-epack-denominator": "credential_count",
+          "x-epack-present": "credentials_present",
+          "x-epack-rounding": "ceil",
+          "description": "Percentage of credentials with neither an IP limit nor a scope narrower than full access. Null when there are none",
+          "x-epack-label": "Unrestricted credential rate",
+          "x-epack-summary": "Share of credentials with no IP limit and no scope limit."
+        },
+        "write_access_credential_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Credentials that can write or administer",
+          "x-epack-goal": "lower",
+          "x-epack-label": "Credentials with write access",
+          "x-epack-summary": "Credentials with write or admin access."
+        },
+        "write_access_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "write_access_credential_count",
+          "x-epack-denominator": "credential_count",
+          "x-epack-present": "credentials_present",
+          "x-epack-rounding": "ceil",
+          "description": "Percentage of credentials that can write or administer. Null when there are none",
+          "x-epack-label": "Write-access credential rate",
+          "x-epack-summary": "Share of credentials with write or admin access."
+        },
+        "rotation_overdue_credential_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Credentials older than 90 days. When the system does not record when a credential was created, this is left out with a gap",
+          "x-epack-label": "Credentials overdue for rotation",
+          "x-epack-summary": "Credentials created more than 90 days ago.",
+          "x-epack-goal": "lower"
+        },
+        "rotation_overdue_pct": {
+          "$ref": "#/$defs/pct",
+          "x-epack-numerator": "rotation_overdue_credential_count",
+          "x-epack-denominator": "credential_count",
+          "x-epack-present": "credentials_present",
+          "x-epack-rounding": "ceil",
+          "description": "Percentage of credentials older than 90 days. Left out with a gap when the system does not record when a credential was created. Null when there are none",
+          "x-epack-label": "Overdue rotation rate",
+          "x-epack-summary": "Share of credentials created more than 90 days ago."
+        }
+      },
+      "additionalProperties": false
+    },
+    "connected_apps": {
+      "type": ["object", "null"],
+      "description": "Third-party apps with access to the system",
+      "properties": {
+        "apps_present": {
+          "type": ["boolean", "null"],
+          "description": "Whether any third-party app has access",
+          "x-epack-label": "Connected apps present",
+          "x-epack-summary": "Whether any third-party app has access to the system."
+        },
+        "app_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-level": "audit",
+          "description": "Third-party apps with access",
+          "x-epack-label": "Connected apps",
+          "x-epack-summary": "Third-party apps with access to the system."
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The account or subscription ID",
+          "x-epack-label": "Account or subscription ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "The account or subscription name",
+          "x-epack-label": "Account or subscription name"
+        },
+        "kind": {
+          "enum": ["account", "subscription"],
+          "x-epack-label": "Type",
+          "x-epack-summary": "Whether this entry is an account or a subscription."
+        },
+        "sign_in": {
+          "$ref": "#/$defs/sign_in",
+          "x-epack-label": "Sign-in",
+          "x-epack-summary": "How people sign in to this account or subscription."
+        },
+        "members": {
+          "$ref": "#/$defs/members",
+          "x-epack-label": "Members",
+          "x-epack-summary": "Members of this account or subscription. Service users and service accounts count as credentials."
+        },
+        "admins": {
+          "$ref": "#/$defs/admins",
+          "x-epack-label": "Admins",
+          "x-epack-summary": "Members who can administer this account or subscription."
+        },
+        "root": {
+          "$ref": "#/$defs/root",
+          "x-epack-label": "Root accounts",
+          "x-epack-summary": "Built-in root accounts for this account or subscription."
+        },
+        "credentials": {
+          "$ref": "#/$defs/credentials",
+          "x-epack-label": "Machine credentials",
+          "x-epack-summary": "Machine credentials in this account or subscription."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

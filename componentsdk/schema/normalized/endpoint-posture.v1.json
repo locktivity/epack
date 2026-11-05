@@ -6,75 +6,98 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "pattern": "^1\\.\\d+\\.\\d+$"
+      "pattern": "^1\\.\\d+\\.\\d+$",
+      "x-epack-label": "Schema version"
     },
     "collected_at": {
-      "$ref": "#/$defs/timestamp"
+      "$ref": "#/$defs/timestamp",
+      "x-epack-label": "Collected at"
     },
     "provider": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "x-epack-label": "Provider"
     },
     "organization_id": {
       "type": "string",
       "x-epack-level": "audit",
-      "description": "The provider's organization identifier"
+      "description": "The provider's organization identifier",
+      "x-epack-label": "Organization"
     },
     "scope": {
       "type": "object",
       "required": ["discovery_complete", "description", "max_observation_age_seconds"],
       "properties": {
         "discovery_complete": {
-          "type": "boolean",
-          "description": "Whether every device the provider lists was read. When false, fleet totals and percentages are left out"
+          "type": ["boolean", "null"],
+          "description": "Whether every device the provider lists was read. When false or null, fleet totals and percentages are left out. Null when the collector could not tell",
+          "x-epack-label": "All devices collected",
+          "x-epack-summary": "Whether data was collected from every device listed in the provider."
         },
-        "observed_devices_count": {
+        "observed_device_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Devices observed within max_observation_age_seconds"
+          "description": "Devices observed within max_observation_age_seconds",
+          "x-epack-label": "Devices observed",
+          "x-epack-summary": "Devices that reported within the maximum reading age."
         },
         "description": {
           "type": "string",
           "pattern": "^[a-z0-9_]+$",
-          "description": "A fixed name for the scope, such as managed_devices"
+          "description": "A fixed name for the scope, such as managed_devices",
+          "x-epack-label": "Scope name"
         },
         "max_observation_age_seconds": {
           "type": "integer",
           "minimum": 1,
-          "description": "How recently a device must have reported to count"
+          "description": "How recently a device must have reported to count",
+          "x-epack-label": "Maximum reading age (seconds)",
+          "x-epack-summary": "How recently, in seconds, a device must have reported for its reading to count."
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-epack-label": "Scope",
+      "x-epack-summary": "Which devices these readings cover and how current they must be."
     },
     "fleet": {
       "type": "object",
       "properties": {
         "devices_present": {
           "type": ["boolean", "null"],
-          "description": "Whether the fleet has any devices in scope. When false, the percentages have no devices to count"
+          "description": "Whether the fleet has any devices in scope. When false, the percentages have no devices to count",
+          "x-epack-label": "Devices present",
+          "x-epack-summary": "Whether the fleet has any devices in scope."
         },
-        "devices_count": {
+        "device_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Devices in scope"
+          "description": "Devices in scope",
+          "x-epack-label": "Devices in scope",
+          "x-epack-summary": "Devices in scope."
         },
-        "managed_devices_count": {
+        "managed_device_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Devices in scope that the provider manages"
+          "description": "Devices in scope that the provider manages",
+          "x-epack-label": "Managed devices",
+          "x-epack-summary": "Devices in scope that are managed through the provider."
         },
-        "mdm_enrolled_devices_count": {
+        "mdm_enrolled_device_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Devices in scope with affirmative evidence of MDM enrollment"
+          "description": "Devices in scope with affirmative evidence of MDM enrollment",
+          "x-epack-label": "MDM-enrolled devices",
+          "x-epack-summary": "Devices in scope that are confirmed enrolled in MDM."
         },
         "mdm_enrolled_pct": {
           "$ref": "#/$defs/pct",
-          "x-epack-numerator": "mdm_enrolled_devices_count",
-          "x-epack-denominator": "devices_count",
+          "x-epack-numerator": "mdm_enrolled_device_count",
+          "x-epack-denominator": "device_count",
           "x-epack-present": "devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices in scope with affirmative evidence of MDM enrollment. Null when there are no devices"
+          "description": "Percentage of devices in scope with affirmative evidence of MDM enrollment. Null when there are no devices",
+          "x-epack-label": "MDM enrollment",
+          "x-epack-summary": "Share of devices in scope that are confirmed enrolled in MDM."
         },
         "devices_by_os": {
           "type": "object",
@@ -82,13 +105,19 @@
             "$ref": "#/$defs/os_family"
           },
           "additionalProperties": {
-            "$ref": "#/$defs/count"
+            "$ref": "#/$defs/count",
+            "x-epack-label": "Devices in this OS family",
+            "x-epack-summary": "Devices in scope with this OS family."
           },
           "x-epack-level": "audit",
-          "description": "Devices in scope by operating system family"
+          "description": "Devices in scope by operating system family",
+          "x-epack-label": "Devices by OS",
+          "x-epack-summary": "Devices in scope by OS family."
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-epack-label": "Fleet",
+      "x-epack-summary": "Totals for the devices in scope."
     },
     "compliance": {
       "type": "object",
@@ -97,22 +126,29 @@
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where the provider's or a baseline's compliance verdict passes, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"compliance.compliant_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where the provider's or a baseline's compliance verdict passes, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"compliance.compliant_pct\"] counts the devices by outcome",
+          "x-epack-label": "Compliant devices",
+          "x-epack-summary": "Share of evaluated devices that pass the provider's compliance check or a named baseline."
         },
         "basis": {
-          "enum": ["provider_reported", "baseline_evaluation"]
+          "enum": ["provider_reported", "baseline_evaluation"],
+          "x-epack-label": "Compliance basis"
         },
         "baseline_id": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Compliance baseline"
         },
         "baseline_version": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Compliance baseline version"
         }
       },
       "dependentRequired": {
         "compliant_pct": ["basis"]
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-epack-label": "Compliance",
+      "x-epack-summary": "Device compliance with the provider's policy or a named baseline."
     },
     "hardening": {
       "type": "object",
@@ -121,22 +157,30 @@
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where every volume is encrypted at rest, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.disk_encryption_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where every volume is encrypted at rest, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.disk_encryption_pct\"] counts the devices by outcome",
+          "x-epack-label": "Disk encryption",
+          "x-epack-summary": "Share of evaluated devices with every volume encrypted at rest."
         },
         "screen_lock_compliant_pct": {
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where the screen lock setting meets policy, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.screen_lock_compliant_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where the screen lock setting meets policy, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.screen_lock_compliant_pct\"] counts the devices by outcome",
+          "x-epack-label": "Screen lock",
+          "x-epack-summary": "Share of evaluated devices whose screen lock setting meets policy."
         },
         "firewall_enabled_pct": {
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where the host firewall is on, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.firewall_enabled_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where the host firewall is on, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"hardening.firewall_enabled_pct\"] counts the devices by outcome",
+          "x-epack-label": "Firewall enabled",
+          "x-epack-summary": "Share of evaluated devices with the host firewall turned on."
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-epack-label": "Hardening",
+      "x-epack-summary": "Device security settings."
     },
     "patching": {
       "type": "object",
@@ -145,30 +189,41 @@
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where the operating system version still gets security updates, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"patching.os_supported_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where the operating system version still gets security updates, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"patching.os_supported_pct\"] counts the devices by outcome",
+          "x-epack-label": "Supported OS",
+          "x-epack-summary": "Share of evaluated devices running an OS version that still gets security updates."
         },
         "os_baseline_compliant_pct": {
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where the operating system meets the named baseline, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"patching.os_baseline_compliant_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where the operating system meets the named baseline, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"patching.os_baseline_compliant_pct\"] counts the devices by outcome",
+          "x-epack-label": "OS baseline met",
+          "x-epack-summary": "Share of evaluated devices whose OS meets the named baseline."
         },
         "unsupported_os_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Devices whose operating system version no longer gets security updates"
+          "description": "Devices whose operating system version no longer gets security updates",
+          "x-epack-label": "Unsupported OS",
+          "x-epack-summary": "Devices whose OS version no longer gets security updates.",
+          "x-epack-goal": "lower"
         },
         "baseline_id": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "OS baseline"
         },
         "baseline_version": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "OS baseline version"
         }
       },
       "dependentRequired": {
         "os_baseline_compliant_pct": ["baseline_id"]
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-epack-label": "Patching",
+      "x-epack-summary": "OS support and patch level."
     },
     "protection": {
       "type": "object",
@@ -177,28 +232,38 @@
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where anti-malware is installed, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.antimalware_installed_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where anti-malware is installed, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.antimalware_installed_pct\"] counts the devices by outcome",
+          "x-epack-label": "Antimalware installed",
+          "x-epack-summary": "Share of evaluated devices with antimalware installed."
         },
         "antimalware_healthy_pct": {
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where anti-malware is installed, running, and current, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.antimalware_healthy_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where anti-malware is installed, running, and current, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.antimalware_healthy_pct\"] counts the devices by outcome",
+          "x-epack-label": "Antimalware healthy",
+          "x-epack-summary": "Share of evaluated devices where antimalware is running and up to date."
         },
         "edr_installed_pct": {
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where an EDR agent is installed, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.edr_installed_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where an EDR agent is installed, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.edr_installed_pct\"] counts the devices by outcome",
+          "x-epack-label": "EDR installed",
+          "x-epack-summary": "Share of evaluated devices with an EDR agent installed."
         },
         "edr_healthy_pct": {
           "$ref": "#/$defs/pct",
           "x-epack-present": "/fleet/devices_present",
           "x-epack-rounding": "floor",
-          "description": "Percentage of devices where an EDR agent is installed, running, and reporting, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.edr_healthy_pct\"] counts the devices by outcome"
+          "description": "Percentage of devices where an EDR agent is installed, running, and reporting, out of the devices whose reading passed or failed. Devices that are unknown or not applicable are left out. At the audit level, metric_coverage[\"protection.edr_healthy_pct\"] counts the devices by outcome",
+          "x-epack-label": "EDR healthy",
+          "x-epack-summary": "Share of evaluated devices where an EDR agent is running and reporting."
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "x-epack-label": "Threat protection",
+      "x-epack-summary": "Antimalware and endpoint detection and response (EDR) coverage."
     },
     "metric_coverage": {
       "type": "object",
@@ -206,10 +271,13 @@
         "$ref": "#/$defs/metric_path"
       },
       "additionalProperties": {
-        "$ref": "#/$defs/coverage"
+        "$ref": "#/$defs/coverage",
+        "x-epack-label": "Device counts for this percentage"
       },
       "x-epack-level": "audit",
-      "description": "Counts of devices for each percentage, by whether the device passed, failed, could not be read, or does not apply"
+      "description": "Counts of devices for each percentage, by whether the device passed, failed, could not be read, or does not apply",
+      "x-epack-label": "Reading coverage",
+      "x-epack-summary": "Device counts behind each percentage, by outcome."
     },
     "availability": {
       "type": "array",
@@ -219,68 +287,34 @@
         "properties": {
           "path": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "x-epack-label": "Metric"
           },
           "reason": {
-            "enum": ["unsupported", "permission_denied", "not_configured", "stale", "partial", "source_error"]
+            "enum": ["unsupported", "not_read", "permission_denied", "not_configured", "stale", "partial", "source_error"],
+            "x-epack-label": "Reason",
+            "description": "unsupported when the vendor never reports the metric, and not_read when the vendor reports it but the collector does not read it"
           },
           "message": {
             "type": "string",
-            "maxLength": 200
+            "maxLength": 200,
+            "x-epack-label": "Details"
           }
         },
         "additionalProperties": false
       },
-      "description": "Why a metric has no reading, by path"
+      "description": "Why a metric has no reading, by path",
+      "x-epack-label": "Unavailable readings",
+      "x-epack-summary": "Metrics that have no reading, with the reason for each."
     },
     "devices": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/device"
       },
-      "x-epack-level": "audit"
-    },
-    "policies": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/policy"
-      },
-      "x-epack-level": "audit"
-    },
-    "threat_events": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/threat_event"
-      },
-      "x-epack-level": "audit"
-    },
-    "device_actions": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/device_action"
-      },
-      "x-epack-level": "audit"
-    },
-    "history": {
-      "type": "object",
-      "required": ["window_start", "window_end"],
-      "properties": {
-        "window_start": {
-          "$ref": "#/$defs/timestamp"
-        },
-        "window_end": {
-          "$ref": "#/$defs/timestamp"
-        }
-      },
-      "additionalProperties": false,
-      "x-epack-level": "audit"
-    },
-    "inventories": {
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/$defs/inventory_meta"
-      },
-      "x-epack-level": "audit"
+      "x-epack-level": "audit",
+      "x-epack-label": "Devices",
+      "x-epack-summary": "Readings for each device."
     }
   },
   "allOf": [
@@ -517,19 +551,28 @@
     },
     "coverage": {
       "type": "object",
-      "required": ["passing_devices_count", "failing_devices_count", "unknown_devices_count", "not_applicable_devices_count"],
+      "required": ["passing_device_count", "failing_device_count", "unknown_device_count", "not_applicable_device_count"],
       "properties": {
-        "passing_devices_count": {
-          "$ref": "#/$defs/count"
+        "passing_device_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-label": "Passing devices",
+          "x-epack-summary": "Devices whose reading passed for this percentage."
         },
-        "failing_devices_count": {
-          "$ref": "#/$defs/count"
+        "failing_device_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-label": "Failing devices",
+          "x-epack-summary": "Devices whose reading failed for this percentage.",
+          "x-epack-goal": "lower"
         },
-        "unknown_devices_count": {
-          "$ref": "#/$defs/count"
+        "unknown_device_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-label": "Devices with no reading",
+          "x-epack-summary": "Devices that could not be read for this percentage."
         },
-        "not_applicable_devices_count": {
-          "$ref": "#/$defs/count"
+        "not_applicable_device_count": {
+          "$ref": "#/$defs/count",
+          "x-epack-label": "Devices not applicable",
+          "x-epack-summary": "Devices that this percentage does not apply to."
         }
       },
       "additionalProperties": false
@@ -542,10 +585,12 @@
       "required": ["state"],
       "properties": {
         "state": {
-          "enum": ["pass", "fail", "unknown", "not_applicable"]
+          "enum": ["pass", "fail", "unknown", "not_applicable"],
+          "x-epack-label": "Result"
         },
         "observed_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/timestamp",
+          "x-epack-label": "Observed at"
         }
       },
       "additionalProperties": false
@@ -556,44 +601,57 @@
       "properties": {
         "device_id": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "x-epack-label": "Device ID"
         },
         "hostname": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "Hostname"
         },
         "os_family": {
-          "$ref": "#/$defs/os_family"
+          "$ref": "#/$defs/os_family",
+          "x-epack-label": "OS family"
         },
         "os_name": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "OS name"
         },
         "os_version": {
-          "type": "string"
+          "type": "string",
+          "x-epack-label": "OS version"
         },
         "assigned_user": {
           "type": "object",
           "required": ["user_id"],
           "properties": {
             "user_id": {
-              "type": "string"
+              "type": "string",
+              "x-epack-label": "Primary user ID"
             },
             "login": {
-              "type": "string"
+              "type": "string",
+              "x-epack-label": "Primary user login"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-epack-label": "Primary user"
         },
         "management_state": {
-          "enum": ["managed", "unmanaged", "retired", "unknown"]
+          "enum": ["managed", "unmanaged", "retired", "unknown"],
+          "x-epack-label": "Management state"
         },
         "in_scope": {
-          "type": "boolean"
+          "type": "boolean",
+          "x-epack-label": "In scope",
+          "x-epack-summary": "Whether the device counts toward the fleet readings."
         },
         "created_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/timestamp",
+          "x-epack-label": "Record created"
         },
         "last_seen_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/timestamp",
+          "x-epack-label": "Last seen"
         },
         "controls": {
           "type": "object",
@@ -601,8 +659,11 @@
             "$ref": "#/$defs/control_key"
           },
           "additionalProperties": {
-            "$ref": "#/$defs/control"
-          }
+            "$ref": "#/$defs/control",
+            "x-epack-label": "Control reading"
+          },
+          "x-epack-label": "Controls",
+          "x-epack-summary": "This device's reading for each control."
         },
         "local_admin_accounts": {
           "type": "array",
@@ -610,15 +671,19 @@
             "type": "object",
             "properties": {
               "account_id": {
-                "type": "string"
+                "type": "string",
+                "x-epack-label": "Account ID"
               },
               "username": {
-                "type": "string"
+                "type": "string",
+                "x-epack-label": "Username"
               }
             },
             "additionalProperties": false
           },
-          "x-epack-level": "internal"
+          "x-epack-level": "internal",
+          "x-epack-label": "Local admin accounts",
+          "x-epack-summary": "Accounts on the device with local admin rights."
         },
         "findings": {
           "type": "array",
@@ -627,29 +692,38 @@
             "required": ["control", "status"],
             "properties": {
               "finding_id": {
-                "type": "string"
+                "type": "string",
+                "x-epack-label": "Finding ID"
               },
               "control": {
-                "$ref": "#/$defs/control_key"
+                "$ref": "#/$defs/control_key",
+                "x-epack-label": "Control"
               },
               "status": {
-                "enum": ["open", "resolved", "unknown"]
+                "enum": ["open", "resolved", "unknown"],
+                "x-epack-label": "Finding status"
               },
               "first_seen_at": {
-                "$ref": "#/$defs/timestamp"
+                "$ref": "#/$defs/timestamp",
+                "x-epack-label": "First seen"
               },
               "last_seen_at": {
-                "$ref": "#/$defs/timestamp"
+                "$ref": "#/$defs/timestamp",
+                "x-epack-label": "Last seen"
               },
               "resolved_at": {
-                "$ref": "#/$defs/timestamp"
+                "$ref": "#/$defs/timestamp",
+                "x-epack-label": "Resolved"
               },
               "reason_code": {
-                "type": "string"
+                "type": "string",
+                "x-epack-label": "Reason code"
               }
             },
             "additionalProperties": false
-          }
+          },
+          "x-epack-label": "Findings",
+          "x-epack-summary": "Control issues recorded for this device."
         },
         "protection_modules": {
           "type": "array",
@@ -658,140 +732,36 @@
             "required": ["kind"],
             "properties": {
               "kind": {
-                "enum": ["antimalware", "edr", "firewall", "device_control"]
+                "enum": ["antimalware", "edr", "firewall", "device_control"],
+                "x-epack-label": "Module type"
               },
               "installed": {
-                "type": "boolean"
+                "type": "boolean",
+                "x-epack-label": "Module installed",
+                "x-epack-summary": "Whether the module is installed on the device.",
+                "x-epack-goal": true
               },
               "enabled": {
-                "type": "boolean"
+                "type": "boolean",
+                "x-epack-label": "Module enabled",
+                "x-epack-summary": "Whether the module is turned on.",
+                "x-epack-goal": true
               },
               "healthy": {
-                "type": "boolean"
+                "type": "boolean",
+                "x-epack-label": "Module healthy",
+                "x-epack-summary": "Whether the module is running and working normally.",
+                "x-epack-goal": true
               },
               "observed_at": {
-                "$ref": "#/$defs/timestamp"
+                "$ref": "#/$defs/timestamp",
+                "x-epack-label": "Observed at"
               }
             },
             "additionalProperties": false
-          }
-        },
-        "prohibited_apps": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["name"],
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              },
-              "policy_id": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "policy": {
-      "type": "object",
-      "required": ["policy_id", "name", "control_categories"],
-      "properties": {
-        "policy_id": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "control_categories": {
-          "type": "array",
-          "items": {
-            "enum": ["disk_encryption", "screen_lock", "firewall", "os_patching", "antimalware", "edr", "device_control"]
           },
-          "uniqueItems": true
-        },
-        "assigned_devices_count": {
-          "$ref": "#/$defs/count"
-        }
-      },
-      "additionalProperties": false
-    },
-    "threat_event": {
-      "type": "object",
-      "required": ["event_id", "device_id", "category", "detected_at"],
-      "properties": {
-        "event_id": {
-          "type": "string"
-        },
-        "device_id": {
-          "type": "string"
-        },
-        "category": {
-          "enum": ["malware", "ransomware", "exploit", "behavioral", "policy_violation", "other", "unknown"]
-        },
-        "threat_name": {
-          "type": "string"
-        },
-        "severity": {
-          "enum": ["informational", "low", "medium", "high", "critical", "unknown"]
-        },
-        "action": {
-          "type": "string"
-        },
-        "detected_at": {
-          "$ref": "#/$defs/timestamp"
-        }
-      },
-      "additionalProperties": false
-    },
-    "device_action": {
-      "type": "object",
-      "required": ["device_id", "action_type", "status"],
-      "properties": {
-        "action_id": {
-          "type": "string"
-        },
-        "device_id": {
-          "type": "string"
-        },
-        "action_type": {
-          "type": "string"
-        },
-        "status": {
-          "enum": ["requested", "succeeded", "failed", "unknown"]
-        },
-        "requested_at": {
-          "$ref": "#/$defs/timestamp"
-        },
-        "completed_at": {
-          "$ref": "#/$defs/timestamp"
-        }
-      },
-      "additionalProperties": false
-    },
-    "inventory_meta": {
-      "type": "object",
-      "required": ["collection_complete", "output_truncated", "returned_rows_count"],
-      "properties": {
-        "collection_complete": {
-          "type": "boolean"
-        },
-        "output_truncated": {
-          "type": "boolean"
-        },
-        "returned_rows_count": {
-          "$ref": "#/$defs/count"
-        },
-        "total_rows_count": {
-          "$ref": "#/$defs/count"
-        },
-        "dropped_rows_count": {
-          "$ref": "#/$defs/count"
+          "x-epack-label": "Protection modules",
+          "x-epack-summary": "Security modules on this device and their state."
         }
       },
       "additionalProperties": false

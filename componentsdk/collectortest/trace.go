@@ -27,12 +27,18 @@ type tracer struct {
 	base    *componentsdk.CollectorResult
 	clean   snapshot
 	schemas map[string]string
+	// back gives an emitted path as the collector names it, so suites run
+	// under other configured names trace the same artifacts. See
+	// componentsdk.RunPath.
+	back func(string) string
 }
 
-func newTracer() *tracer {
+func newTracer(s Suite) *tracer {
+	name := cmp.Or(s.Name, s.Spec.Name)
 	return &tracer{
 		fields: map[string]map[string]*tracemap.FieldTrace{},
 		clean:  snapshot{docs: map[string]any{}, leaves: map[string]map[string]any{}},
+		back:   func(p string) string { return componentsdk.RunPath(name, s.Spec.Name, p) },
 	}
 }
 
@@ -43,6 +49,7 @@ func tracing(s Suite) bool {
 }
 
 func (t *tracer) field(path, pattern string) *tracemap.FieldTrace {
+	path = t.back(path)
 	byPattern := t.fields[path]
 	if byPattern == nil {
 		byPattern = map[string]*tracemap.FieldTrace{}
@@ -134,7 +141,7 @@ func (t *tracer) setBaseline(res componentsdk.InProcessResult) {
 	t.schemas = map[string]string{}
 	for _, a := range res.Artifacts {
 		if a.Schema != "" && !sdkArtifact(a) {
-			t.schemas[a.Path] = a.Schema
+			t.schemas[t.back(a.Path)] = a.Schema
 		}
 	}
 	t.noteFields(t.clean)
@@ -147,7 +154,7 @@ func (t *tracer) setBaseline(res componentsdk.InProcessResult) {
 		if !okFrom || !okTo {
 			continue
 		}
-		copied := tracemap.Copy{Path: from, Pointer: tracemap.Pattern(m.From.Pointer, t.clean.docs[from])}
+		copied := tracemap.Copy{Path: t.back(from), Pointer: tracemap.Pattern(m.From.Pointer, t.clean.docs[from])}
 		t.field(to, tracemap.Pattern(m.To.Pointer, t.clean.docs[to])).AddCopy(copied)
 	}
 }
@@ -256,9 +263,11 @@ func (k *kit) writeTrace(dir string) error {
 const maxStale = 5
 
 // checkTraceMap reports a committed trace map that lacks a field the suite's
-// runs emitted, or an operation whose faults the fault matrix found
-// changing a field. The map merges every suite's runs, so it may list more
-// than one suite finds.
+// runs emitted, an operation whose faults the fault matrix found changing a
+// field, or a line a gap the runs recorded came from. The map merges every
+// suite's runs, so it may list more than one suite finds. It also reports a
+// line of the map whose text no longer matches the collector's source, such
+// as after an edit moved the code, when the test runs inside the module.
 func (k *kit) checkTraceMap() {
 	var committed tracemap.Map
 	if err := json.Unmarshal(k.suite.Spec.TraceMap, &committed); err != nil {
@@ -273,10 +282,23 @@ func (k *kit) checkTraceMap() {
 				stale = append(stale, fmt.Sprintf("%s %s is missing", path, pointerLabel(pattern)))
 				continue
 			}
-			for _, op := range k.trace.fields[path][pattern].Operations {
+			traced := k.trace.fields[path][pattern]
+			for _, op := range traced.Operations {
 				if !containsString(have.Operations, op) {
 					stale = append(stale, fmt.Sprintf("%s %s does not list %s, whose faults change it", path, pointerLabel(pattern), op))
 				}
+			}
+			for _, line := range traced.Gaps {
+				if !containsString(have.Gaps, line) {
+					stale = append(stale, fmt.Sprintf("%s %s does not list %s, which recorded a gap on it", path, pointerLabel(pattern), line))
+				}
+			}
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if root, ok := tracemap.FindModuleRoot(cwd); ok {
+			for _, line := range tracemap.StaleLines(root, &committed) {
+				stale = append(stale, fmt.Sprintf("%s no longer holds the line the map shows", line))
 			}
 		}
 	}

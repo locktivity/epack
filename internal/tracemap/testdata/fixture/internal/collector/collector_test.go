@@ -25,5 +25,8 @@ func TestCollectorKit(t *testing.T) {
 		Required:    []string{opOrg},
 		Insensitive: []string{opOrg},
 		Operations:  []string{opOrg, opPeople},
+		// The fixture keeps the paths the map's tests name, one of them
+		// outside artifacts/ on purpose.
+		SkipChecks: []string{"paths"},
 	})
 }

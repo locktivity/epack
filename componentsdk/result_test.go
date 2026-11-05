@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -487,5 +488,29 @@ func TestTheResultRecordsTheLevelTheRunCollectedAt(t *testing.T) {
 	}, InProcessOptions{Config: map[string]any{"level": "secret"}})
 	if res.Result == nil || res.Result.Run.Level != LevelTrust {
 		t.Errorf("an unknown level records %+v, want trust, the level the run fell back to", res.Result)
+	}
+}
+
+func TestAnUnsupportedGapLeavesTheRunCollected(t *testing.T) {
+	for _, tc := range []struct {
+		codes []Code
+		want  ResultOutcome
+	}{
+		{codes: []Code{CodeUnsupported}, want: ResultOutcome{Status: OutcomeCollected}},
+		{codes: []Code{CodeUnsupported, CodeTooLarge}, want: ResultOutcome{Status: OutcomePartial, Code: CodeTooLarge, Owner: OwnerPublisher}},
+	} {
+		handler := func(ctx CollectorContext) error {
+			for i, code := range tc.codes {
+				Records(ctx).NotCollectedCode(Location{Path: "artifacts/demo.json", Pointer: "/v" + strconv.Itoa(i)}, code, "")
+			}
+			return ctx.Emit([]CollectedArtifact{{Data: map[string]any{"org": "acme"}, Path: "artifacts/demo.json"}})
+		}
+		res := RunInProcess(CollectorSpec{Name: "demo", Version: "0.1.0"}, handler, InProcessOptions{})
+		if res.ExitCode != 0 || res.Result == nil {
+			t.Fatalf("%v: exit = %d stderr = %s", tc.codes, res.ExitCode, res.Stderr)
+		}
+		if res.Result.Outcome != tc.want || res.Result.Gaps[0].Owner != OwnerNobody {
+			t.Errorf("%v: outcome = %+v, first gap owner %s, want %+v and nobody", tc.codes, res.Result.Outcome, res.Result.Gaps[0].Owner, tc.want)
+		}
 	}
 }

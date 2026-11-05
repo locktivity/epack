@@ -323,3 +323,29 @@ type apiError struct{ status int }
 
 func (e *apiError) Error() string   { return fmt.Sprintf("the API answered %d", e.status) }
 func (e *apiError) HTTPStatus() int { return e.status }
+
+// Detailed is an artifact named by componentsdk.ArtifactPath through a
+// package-level variable, and Other one named by a call in place, so neither
+// path is a constant.
+type Detailed struct {
+	Count int `json:"count"`
+}
+
+type Other struct {
+	Total int `json:"total"`
+}
+
+const fixtureName = "fixture"
+
+var detailedPath = componentsdk.ArtifactPath(fixtureName, "")
+
+func emitNamed(ctx componentsdk.CollectorContext, n int) error {
+	d := Detailed{}
+	d.Count = n
+	o := Other{}
+	o.Total = n + 1
+	return ctx.Emit([]componentsdk.CollectedArtifact{
+		componentsdk.JSONArtifact(detailedPath, d, componentsdk.ArtifactMeta{}),
+		componentsdk.JSONArtifact(componentsdk.ArtifactPath(fixtureName, "evidencepack/other@v1"), o, componentsdk.ArtifactMeta{}),
+	})
+}

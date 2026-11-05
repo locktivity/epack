@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "{{.BinaryName}}/v1.0.0.json",
   "title": "{{.BinaryName}} output",
-  "description": "The artifact {{.BinaryName}} emits at artifacts/{{.Name}}.json. The x-epack keywords say what each value means. The collector checks its output against this schema when it emits.",
+  "description": "The artifact {{.BinaryName}} emits at artifacts/{{.Name}}.details.json. The x-epack keywords describe each value. The collector checks its output against this schema when it emits.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "collected_at", "organization"],
@@ -29,7 +29,10 @@
         "mfa_required": {
           "type": "boolean",
           "description": "Whether the organization requires every user to enroll an MFA factor.",
-          "x-epack-method": "Reads the organization's MFA enrollment setting."
+          "x-epack-method": "Reads the organization's MFA enrollment setting.",
+          "x-epack-label": "MFA required",
+          "x-epack-summary": "Whether every user must enroll an MFA factor.",
+          "x-epack-goal": true
         }
       }
     },
@@ -43,6 +46,8 @@
           "type": "integer",
           "minimum": 0,
           "x-epack-method": "Counts the users the user list returns, every page included.",
+          "x-epack-label": "Users",
+          "x-epack-summary": "Users in the organization.",
           "x-epack-rollup": {"rows": "inventory", "as": "count"}
         },
         "mfa_enabled_count": {
@@ -50,6 +55,8 @@
           "minimum": 0,
           "description": "Users with an active MFA factor. Null, with a partial gap, when some user's factors could not be read.",
           "x-epack-method": "Counts the users whose factor list has at least one active factor.",
+          "x-epack-label": "Users with MFA",
+          "x-epack-summary": "Users with an active MFA factor.",
           "x-epack-rollup": {"rows": "inventory", "where": "/mfa_enabled", "as": "count"}
         },
         "mfa_enabled_pct": {
@@ -58,6 +65,8 @@
           "maximum": 100,
           "description": "Percentage of users with an active MFA factor, rounded down. Null when there are no users, or, with a partial gap, when some user's factors could not be read.",
           "x-epack-method": "Divides mfa_enabled_count by total_count.",
+          "x-epack-label": "MFA coverage",
+          "x-epack-summary": "Share of users with an active MFA factor.",
           "x-epack-denominator": "total_count",
           "x-epack-numerator": "mfa_enabled_count",
           "x-epack-rounding": "floor",
@@ -81,7 +90,10 @@
               "mfa_enabled": {
                 "type": ["boolean", "null"],
                 "description": "Whether the user has an active MFA factor. Null, with a gap, when the user's factors could not be read.",
-                "x-epack-method": "Reads the user's factor list and checks for an active factor."
+                "x-epack-method": "Reads the user's factor list and checks for an active factor.",
+                "x-epack-label": "MFA on",
+                "x-epack-summary": "Whether the user has an active MFA factor.",
+                "x-epack-goal": true
               }
             }
           }
