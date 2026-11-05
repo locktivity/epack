@@ -57,6 +57,11 @@ on:
         required: false
         type: string
         default: ""
+      test-timeout:
+        description: Timeout for go test, such as 30m, for a collector whose test kit runs longer than Go's default of 10 minutes under the race detector.
+        required: false
+        type: string
+        default: 10m
       validate-version:
         description: epack-tool-validate version the evidence diff validates with.
         required: false
@@ -99,7 +104,9 @@ jobs:
 
       # Includes the collectortest suite, which runs as a Go test.
       - name: Run tests
-        run: go test -race ./...
+        env:
+          TEST_TIMEOUT: ${{ inputs.test-timeout }}
+        run: go test -race -timeout "$TEST_TIMEOUT" ./...
 
   lint:
     runs-on: ubuntu-latest

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ENHANCEMENTS
+
+- The shared collector CI workflow takes `test-timeout`, the timeout for
+  `go test`. It defaults to 10m, Go's own default, for a collector whose test
+  kit runs longer under the race detector
+
 ## [0.10.0] - 2026-11-05
 
 ### ENHANCEMENTS

@@ -614,7 +614,7 @@ jobs:
         ./scripts/check-forbidden-data.sh
 ```
 
-Pin it to the commit of the epack release in `go.mod`. `checks` runs the repository's own checks after lint, one command per line. `main-package`, `targets`, `conformance-level`, and `golangci-lint-version` override the defaults.
+Pin it to the commit of the epack release in `go.mod`, or a later commit on `main` for an input the release lacks. `checks` runs the repository's own checks after lint, one command per line. `test-timeout` sets `go test`'s timeout, 10m by default, for a test kit that runs longer under `-race`. `main-package`, `targets`, `conformance-level`, and `golangci-lint-version` override the defaults.
 
 The `trace-map` job runs `epack sdk map --check` at the epack version in `go.mod`, which rebuilds the trace map from the collectortest suites and the source and fails when the committed one differs, naming the command that rewrites it (see [Trace map](collect-protocol.md#trace-map)). The release workflow runs CI before the SLSA build, so a tag cannot ship a stale map. `trace-map` names the committed map, `docs/schema/trace-map.json` by default. A collector without one passes the job.
 
