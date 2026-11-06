@@ -194,7 +194,10 @@ type Recorder struct {
 	gaps      []Gap
 	principal *Principal
 	mirrors   []Mirrored
-	warnings  []RunWarning
+	// moved holds the Moved calls, each with From the artifact a value
+	// moved to and To the value.
+	moved    []Mirrored
+	warnings []RunWarning
 	// rename gives an artifact path as the run writes it. See RunPath.
 	rename func(string) string
 }
@@ -275,6 +278,22 @@ func (r *Recorder) Mirror(from, to Location) {
 	r.keep(g)
 }
 
+// Moved records that the value at at sits in a block epack moved to the
+// artifact to names, which now holds what the value says. A deprecated
+// field written beside its new one is such a value. When the collect config
+// key leaves that artifact out, Emit removes the value and the gaps inside
+// it, and records it as not shared, whether or not the collector passed the
+// artifact. Moved copies no gap, since the value need not be a copy of one
+// value in the artifact. Record a value that is one with Mirror.
+func (r *Recorder) Moved(at, to Location) {
+	at, to = r.located(at), r.located(to)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if pair := (Mirrored{From: to, To: at}); !slices.Contains(r.moved, pair) {
+		r.moved = append(r.moved, pair)
+	}
+}
+
 // covers reports whether the value at pointer is the one at gap or inside it.
 func covers(gap, pointer string) bool {
 	return gap == "" || pointer == gap || strings.HasPrefix(pointer, gap+"/")
@@ -295,6 +314,13 @@ func (r *Recorder) Gaps() []Gap {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]Gap(nil), r.gaps...)
+}
+
+// movedValues returns a copy of the Moved calls made so far.
+func (r *Recorder) movedValues() []Mirrored {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]Mirrored(nil), r.moved...)
 }
 
 // mirrored returns a copy of the Mirror calls made so far.
