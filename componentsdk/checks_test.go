@@ -293,7 +293,8 @@ func TestNormalizedSchemas(t *testing.T) {
 // the normalized schemas rounds in the direction that keeps a shortfall
 // visible. A percentage where more is better rounds down, so 996 of 1,000 is
 // 99 and not 100. A percentage where more is worse rounds up, so 1 open rule
-// of 201 is 1 and not 0.
+// of 201 is 1 and not 0. A deprecated field keeps the definition it had
+// before epack v0.10.0, so the test skips it.
 func TestNormalizedPercentagesRoundTowardTheGap(t *testing.T) {
 	for id := range normalizedFiles {
 		var doc any
@@ -304,6 +305,9 @@ func TestNormalizedPercentagesRoundTowardTheGap(t *testing.T) {
 		walk = func(node any, at string) {
 			switch n := node.(type) {
 			case map[string]any:
+				if n["deprecated"] == true {
+					return
+				}
 				if strings.HasSuffix(at, "_pct") {
 					if r := n["x-epack-rounding"]; r != "floor" && r != "ceil" {
 						t.Errorf("%s %s: x-epack-rounding is %v, want floor or ceil", id, at, r)
@@ -376,6 +380,69 @@ func TestNormalizedSummariesCheckTheirPercentages(t *testing.T) {
 			if len(got) != 1 || got[0].Check != tc.check || got[0].Pointer != tc.pointer {
 				t.Errorf("findings %+v, want one %s finding at %s", got, tc.check, tc.pointer)
 			}
+		})
+	}
+}
+
+// TestDeprecatedBlocksKeepTheirOldFields checks that cloud-posture and
+// vcs-posture artifacts written the way collectors wrote them before epack
+// v0.10.0 still match, with every old field kept at the trust level, as
+// profiles written then read them. It also checks that each field in those
+// blocks names the type that holds its value now.
+func TestDeprecatedBlocksKeepTheirOldFields(t *testing.T) {
+	cases := []struct{ id, doc string }{
+		{"evidencepack/cloud-posture@v1", `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
+		  "accounts": [{"account_label": "production",
+		    "iam": {"user_count": 2, "mfa_coverage_pct": 50, "root_mfa_enabled": true, "root_access_protected": true,
+		      "access_key_user_count": 1, "access_key_rotation_compliant_pct": 100, "saml_provider_count": 0},
+		    "vuln_scanning": {"enabled": true, "unpatched_pct": 10}}],
+		  "workforce_sign_in": {"in_use": true, "user_count": 4, "mfa_source": "external_idp"}}`},
+		{"evidencepack/vcs-posture@v1", `{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "github", "organization": "acme",
+		  "org_security": {"two_factor_required": true},
+		  "security_features": {"vuln_alerts_pct": 90, "secret_scanning_pct": 80, "code_scanning_pct": 70}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			s, err := outputcheck.Compile(NormalizedSchemaJSON(tc.id))
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, err := outputcheck.Decode([]byte(tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := outputcheck.Validate(s, "a.json", doc); len(got) != 0 {
+				t.Errorf("findings %+v, want none", got)
+			}
+			if got := outputcheck.AboveLevel(s, "a.json", doc, "trust"); len(got) != 0 {
+				t.Errorf("above trust: %+v, want none", got)
+			}
+			var raw map[string]any
+			if err := json.Unmarshal(NormalizedSchemaJSON(tc.id), &raw); err != nil {
+				t.Fatal(err)
+			}
+			moved := map[string]bool{"iam": true, "vuln_scanning": true, "workforce_sign_in": true, "org_security": true, "security_features": true}
+			var walk func(node map[string]any, at string, inMoved bool)
+			walk = func(node map[string]any, at string, inMoved bool) {
+				props, _ := node["properties"].(map[string]any)
+				if inMoved && node["deprecated"] != true {
+					t.Errorf("%s should be marked deprecated", at)
+				}
+				if inMoved && props == nil {
+					if desc, _ := node["description"].(string); !strings.Contains(desc, "evidencepack/") {
+						t.Errorf("%s should name the type that holds its value now: %q", at, desc)
+					}
+				}
+				if items, ok := node["items"].(map[string]any); ok {
+					walk(items, at+"/*", inMoved)
+				}
+				for name, child := range props {
+					if c, ok := child.(map[string]any); ok {
+						walk(c, at+"/"+name, inMoved || moved[name])
+					}
+				}
+			}
+			walk(raw, "", false)
 		})
 	}
 }
@@ -726,7 +793,8 @@ func TestCloudPostureDatabaseFields(t *testing.T) {
 // population checks run on it. It also checks that each reference points to a
 // property the schema defines. Endpoint posture's control percentages may
 // leave the references out. Each is taken over the devices that passed or
-// failed, and metric_coverage holds those counts.
+// failed, and metric_coverage holds those counts. A deprecated field keeps
+// the definition it had before epack v0.10.0, so the test skips it.
 func TestNormalizedPercentagesNameTheirCounts(t *testing.T) {
 	for id := range normalizedFiles {
 		var doc map[string]any
@@ -777,7 +845,7 @@ func TestNormalizedPercentagesNameTheirCounts(t *testing.T) {
 			props, _ := deref(objects[len(objects)-1])["properties"].(map[string]any)
 			for name, raw := range props {
 				child, ok := raw.(map[string]any)
-				if !ok {
+				if !ok || child["deprecated"] == true {
 					continue
 				}
 				path := at + "/" + name

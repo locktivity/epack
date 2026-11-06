@@ -7,11 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-05
+
 ### ENHANCEMENTS
 
 - The shared collector CI workflow takes `test-timeout`, the timeout for
   `go test`. It defaults to 10m, Go's own default, for a collector whose test
   kit runs longer under the race detector
+- cloud-posture declares `iam`, `vuln_scanning` and `workforce_sign_in`
+  again, and vcs-posture declares `org_security` and `security_features`.
+  These are the blocks epack v0.10.0 moved to access-posture and
+  vuln-scanning, and each is marked deprecated. A collector can write them
+  beside the new fields, so profiles written before v0.10.0 keep grading the
+  same. They keep their v0.9.9 definitions, so they are written at the trust
+  level. A later release removes them
+- `epack shadow` is in the command list `epack` prints with no command.
+  Without a collector name, it prints its usage and examples, like
+  `epack sign` and `epack push`
+
+### BUG FIXES
+
+- In plain progress output, which CI uses, each status line names the
+  collector that sent it. With collectors running in parallel, a line could
+  carry the name of whichever collector started last
+- `epack run` numbered collectors from 2, so the first of five showed as
+  `(2/5)`. They are numbered from 1 now, in the terminal and in the
+  progress sent to the remote
+- `epack shadow` with neither `--version` nor `--binary` said "not both".
+  The message names the two flags now
 
 ## [0.10.0] - 2026-11-05
 

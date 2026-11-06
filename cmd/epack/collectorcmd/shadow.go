@@ -58,7 +58,22 @@ Examples:
   epack shadow aws --version v0.7.0
   epack shadow aws --binary ./bin/epack-collector-aws
   epack shadow aws --version v0.7.0 --no-values -o shadow-aws.json`,
-		Args: cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 1 {
+				return fmt.Errorf(`missing collector name argument
+
+Usage: epack shadow <collector> --version <release>
+       epack shadow <collector> --binary <path>
+
+Examples:
+  epack shadow aws --version v0.7.0
+  epack shadow aws --binary ./bin/epack-collector-aws`)
+			}
+			if len(args) > 1 {
+				return fmt.Errorf("too many arguments: expected 1, got %d", len(args))
+			}
+			return nil
+		},
 		RunE: runShadow,
 	}
 	cmd.Flags().StringVarP(&shadowConfigPath, "config", "c", "epack.yaml", "path to epack config file")

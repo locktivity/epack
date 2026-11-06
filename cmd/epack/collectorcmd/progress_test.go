@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,6 +53,42 @@ func TestStartCollectionProgress_PlainHeartbeatAndCollectorStatus(t *testing.T) 
 	}
 	if !strings.Contains(got, "Collected evidence in") {
 		t.Fatalf("missing completion message in output: %q", got)
+	}
+}
+
+func TestStartCollectionProgress_PlainNamesTheCollectorThatSentEachLine(t *testing.T) {
+	var stdout bytes.Buffer
+	out := output.New(&stdout, io.Discard, output.Options{})
+
+	p := startCollectionProgress(context.Background(), out, false, progressModePlain)
+	p.OnCollectorEvent(collector.CollectorEvent{Type: collector.CollectorEventStart, Collector: "aws", Index: 1, Total: 2})
+	p.OnCollectorEvent(collector.CollectorEvent{Type: collector.CollectorEventStart, Collector: "github", Index: 2, Total: 2})
+	p.OnCollectorEvent(collector.CollectorEvent{Type: collector.CollectorEventStatus, Collector: "aws", Index: 1, Total: 2, Message: "Listing IAM users"})
+	p.OnCollectorEvent(collector.CollectorEvent{Type: collector.CollectorEventProgress, Collector: "aws", Index: 1, Total: 2, Message: "Reading accounts", ProgressCurrent: 1, ProgressTotal: 4})
+
+	var wg sync.WaitGroup
+	for _, name := range []string{"aws", "github"} {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				p.OnCollectorEvent(collector.CollectorEvent{Type: collector.CollectorEventStatus, Collector: name, Message: "page from " + name})
+			}
+		}(name)
+	}
+	wg.Wait()
+	p.Done(true)
+
+	got := stdout.String()
+	for _, want := range []string{"  aws: Listing IAM users\n", "  aws: Reading accounts (25%)\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in output: %q", want, got)
+		}
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "  github: page from aws") || strings.HasPrefix(line, "  aws: page from github") {
+			t.Fatalf("line labeled with the wrong collector: %q", line)
+		}
 	}
 }
 

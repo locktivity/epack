@@ -68,3 +68,17 @@ func TestShadowShowsValuesOnlyAtATerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestShadowShowsUsageWithoutACollector(t *testing.T) {
+	cmd := NewShadowCommand()
+	err := cmd.Args(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "Usage: epack shadow <collector> --version <release>") {
+		t.Fatalf("Args(nil) = %v, want the usage", err)
+	}
+	if err := cmd.Args(cmd, []string{"aws", "okta"}); err == nil || !strings.Contains(err.Error(), "expected 1, got 2") {
+		t.Fatalf("Args(two) = %v, want too many arguments", err)
+	}
+	if err := cmd.Args(cmd, []string{"aws"}); err != nil {
+		t.Fatalf("Args(one) = %v", err)
+	}
+}

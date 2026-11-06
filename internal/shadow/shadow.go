@@ -108,7 +108,10 @@ func newPlan(cfg *config.JobConfig, opts Options) (*plan, error) {
 	if !ok {
 		return nil, fmt.Errorf("epack.yaml has no collector named %q", opts.Collector)
 	}
-	if (opts.Version == "") == (opts.Binary == "") {
+	switch {
+	case opts.Version == "" && opts.Binary == "":
+		return nil, fmt.Errorf("name the candidate to run with --version <release> or --binary <path>")
+	case opts.Version != "" && opts.Binary != "":
 		return nil, fmt.Errorf("give the candidate as --version or --binary, not both")
 	}
 	if opts.Version != "" && c.Source == "" {

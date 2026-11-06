@@ -94,7 +94,7 @@ func (u *stageUI) onCollectorEvent(event collector.CollectorEvent) {
 	}
 	switch event.Type {
 	case collector.CollectorEventStart:
-		u.spinner.UpdateMessage(fmt.Sprintf("Collecting %s (%d/%d)", event.Collector, event.Index+1, event.Total))
+		u.spinner.UpdateMessage(fmt.Sprintf("Collecting %s (%d/%d)", event.Collector, event.Index, event.Total))
 	case collector.CollectorEventStatus:
 		if event.Message != "" {
 			u.spinner.UpdateMessage(fmt.Sprintf("Collecting %s: %s", event.Collector, event.Message))

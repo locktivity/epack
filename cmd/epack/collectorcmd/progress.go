@@ -194,8 +194,6 @@ func startPlainProgress(ctx context.Context, out *output.Writer, frozen bool, st
 		}
 	}()
 
-	var currentCollector string
-
 	return collectionProgress{
 		Done: func(success bool) {
 			doneOnce.Do(func() { close(done) })
@@ -209,18 +207,17 @@ func startPlainProgress(ctx context.Context, out *output.Writer, frozen bool, st
 		OnCollectorEvent: func(evt collector.CollectorEvent) {
 			switch evt.Type {
 			case collector.CollectorEventStart:
-				currentCollector = evt.Collector
 				print("[%d/%d] %s started\n", evt.Index, evt.Total, evt.Collector)
 
 			case collector.CollectorEventStatus:
-				print("  %s: %s\n", currentCollector, evt.Message)
+				print("  %s: %s\n", evt.Collector, evt.Message)
 
 			case collector.CollectorEventProgress:
 				if evt.ProgressTotal > 0 {
 					pct := float64(evt.ProgressCurrent) / float64(evt.ProgressTotal) * 100
-					print("  %s: %s (%.0f%%)\n", currentCollector, evt.Message, pct)
+					print("  %s: %s (%.0f%%)\n", evt.Collector, evt.Message, pct)
 				} else {
-					print("  %s: %s (%d)\n", currentCollector, evt.Message, evt.ProgressCurrent)
+					print("  %s: %s (%d)\n", evt.Collector, evt.Message, evt.ProgressCurrent)
 				}
 
 			case collector.CollectorEventFinish:

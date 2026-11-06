@@ -139,7 +139,7 @@ func (r *progressReporter) collector(event collector.CollectorEvent) {
 	}
 	switch event.Type {
 	case collector.CollectorEventStart:
-		r.step(StageCollect, event.Collector, event.Index+1, event.Total, ProgressStarted, "")
+		r.step(StageCollect, event.Collector, event.Index, event.Total, ProgressStarted, "")
 	case collector.CollectorEventFinish:
 		state, note := ProgressFinished, ""
 		if !event.Success {
@@ -148,12 +148,12 @@ func (r *progressReporter) collector(event collector.CollectorEvent) {
 				note = progressNote(strings.TrimPrefix(event.Error.Error(), "collector "))
 			}
 		}
-		r.step(StageCollect, event.Collector, event.Index+1, event.Total, state, note)
+		r.step(StageCollect, event.Collector, event.Index, event.Total, state, note)
 	case collector.CollectorEventStatus:
 		if event.Message == "" || !r.noteDue(event.Collector) {
 			return
 		}
-		r.step(StageCollect, event.Collector, event.Index+1, event.Total, ProgressStarted, progressNote(event.Message))
+		r.step(StageCollect, event.Collector, event.Index, event.Total, ProgressStarted, progressNote(event.Message))
 	}
 }
 

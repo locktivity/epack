@@ -145,6 +145,58 @@
           "x-epack-present": "/repositories_present"
         }
       }
+    },
+    "org_security": {
+      "type": ["object", "null"],
+      "deprecated": true,
+      "description": "Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/access-posture@v1 now",
+      "properties": {
+        "two_factor_required": {
+          "type": ["boolean", "null"],
+          "deprecated": true,
+          "description": "Whether organization requires 2FA for all members. The same value is sign_in.mfa_required in evidencepack/access-posture@v1",
+          "x-epack-label": "2FA required",
+          "x-epack-summary": "Whether the organization requires two-factor authentication for every member."
+        }
+      },
+      "x-epack-label": "Organization security",
+      "x-epack-summary": "Organization-wide security settings."
+    },
+    "security_features": {
+      "type": ["object", "null"],
+      "deprecated": true,
+      "description": "Coverage percentages for security scanning features. Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/vuln-scanning@v1 now",
+      "properties": {
+        "vuln_alerts_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "deprecated": true,
+          "description": "Percentage of repos with dependency vulnerability alerts enabled. In evidencepack/vuln-scanning@v1, the same value is the coverage_pct of the dependency scanner's entry in scanners",
+          "x-epack-label": "Dependency alerts (%)",
+          "x-epack-summary": "Share of repositories with dependency vulnerability alerts on."
+        },
+        "secret_scanning_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "deprecated": true,
+          "description": "Percentage of repos with secret scanning enabled. In evidencepack/vuln-scanning@v1, the same value is the coverage_pct of the secret scanner's entry in scanners",
+          "x-epack-label": "Secret scanning (%)",
+          "x-epack-summary": "Share of repositories with secret scanning on."
+        },
+        "code_scanning_pct": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "deprecated": true,
+          "description": "Percentage of repos with code scanning (SAST) enabled. In evidencepack/vuln-scanning@v1, the same value is the coverage_pct of the code scanner's entry in scanners",
+          "x-epack-label": "Code scanning (%)",
+          "x-epack-summary": "Share of repositories with code scanning on."
+        }
+      },
+      "x-epack-label": "Security features",
+      "x-epack-summary": "Coverage of the code-hosting security scanners."
     }
   }
 }

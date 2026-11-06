@@ -130,6 +130,7 @@ func printQuickstart(cmd *cobra.Command) {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  install    Lock and sync dependencies")
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  lock       Lock collector and tool dependencies")
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  sync       Install collectors and tools from lockfile")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  shadow     Preview what a new collector version would change")
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  build      Build an evidence pack from artifacts")
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  sign       Sign an evidence pack")
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  verify     Verify pack integrity and attestations")

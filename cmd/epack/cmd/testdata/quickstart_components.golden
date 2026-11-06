@@ -35,6 +35,7 @@ Commands:
   install    Lock and sync dependencies
   lock       Lock collector and tool dependencies
   sync       Install collectors and tools from lockfile
+  shadow     Preview what a new collector version would change
   build      Build an evidence pack from artifacts
   sign       Sign an evidence pack
   verify     Verify pack integrity and attestations

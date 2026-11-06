@@ -69,7 +69,7 @@ func TestProgressReporter_QueuesUntilStartAndSendsInOrder(t *testing.T) {
 	reporter.close()
 
 	events := sender.sent()
-	want := []string{"install/started", "install/finished", "collect okta 2/5/started", "collect okta 2/5/failed", "tools validate 1/1/finished"}
+	want := []string{"install/started", "install/finished", "collect okta 1/5/started", "collect okta 1/5/failed", "tools validate 1/1/finished"}
 	var got []string
 	for _, event := range events {
 		if event.Step == "" {
@@ -100,7 +100,7 @@ func TestProgressReporter_ThrottlesStatusNotes(t *testing.T) {
 	reporter, _ := testReporter(func(context.Context) (progressSender, error) { return sender, nil })
 	reporter.start(context.Background())
 	for i := 0; i < 5; i++ {
-		reporter.collector(collector.CollectorEvent{Type: collector.CollectorEventStatus, Collector: "okta", Index: 0, Total: 1, Message: "page " + itoa(i)})
+		reporter.collector(collector.CollectorEvent{Type: collector.CollectorEventStatus, Collector: "okta", Index: 1, Total: 1, Message: "page " + itoa(i)})
 	}
 	reporter.close()
 	events := sender.sent()

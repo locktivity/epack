@@ -292,14 +292,18 @@ func TestStrictProductionRefusesAnUnpinnedCandidateOrBroker(t *testing.T) {
 
 func TestShadowNeedsOneCandidate(t *testing.T) {
 	cfg := &config.JobConfig{Collectors: map[string]config.CollectorConfig{"demo": {Binary: "/bin/true"}}}
-	for _, opts := range []Options{
-		{Collector: "demo"},
-		{Collector: "demo", Version: "v1.0.0", Binary: "/bin/true"},
-		{Collector: "demo", Version: "v1.0.0"},
-		{Collector: "missing", Binary: "/bin/true"},
+	for _, tc := range []struct {
+		opts Options
+		want string
+	}{
+		{Options{Collector: "demo"}, "--version <release> or --binary <path>"},
+		{Options{Collector: "demo", Version: "v1.0.0", Binary: "/bin/true"}, "not both"},
+		{Options{Collector: "demo", Version: "v1.0.0"}, "use --binary"},
+		{Options{Collector: "missing", Binary: "/bin/true"}, `no collector named "missing"`},
 	} {
-		if _, _, err := Run(context.Background(), cfg, opts); err == nil {
-			t.Errorf("Run(%+v) succeeded, want an error", opts)
+		_, _, err := Run(context.Background(), cfg, tc.opts)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Run(%+v) = %v, want an error containing %q", tc.opts, err, tc.want)
 		}
 	}
 }

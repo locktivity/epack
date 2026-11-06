@@ -316,11 +316,133 @@
             },
             "x-epack-label": "Threat detection",
             "x-epack-summary": "Threat detection for the account."
+          },
+          "iam": {
+            "type": ["object", "null"],
+            "deprecated": true,
+            "description": "Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/access-posture@v1 now",
+            "properties": {
+              "user_count": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "deprecated": true,
+                "description": "Number of human user identities that can sign in to the account. mfa_coverage_pct counts these users. The same value is members.local_member_count in evidencepack/access-posture@v1",
+                "x-epack-label": "IAM users",
+                "x-epack-summary": "Human users who can sign in to the account directly."
+              },
+              "mfa_coverage_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Percentage of human user identities that can sign in to the account and have MFA enabled. The same value is members.local_mfa_coverage_pct in evidencepack/access-posture@v1",
+                "x-epack-label": "IAM users with MFA (%)",
+                "x-epack-summary": "Share of the account's human users who have MFA enabled."
+              },
+              "root_mfa_enabled": {
+                "type": ["boolean", "null"],
+                "deprecated": true,
+                "description": "Whether the account's highest-privilege owner identity (the AWS root user, a Google Cloud organization administrator, an Azure Global Administrator) has MFA enabled. In evidencepack/access-posture@v1, it is true when root.root_mfa_coverage_pct is 100",
+                "x-epack-label": "Owner MFA enabled",
+                "x-epack-summary": "Whether the account's highest-privilege owner has MFA enabled."
+              },
+              "root_access_protected": {
+                "type": ["boolean", "null"],
+                "deprecated": true,
+                "description": "Whether the account's highest-privilege owner identity (the AWS root user, a Google Cloud organization administrator, an Azure Global Administrator) is protected from password-only use, by MFA or by having no standing credentials. In evidencepack/access-posture@v1, it is true when root.root_mfa_coverage_pct is 100 and root.root_access_keys_present is false",
+                "x-epack-label": "Owner access protected",
+                "x-epack-summary": "Whether the account's highest-privilege owner is protected from password-only use."
+              },
+              "access_key_user_count": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "deprecated": true,
+                "description": "Number of users with an active long-lived programmatic credential (access keys, service account keys, client secrets). access_key_rotation_compliant_pct counts these users. The same value is credentials.credential_count in evidencepack/access-posture@v1",
+                "x-epack-label": "Users with access keys",
+                "x-epack-summary": "Users with an active long-lived credential, such as an access key."
+              },
+              "access_key_rotation_compliant_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Percentage of users with an active long-lived programmatic credential (access keys, service account keys, client secrets) whose active credentials are all rotated within policy (typically 90 days). In evidencepack/access-posture@v1, credentials.rotation_overdue_pct counts the keys not rotated in time instead",
+                "x-epack-label": "Access keys rotated (%)",
+                "x-epack-summary": "Share of users with long-lived credentials whose credentials are all rotated within policy."
+              },
+              "saml_provider_count": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "deprecated": true,
+                "description": "Number of SAML identity providers the account trusts directly for sign-in. A provider created by a workforce sign-in service such as AWS IAM Identity Center is not counted. Nothing in evidencepack/access-posture@v1 replaces it",
+                "x-epack-label": "SAML providers",
+                "x-epack-summary": "SAML identity providers the account trusts directly for sign-in."
+              }
+            },
+            "x-epack-label": "IAM",
+            "x-epack-summary": "Users, owner access and long-lived credentials in the account."
+          },
+          "vuln_scanning": {
+            "type": ["object", "null"],
+            "deprecated": true,
+            "description": "Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/vuln-scanning@v1 now",
+            "properties": {
+              "enabled": {
+                "type": ["boolean", "null"],
+                "deprecated": true,
+                "description": "Whether vulnerability scanning is enabled (Inspector/Security Command Center/Defender). In evidencepack/vuln-scanning@v1, each entry in scanners has its own enabled value",
+                "x-epack-label": "Vulnerability scanning enabled",
+                "x-epack-summary": "Whether vulnerability scanning is on in the account."
+              },
+              "unpatched_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Percentage of scanned resources with unpatched vulnerabilities. Nothing in evidencepack/vuln-scanning@v1 replaces it",
+                "x-epack-label": "Unpatched resources (%)",
+                "x-epack-summary": "Share of scanned resources with unpatched vulnerabilities."
+              }
+            },
+            "x-epack-label": "Vulnerability scanning",
+            "x-epack-summary": "Vulnerability scanning in the account."
           }
         }
       },
       "x-epack-label": "Accounts",
       "x-epack-summary": "Security posture for each cloud account in scope."
+    },
+    "workforce_sign_in": {
+      "type": ["object", "null"],
+      "deprecated": true,
+      "description": "A central sign-in service that signs people in to the accounts, such as AWS IAM Identity Center. Left out when the collector does not report one. Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/access-posture@v1 now",
+      "properties": {
+        "in_use": {
+          "type": ["boolean", "null"],
+          "deprecated": true,
+          "description": "Whether people can sign in to any of the accounts through the workforce sign-in service. The same value is sign_in.sso_configured in evidencepack/access-posture@v1",
+          "x-epack-label": "Workforce sign-in in use",
+          "x-epack-summary": "Whether people can sign in to any of the accounts through the workforce sign-in service."
+        },
+        "user_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "deprecated": true,
+          "description": "Number of users in the workforce sign-in service's directory. The same value is members.sso_member_count in evidencepack/access-posture@v1",
+          "x-epack-label": "Workforce sign-in users",
+          "x-epack-summary": "Users in the workforce sign-in service's directory."
+        },
+        "mfa_source": {
+          "type": ["string", "null"],
+          "enum": ["sign_in_service", "external_idp", "unknown", null],
+          "deprecated": true,
+          "description": "Where the workforce sign-in service's users have MFA set. It is sign_in_service when the service itself sets it, external_idp when an external identity provider that the users come from sets it, and unknown when the collector cannot tell. Nothing in evidencepack/access-posture@v1 replaces it",
+          "x-epack-label": "MFA source",
+          "x-epack-summary": "Where the workforce sign-in service's users have MFA set."
+        }
+      },
+      "x-epack-label": "Workforce sign-in",
+      "x-epack-summary": "The central sign-in service people use for the accounts, such as AWS IAM Identity Center."
     }
   }
 }
