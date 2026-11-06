@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ENHANCEMENTS
+
+- `Recorder.Moved` records a value that sits in a block epack moved to
+  another kind, such as a deprecated block written beside its new fields.
+  When the collect config key leaves that kind out, `Emit` removes the value
+  with a `not_shared` gap, and drops the gaps inside it. Use it for a block
+  that is not a copy of one value in the new kind, such as an AWS account's
+  `iam` block, which access-posture rolls up across accounts
+
+### BUG FIXES
+
+- A value `Recorder.Mirror` copied from a kind the collect config key leaves
+  out is removed with a `not_shared` gap when the collector never passed that
+  kind to `Emit`. A collector that checks `Selected` skips building a kind
+  left out, so the copy stayed in the pack. For example, a deprecated field
+  copied from access-posture showed in a pack that left access-posture out
+
 ## [0.10.1] - 2026-11-05
 
 ### ENHANCEMENTS

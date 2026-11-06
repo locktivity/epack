@@ -240,6 +240,71 @@ func TestMirroringFromAnArtifactSelectedOutKeepsTheCopiedValue(t *testing.T) {
 	}
 }
 
+func TestANormalizedArtifactSelectedOutLosesWhatWasCopiedFromIt(t *testing.T) {
+	spec := CollectorSpec{Schemas: map[string][]byte{"demo/posture@v1": []byte(`{}`)}}
+	vulns := Location{Schema: "evidencepack/vuln-scanning@v1", Path: "artifacts/vulns.json"}
+	for name, selected := range map[string]Location{"by path": vulns, "by schema": {Schema: vulns.Schema}} {
+		res := selectionRun(spec, map[string]any{"collect": []any{"posture"}}, func(ctx CollectorContext) []CollectedArtifact {
+			if Selected(ctx, selected) {
+				t.Errorf("%s: Selected(%+v) = true, want vuln-scanning ruled out", name, selected)
+			}
+			Records(ctx).Mirror(Location{Schema: vulns.Schema, Path: vulns.Path, Pointer: "/scanners/0/enabled"},
+				Location{Path: "artifacts/posture.json", Pointer: "/scan_enabled"})
+			return []CollectedArtifact{{Path: "artifacts/posture.json", Schema: "demo/posture@v1", Data: map[string]any{"scan_enabled": true, "other": 1}}}
+		})
+		if res.ExitCode != 0 {
+			t.Fatalf("%s: exit %d: %s", name, res.ExitCode, res.Stderr)
+		}
+		doc := dataOf(t, res, "artifacts/posture.json")
+		if _, ok := doc["scan_enabled"]; ok || doc["other"] != float64(1) {
+			t.Errorf("%s: posture = %v, want the copy removed though the collector never passed vuln-scanning", name, doc)
+		}
+		if g := gapAt(res, Location{Path: "artifacts/posture.json", Pointer: "/scan_enabled"}); g == nil || g.Code != CodeNotShared {
+			t.Errorf("%s: gap on the copy = %+v, want not_shared", name, g)
+		}
+	}
+}
+
+func TestABlockMovedToAKindLeftOutIsRemovedWithItsGaps(t *testing.T) {
+	spec := CollectorSpec{Schemas: map[string][]byte{"demo/posture@v1": []byte(`{}`)}}
+	access := Location{Schema: "evidencepack/access-posture@v1", Path: "artifacts/access.json"}
+	run := func(collect []any) InProcessResult {
+		return selectionRun(spec, map[string]any{"collect": collect}, func(ctx CollectorContext) []CollectedArtifact {
+			out := []CollectedArtifact{{Path: "artifacts/posture.json", Schema: "demo/posture@v1", Data: map[string]any{
+				"accounts": []any{map[string]any{"iam": map[string]any{"mfa_pct": 50}, "name": "prod"}},
+			}}}
+			if Selected(ctx, access) {
+				out = append(out, CollectedArtifact{Path: access.Path, Schema: access.Schema, Data: map[string]any{}})
+			}
+			rec := Records(ctx)
+			rec.NotCollectedCode(Location{Path: "artifacts/posture.json", Pointer: "/accounts/0/iam/root_mfa"}, CodeVendorError, "unavailable")
+			rec.Moved(Location{Path: "artifacts/posture.json", Pointer: "/accounts/0/iam"}, access)
+			return out
+		})
+	}
+
+	res := run([]any{"posture"})
+	if res.ExitCode != 0 {
+		t.Fatalf("exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	account := dataOf(t, res, "artifacts/posture.json")["accounts"].([]any)[0].(map[string]any)
+	if _, ok := account["iam"]; ok || account["name"] != "prod" {
+		t.Errorf("account = %v, want the moved block removed and the rest kept", account)
+	}
+	if g := gapAt(res, Location{Path: "artifacts/posture.json", Pointer: "/accounts/0/iam"}); g == nil || g.Code != CodeNotShared {
+		t.Errorf("gap on the block = %+v, want not_shared", g)
+	}
+	if g := gapAt(res, Location{Path: "artifacts/posture.json", Pointer: "/accounts/0/iam/root_mfa"}); g != nil {
+		t.Errorf("gap %+v is inside a block the pack does not hold", g)
+	}
+
+	kept := run([]any{"posture", "access-posture"})
+	account = dataOf(t, kept, "artifacts/posture.json")["accounts"].([]any)[0].(map[string]any)
+	if account["iam"] == nil || gapAt(kept, Location{Path: "artifacts/posture.json", Pointer: "/accounts/0/iam/root_mfa"}) == nil {
+		t.Errorf("account = %v, gaps %+v; want the block and its gap kept when access-posture is collected", account, kept.Result.Gaps)
+	}
+}
+
 const auditOnlySchema = `{"type": "object", "x-epack-level": "audit", "properties": {"kept": {"type": "integer"}}}`
 
 func TestAnArtifactMarkedAboveTheRunLevelIsNotWritten(t *testing.T) {

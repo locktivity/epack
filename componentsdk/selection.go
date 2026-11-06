@@ -65,7 +65,10 @@ func (c *collectorContext) checkCollect() error {
 // level, and when the collect config key leaves its kind out. In that second
 // case the run records the kind as not shared, with a not_shared gap. Check
 // Selected before the calls that feed only that artifact. Emit leaves out an
-// artifact that Selected rules out even when the collector passes it.
+// artifact that Selected rules out even when the collector passes it. When
+// that artifact is normalized, Emit removes each value Recorder.Mirror copied
+// from it and each Recorder.Moved placed beside it, whether or not the
+// collector passes it.
 func Selected(ctx CollectorContext, at Location) bool {
 	r := runOf(ctx)
 	at.Path = r.path(at.Path)
@@ -110,7 +113,7 @@ func (r *run) verdict(path, schemaID string, level Level, list collectList) verd
 // leaveOut records that the collect config key left out the artifact with
 // schema ID schemaID at path: its kind, and a not_shared gap on it.
 func (r *run) leaveOut(schemaID, path string) {
-	r.collect.leaveOut(KindOf(schemaID))
+	r.collect.leaveOut(KindOf(schemaID), Location{Schema: schemaID, Path: path})
 	r.records.leaveOut(schemaID, path)
 }
 
@@ -136,12 +139,14 @@ func (r *run) collects(list collectList, schemaID string) bool {
 
 // collectState is what the collect config key did in a run: the kinds it
 // listed, the kinds the run wrote or asked about, and the kinds it left out.
+// unshared holds the normalized artifacts it left out.
 type collectState struct {
-	mu      sync.Mutex
-	listed  []string
-	set     bool
-	seen    []string
-	leftOut []string
+	mu       sync.Mutex
+	listed   []string
+	set      bool
+	seen     []string
+	leftOut  []string
+	unshared []Location
 }
 
 // list notes the kinds the key listed, which the run's result reports.
@@ -161,13 +166,25 @@ func (s *collectState) saw(kind string) {
 	}
 }
 
-// leaveOut notes a kind the key left out.
-func (s *collectState) leaveOut(kind string) {
+// leaveOut notes a kind the key left out, and the artifact at when it is
+// normalized.
+func (s *collectState) leaveOut(kind string, at Location) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !slices.Contains(s.leftOut, kind) {
 		s.leftOut = append(s.leftOut, kind)
 	}
+	if NormalizedSchemaJSON(at.Schema) != nil && !slices.Contains(s.unshared, at) {
+		s.unshared = append(s.unshared, at)
+	}
+}
+
+// unsharedArtifacts returns the normalized artifacts the key left out, those
+// Selected ruled out included.
+func (s *collectState) unsharedArtifacts() []Location {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.unshared)
 }
 
 // leftAnyOut reports whether the key left out any kind.
@@ -225,17 +242,19 @@ func (at Location) names(path, schemaID string) bool {
 // artifact is left out with no gap, as a field marked for a higher level is.
 // An artifact whose kind the key leaves out is recorded as not shared. When
 // that artifact is normalized, each value Recorder.Mirror copied from it into
-// an artifact the run writes is removed and recorded as not shared too. A
-// value copied from a detailed artifact stays, since leaving out a detailed
-// artifact leaves out only that file. Gaps inside an artifact left out are
-// dropped, since the pack does not hold it.
+// an artifact the run writes is removed and recorded as not shared too, and
+// so is each value Recorder.Moved placed beside it. That holds for one
+// Selected ruled out that the collector did not pass. A value copied from a
+// detailed artifact stays, since leaving out a detailed artifact leaves out
+// only that file. Gaps inside an artifact left out are dropped, since the
+// pack does not hold it.
 func (r *run) share(artifacts []CollectedArtifact, config map[string]any) ([]CollectedArtifact, error) {
 	level, list := LevelOf(config), collectListOf(config)
 	if !list.all {
 		r.collect.list(list.kinds)
 	}
 	var kept []CollectedArtifact
-	var dropped, unshared []Location
+	var dropped []Location
 	for i, a := range artifacts {
 		path := artifactPath(a, r.name, i)
 		switch r.verdict(path, a.Schema, level, list) {
@@ -244,18 +263,16 @@ func (r *run) share(artifacts []CollectedArtifact, config map[string]any) ([]Col
 		case notListed:
 			r.leaveOut(a.Schema, path)
 			dropped = append(dropped, Location{Schema: a.Schema, Path: path})
-			if NormalizedSchemaJSON(a.Schema) != nil {
-				unshared = append(unshared, Location{Schema: a.Schema, Path: path})
-			}
 		default:
 			a.Path = path
 			kept = append(kept, a)
 		}
 	}
-	if len(dropped) == 0 {
+	unshared := r.collect.unsharedArtifacts()
+	if len(dropped) == 0 && len(unshared) == 0 {
 		return artifacts, nil
 	}
-	r.dropGapsInside(dropped)
+	r.dropGapsInside(append(dropped, unshared...))
 	if err := r.removeMirrored(kept, unshared); err != nil {
 		return nil, err
 	}
@@ -316,25 +333,47 @@ func (r *run) dropGapsInside(dropped []Location) {
 }
 
 // removeMirrored removes from the artifacts the run writes each value that
-// Recorder.Mirror copied from an artifact in unshared, and records it as not
-// shared.
+// Recorder.Mirror copied from an artifact in unshared, and each that
+// Recorder.Moved placed beside one, and records it as not shared. A moved
+// value's gaps go with it.
 func (r *run) removeMirrored(out []CollectedArtifact, unshared []Location) error {
-	for _, m := range r.records.mirrored() {
-		from := slices.IndexFunc(unshared, func(u Location) bool { return m.From.names(u.Path, u.Schema) })
-		if from < 0 {
-			continue
-		}
-		to := slices.IndexFunc(out, func(a CollectedArtifact) bool { return m.To.names(a.Path, a.Schema) })
-		if to < 0 || out[to].File != "" {
-			continue
-		}
-		doc, err := decodeData(out[to].Data)
-		if err != nil {
-			return fmt.Errorf("artifact %s: %w", out[to].Path, err)
-		}
-		out[to].Data = removePointer(doc, m.To.Pointer)
-		r.records.notShared(Location{Schema: out[to].Schema, Path: out[to].Path, Pointer: m.To.Pointer})
+	left := func(at Location) bool {
+		return slices.ContainsFunc(unshared, func(u Location) bool { return at.names(u.Path, u.Schema) || u.names(at.Path, at.Schema) })
 	}
+	for _, m := range r.records.mirrored() {
+		if left(m.From) {
+			if err := r.remove(out, m.To, false); err != nil {
+				return err
+			}
+		}
+	}
+	for _, m := range r.records.movedValues() {
+		if left(m.From) {
+			if err := r.remove(out, m.To, true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// remove removes the value at at from the artifact in out that has it, and
+// records it as not shared. inside drops the gaps inside the value too.
+func (r *run) remove(out []CollectedArtifact, at Location, inside bool) error {
+	i := slices.IndexFunc(out, func(a CollectedArtifact) bool { return at.names(a.Path, a.Schema) })
+	if i < 0 || out[i].File != "" || at.Pointer == "" {
+		return nil
+	}
+	doc, err := decodeData(out[i].Data)
+	if err != nil {
+		return fmt.Errorf("artifact %s: %w", out[i].Path, err)
+	}
+	out[i].Data = removePointer(doc, at.Pointer)
+	at = Location{Schema: out[i].Schema, Path: out[i].Path, Pointer: at.Pointer}
+	if inside {
+		r.records.dropInside(func(g Gap) bool { return g.names(at.Path, at.Schema) && covers(at.Pointer, g.Pointer) })
+	}
+	r.records.notShared(at)
 	return nil
 }
 
