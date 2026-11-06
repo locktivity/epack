@@ -149,7 +149,7 @@
     "org_security": {
       "type": ["object", "null"],
       "deprecated": true,
-      "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1"},
+      "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "reason": "Sign-in and access evidence now has the same shape in every system, so one test can cover all of them"},
       "description": "Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/access-posture@v1 now",
       "properties": {
         "two_factor_required": {
@@ -167,7 +167,7 @@
     "security_features": {
       "type": ["object", "null"],
       "deprecated": true,
-      "x-epack-replaced-by": {"schema": "evidencepack/vuln-scanning@v1"},
+      "x-epack-replaced-by": {"schema": "evidencepack/vuln-scanning@v1", "reason": "Scanner evidence now has the same shape in every system, so one test can cover all of them"},
       "description": "Coverage percentages for security scanning features. Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/vuln-scanning@v1 now",
       "properties": {
         "vuln_alerts_pct": {

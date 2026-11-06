@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ENHANCEMENTS
+
+- `x-epack-replaced-by` has a `reason`, one sentence on why the field moved,
+  for a profile editor to show beside a test on it. A field with no reason of
+  its own takes the nearest enclosing block's. The blocks epack v0.10.0 moved
+  out of cloud-posture and vcs-posture each have one, and so do the
+  `cloudtrail_enabled` and `cloudtrail_multiregion` aliases
+
 ## [0.10.3] - 2026-11-06
 
 ### ENHANCEMENTS
