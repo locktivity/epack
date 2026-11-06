@@ -1010,6 +1010,11 @@ func TestNormalizedSchemasNameWhatReplacesEachDeprecatedField(t *testing.T) {
 					if replaced["same"] == true && replaced["path"] == nil {
 						t.Errorf("%s %s: x-epack-replaced-by is the same value with no path", id, path)
 					}
+					// A field in each row of a list, such as each account, and
+					// one across the list don't hold the same value.
+					if to, _ := replaced["path"].(string); replaced["same"] == true && strings.Count(to, "[*]") != strings.Count(path, "[*]") {
+						t.Errorf("%s %s: x-epack-replaced-by is the same value as %s, which is not in the same list", id, path, to)
+					}
 				}
 			}
 			props, _ := node["properties"].(map[string]any)

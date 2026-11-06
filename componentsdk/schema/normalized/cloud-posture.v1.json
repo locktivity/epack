@@ -329,7 +329,7 @@
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "deprecated": true,
-                "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "path": "$.members.local_member_count", "same": true},
+                "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "path": "$.members.local_member_count"},
                 "description": "Number of human user identities that can sign in to the account. mfa_coverage_pct counts these users. The same value is members.local_member_count in evidencepack/access-posture@v1",
                 "x-epack-label": "IAM users",
                 "x-epack-summary": "Human users who can sign in to the account directly."
@@ -339,7 +339,7 @@
                 "minimum": 0,
                 "maximum": 100,
                 "deprecated": true,
-                "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "path": "$.members.local_mfa_coverage_pct", "same": true},
+                "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "path": "$.members.local_mfa_coverage_pct"},
                 "description": "Percentage of human user identities that can sign in to the account and have MFA enabled. The same value is members.local_mfa_coverage_pct in evidencepack/access-posture@v1",
                 "x-epack-label": "IAM users with MFA (%)",
                 "x-epack-summary": "Share of the account's human users who have MFA enabled."
@@ -364,7 +364,7 @@
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "deprecated": true,
-                "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "path": "$.credentials.credential_count", "same": true},
+                "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "path": "$.credentials.credential_count"},
                 "description": "Number of users with an active long-lived programmatic credential (access keys, service account keys, client secrets). access_key_rotation_compliant_pct counts these users. The same value is credentials.credential_count in evidencepack/access-posture@v1",
                 "x-epack-label": "Users with access keys",
                 "x-epack-summary": "Users with an active long-lived credential, such as an access key."
