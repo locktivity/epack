@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ENHANCEMENTS
 
+- Each deprecated field in the normalized schemas has `x-epack-replaced-by`,
+  naming the schema and field that hold its value now. `same` marks a new
+  field that holds the same value, so a profile test can move to it as it
+  is. A profile editor can then show a test on a deprecated field what to
+  test instead, from the schema alone. That covers the blocks epack v0.10.0
+  moved out of cloud-posture and vcs-posture, and cloud-posture's
+  `cloudtrail_enabled` and `cloudtrail_multiregion` aliases
+
+### ENHANCEMENTS
+
 - `Recorder.Moved` records a value that sits in a block epack moved to
   another kind, such as a deprecated block written beside its new fields.
   When the collect config key leaves that kind out, `Emit` removes the value

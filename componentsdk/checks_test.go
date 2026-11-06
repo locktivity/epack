@@ -973,6 +973,134 @@ func TestNormalizedSchemasLabelEveryField(t *testing.T) {
 	}
 }
 
+// TestNormalizedSchemasNameWhatReplacesEachDeprecatedField checks that every
+// deprecated field of every normalized schema has an x-epack-replaced-by that
+// names a normalized schema, and that a path it gives reaches a field there.
+// Readers such as a profile editor show a test on a deprecated field what to
+// test instead, from the schema alone.
+func TestNormalizedSchemasNameWhatReplacesEachDeprecatedField(t *testing.T) {
+	docs := map[string]map[string]any{}
+	for id := range normalizedFiles {
+		var doc map[string]any
+		if err := json.Unmarshal(NormalizedSchemaJSON(id), &doc); err != nil {
+			t.Fatal(err)
+		}
+		docs[id] = doc
+	}
+	deprecated := 0
+	for id, doc := range docs {
+		var walk func(node map[string]any, path string)
+		walk = func(node map[string]any, path string) {
+			if node["deprecated"] == true {
+				deprecated++
+				replaced, ok := node["x-epack-replaced-by"].(map[string]any)
+				target, _ := replaced["schema"].(string)
+				switch {
+				case !ok:
+					t.Errorf("%s %s is deprecated with no x-epack-replaced-by", id, path)
+				case docs[target] == nil:
+					t.Errorf("%s %s: x-epack-replaced-by names %q, which is not a normalized schema", id, path, target)
+				default:
+					if to, ok := replaced["path"].(string); ok && schemaAt(docs[target], to) == nil {
+						t.Errorf("%s %s: x-epack-replaced-by path %s is not a field of %s", id, path, to, target)
+					}
+					if same, ok := replaced["same"]; ok && same != true {
+						t.Errorf("%s %s: x-epack-replaced-by same is %v, want true or no same", id, path, same)
+					}
+					if replaced["same"] == true && replaced["path"] == nil {
+						t.Errorf("%s %s: x-epack-replaced-by is the same value with no path", id, path)
+					}
+					// A field in each row of a list, such as each account, and
+					// one across the list don't hold the same value.
+					if to, _ := replaced["path"].(string); replaced["same"] == true && strings.Count(to, "[*]") != strings.Count(path, "[*]") {
+						t.Errorf("%s %s: x-epack-replaced-by is the same value as %s, which is not in the same list", id, path, to)
+					}
+				}
+			}
+			props, _ := node["properties"].(map[string]any)
+			for name, raw := range props {
+				if child, ok := raw.(map[string]any); ok {
+					walk(child, path+"."+name)
+				}
+			}
+			if items, ok := node["items"].(map[string]any); ok {
+				walk(items, path+"[*]")
+			}
+		}
+		walk(doc, "$")
+	}
+	if deprecated == 0 {
+		t.Fatal("no normalized schema has a deprecated field, so the test checks nothing")
+	}
+}
+
+// schemaAt returns the schema of the field a simple JSONPath such as
+// $.accounts[*].iam.user_count names in doc, following local $refs and the
+// branches of allOf, anyOf and oneOf. It returns nil when no field matches.
+func schemaAt(doc map[string]any, path string) map[string]any {
+	defs, _ := doc["$defs"].(map[string]any)
+	var resolve func(node map[string]any) []map[string]any
+	resolve = func(node map[string]any) []map[string]any {
+		out := []map[string]any{node}
+		if name, ok := strings.CutPrefix(fmt.Sprint(node["$ref"]), "#/$defs/"); ok {
+			if target, ok := defs[name].(map[string]any); ok {
+				out = append(out, resolve(target)...)
+			}
+		}
+		for _, keyword := range []string{"allOf", "anyOf", "oneOf"} {
+			branches, _ := node[keyword].([]any)
+			for _, raw := range branches {
+				if b, ok := raw.(map[string]any); ok {
+					out = append(out, resolve(b)...)
+				}
+			}
+		}
+		return out
+	}
+	rest, ok := strings.CutPrefix(path, "$")
+	if !ok {
+		return nil
+	}
+	current := []map[string]any{doc}
+	for rest != "" {
+		var next []map[string]any
+		switch {
+		case strings.HasPrefix(rest, "[*]"):
+			rest = rest[3:]
+			for _, node := range current {
+				for _, n := range resolve(node) {
+					if items, ok := n["items"].(map[string]any); ok {
+						next = append(next, items)
+					}
+				}
+			}
+		case strings.HasPrefix(rest, "."):
+			rest = rest[1:]
+			end := strings.IndexAny(rest, ".[")
+			if end < 0 {
+				end = len(rest)
+			}
+			name := rest[:end]
+			rest = rest[end:]
+			for _, node := range current {
+				for _, n := range resolve(node) {
+					props, _ := n["properties"].(map[string]any)
+					if child, ok := props[name].(map[string]any); ok {
+						next = append(next, child)
+					}
+				}
+			}
+		default:
+			return nil
+		}
+		if len(next) == 0 {
+			return nil
+		}
+		current = next
+	}
+	return current[0]
+}
+
 func TestIdentityPercentagesCheckAgainstTheirCounts(t *testing.T) {
 	s, err := outputcheck.Compile(NormalizedSchemaJSON("evidencepack/idp-posture@v1"))
 	if err != nil {
