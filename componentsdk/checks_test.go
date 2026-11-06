@@ -989,12 +989,19 @@ func TestNormalizedSchemasNameWhatReplacesEachDeprecatedField(t *testing.T) {
 	}
 	deprecated := 0
 	for id, doc := range docs {
-		var walk func(node map[string]any, path string)
-		walk = func(node map[string]any, path string) {
+		// reason is the nearest enclosing block's, which a field inherits.
+		var walk func(node map[string]any, path, reason string)
+		walk = func(node map[string]any, path, reason string) {
 			if node["deprecated"] == true {
 				deprecated++
 				replaced, ok := node["x-epack-replaced-by"].(map[string]any)
 				target, _ := replaced["schema"].(string)
+				if own, _ := replaced["reason"].(string); own != "" {
+					reason = own
+				}
+				if reason == "" {
+					t.Errorf("%s %s: x-epack-replaced-by has no reason, on the field or a block around it", id, path)
+				}
 				switch {
 				case !ok:
 					t.Errorf("%s %s is deprecated with no x-epack-replaced-by", id, path)
@@ -1020,14 +1027,14 @@ func TestNormalizedSchemasNameWhatReplacesEachDeprecatedField(t *testing.T) {
 			props, _ := node["properties"].(map[string]any)
 			for name, raw := range props {
 				if child, ok := raw.(map[string]any); ok {
-					walk(child, path+"."+name)
+					walk(child, path+"."+name, reason)
 				}
 			}
 			if items, ok := node["items"].(map[string]any); ok {
-				walk(items, path+"[*]")
+				walk(items, path+"[*]", reason)
 			}
 		}
-		walk(doc, "$")
+		walk(doc, "$", "")
 	}
 	if deprecated == 0 {
 		t.Fatal("no normalized schema has a deprecated field, so the test checks nothing")

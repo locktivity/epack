@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ENHANCEMENTS
+
+- `x-epack-replaced-by` has a `reason`, one sentence on why the field moved,
+  for a profile editor to show beside a test on it. A field with no reason of
+  its own takes the nearest enclosing block's. The blocks epack v0.10.0 moved
+  out of cloud-posture and vcs-posture each have one, and so do the
+  `cloudtrail_enabled` and `cloudtrail_multiregion` aliases
+
+### BUG FIXES
+
+- The collect protocol said a profile test could move to a field marked
+  `same` as it is. That holds only within one schema. A test moved to another
+  schema reads that schema's artifacts from every system, such as every
+  system's `access-posture`, so it checks more than the old test did
+
 ## [0.10.3] - 2026-11-06
 
 ### ENHANCEMENTS

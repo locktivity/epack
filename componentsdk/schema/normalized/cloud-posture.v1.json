@@ -208,7 +208,7 @@
               "cloudtrail_enabled": {
                 "type": ["boolean", "null"],
                 "deprecated": true,
-                "x-epack-replaced-by": {"schema": "evidencepack/cloud-posture@v1", "path": "$.accounts[*].logging.audit_log_enabled", "same": true},
+                "x-epack-replaced-by": {"schema": "evidencepack/cloud-posture@v1", "path": "$.accounts[*].logging.audit_log_enabled", "same": true, "reason": "The new name fits audit logging in every cloud"},
                 "description": "Deprecated alias of audit_log_enabled, with the same value. Removed in v2",
                 "x-epack-label": "Audit logging (earlier name)",
                 "x-epack-summary": "Whether an account-wide audit log of management activity is enabled. It is the earlier name of Audit logging and has the same value.",
@@ -217,7 +217,7 @@
               "cloudtrail_multiregion": {
                 "type": ["boolean", "null"],
                 "deprecated": true,
-                "x-epack-replaced-by": {"schema": "evidencepack/cloud-posture@v1", "path": "$.accounts[*].logging.audit_log_all_regions", "same": true},
+                "x-epack-replaced-by": {"schema": "evidencepack/cloud-posture@v1", "path": "$.accounts[*].logging.audit_log_all_regions", "same": true, "reason": "The new name fits audit logging in every cloud"},
                 "description": "Deprecated alias of audit_log_all_regions, with the same value. Removed in v2",
                 "x-epack-label": "Audit logging, every region (earlier name)",
                 "x-epack-summary": "Whether the audit log covers every region the account uses. It is the earlier name of Audit logging in every region and has the same value.",
@@ -322,7 +322,7 @@
           "iam": {
             "type": ["object", "null"],
             "deprecated": true,
-            "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1"},
+            "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "reason": "Sign-in and access evidence now has the same shape in every system, so one test can cover all of them"},
             "description": "Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/access-posture@v1 now",
             "properties": {
               "user_count": {
@@ -395,7 +395,7 @@
           "vuln_scanning": {
             "type": ["object", "null"],
             "deprecated": true,
-            "x-epack-replaced-by": {"schema": "evidencepack/vuln-scanning@v1"},
+            "x-epack-replaced-by": {"schema": "evidencepack/vuln-scanning@v1", "reason": "Scanner evidence now has the same shape in every system, so one test can cover all of them"},
             "description": "Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/vuln-scanning@v1 now",
             "properties": {
               "enabled": {
@@ -428,7 +428,7 @@
     "workforce_sign_in": {
       "type": ["object", "null"],
       "deprecated": true,
-      "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1"},
+      "x-epack-replaced-by": {"schema": "evidencepack/access-posture@v1", "reason": "Sign-in and access evidence now has the same shape in every system, so one test can cover all of them"},
       "description": "A central sign-in service that signs people in to the accounts, such as AWS IAM Identity Center. Left out when the collector does not report one. Kept for profiles written before epack v0.10.0, and to be removed in a later release. These values are in evidencepack/access-posture@v1 now",
       "properties": {
         "in_use": {
