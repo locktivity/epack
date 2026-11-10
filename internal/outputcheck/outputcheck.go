@@ -5,6 +5,7 @@ package outputcheck
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 
@@ -31,6 +33,7 @@ const (
 	CheckRollups        = "rollups"
 	CheckRatios         = "ratios"
 	CheckLevels         = "levels"
+	CheckTargets        = "targets"
 )
 
 // Finding is one problem a check found in an artifact.
@@ -132,6 +135,48 @@ var printer = message.NewPrinter(language.English)
 // Validate checks doc, the artifact at path, against the schema. Each failing
 // keyword is one finding at the value it failed on.
 func Validate(s *Schema, path string, doc any) []Finding {
+	return validate(s, path, doc, nil)
+}
+
+// ValidateAt checks doc as Validate does, for an artifact emitted at level.
+// A property the schema requires but places above level, with x-epack-level
+// on the property or on a value that holds it, is not reported missing: the
+// level leaves it out. A field can then stay required for the runs that
+// write it.
+func ValidateAt(s *Schema, path string, doc any, level string) []Finding {
+	rank := rankOf(level)
+	return validate(s, path, doc, func(e *jsonschema.ValidationError) (string, bool) {
+		required, ok := e.ErrorKind.(*kind.Required)
+		if !ok {
+			return "", true
+		}
+		missing := s.requiredAt(doc, jsonpointer.Format(e.InstanceLocation), required.Missing, rank)
+		if len(missing) == 0 {
+			return "", false
+		}
+		return (&kind.Required{Missing: missing}).LocalizedString(printer), true
+	})
+}
+
+// requiredAt returns the properties among missing, required of the object at
+// ptr in doc, that the schema places at or below rank.
+func (s *Schema) requiredAt(doc any, ptr string, missing []string, rank int) []string {
+	v, at, ok := s.levelAt(doc, ptr)
+	if !ok {
+		return missing
+	}
+	var out []string
+	for _, name := range missing {
+		if max(at, levelOf(s.member(v, name))) <= rank {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// validate runs the schema's validator. keep, when set, decides for each
+// failing keyword whether it is a finding, and may give its message.
+func validate(s *Schema, path string, doc any, keep func(*jsonschema.ValidationError) (string, bool)) []Finding {
 	err := s.validator.Validate(doc)
 	if err == nil {
 		return nil
@@ -150,7 +195,15 @@ func Validate(s *Schema, path string, doc any) []Finding {
 			}
 			return
 		}
-		f := Finding{Check: CheckSchema, Path: path, Pointer: jsonpointer.Format(e.InstanceLocation), Message: e.ErrorKind.LocalizedString(printer)}
+		message := e.ErrorKind.LocalizedString(printer)
+		if keep != nil {
+			text, ok := keep(e)
+			if !ok {
+				return
+			}
+			message = cmp.Or(text, message)
+		}
+		f := Finding{Check: CheckSchema, Path: path, Pointer: jsonpointer.Format(e.InstanceLocation), Message: message}
 		if !seen[f] {
 			seen[f] = true
 			out = append(out, f)

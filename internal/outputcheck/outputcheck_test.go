@@ -239,6 +239,77 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateAtLeavesOutRequiredAboveLevel(t *testing.T) {
+	s := mustCompile(t, `{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"required": ["provider", "tenant_id"],
+		"properties": {
+			"provider": {"type": "string"},
+			"tenant_id": {"type": "string", "x-epack-level": "audit"},
+			"accounts": {"type": "array", "items": {"$ref": "#/$defs/account"}},
+			"inventory": {"type": "object", "x-epack-level": "audit", "required": ["owner"], "properties": {"owner": {"type": "string"}}}
+		},
+		"$defs": {"account": {"type": "object", "required": ["account_id", "label"], "properties": {
+			"account_id": {"type": "string", "x-epack-level": "audit"},
+			"label": {"type": "string"}
+		}}}
+	}`)
+	trust := mustDecode(t, `{"provider": "x", "accounts": [{"label": "prod"}]}`)
+	if got := ValidateAt(s, "a.json", trust, "trust"); len(got) != 0 {
+		t.Errorf("a trust artifact without its audit fields got %+v", got)
+	}
+	got := ValidateAt(s, "a.json", trust, "audit")
+	if len(got) != 2 || got[0].Pointer != "" || !strings.Contains(got[0].Message, "tenant_id") || got[1].Pointer != "/accounts/0" || !strings.Contains(got[1].Message, "account_id") {
+		t.Errorf("an audit artifact missing them got %+v", got)
+	}
+
+	got = ValidateAt(s, "a.json", mustDecode(t, `{"accounts": [{}]}`), "trust")
+	if len(got) != 2 || got[0].Message != `missing property 'provider'` || got[1].Message != `missing property 'label'` {
+		t.Errorf("only the trust fields should be missing at trust, got %+v", got)
+	}
+
+	inside := mustDecode(t, `{"provider": "x", "tenant_id": "t", "inventory": {}}`)
+	if got := ValidateAt(s, "a.json", inside, "trust"); len(got) != 0 {
+		t.Errorf("a field inside an audit object takes its level, got %+v at trust", got)
+	}
+	if got := ValidateAt(s, "a.json", inside, "audit"); len(got) != 1 || got[0].Pointer != "/inventory" || got[0].Message != `missing property 'owner'` {
+		t.Errorf("an audit object's own required list applies at audit, got %+v", got)
+	}
+}
+
+func TestPointerAbove(t *testing.T) {
+	s := mustCompile(t, `{
+		"type": "object",
+		"properties": {
+			"tenant_id": {"type": "string", "x-epack-level": "audit"},
+			"accounts": {"type": "array", "items": {"type": "object", "properties": {
+				"account_id": {"type": "string", "x-epack-level": "audit"},
+				"label": {"type": "string"}
+			}}},
+			"inventory": {"type": "object", "x-epack-level": "internal", "properties": {"rows": {"type": "array"}}}
+		}
+	}`)
+	for _, c := range []struct {
+		ptr, level string
+		want       bool
+	}{
+		{"/tenant_id", "trust", true},
+		{"/tenant_id", "audit", false},
+		{"/accounts", "trust", false},
+		{"/accounts/3/account_id", "trust", true},
+		{"/accounts/*/account_id", "trust", true},
+		{"/accounts/*/label", "trust", false},
+		{"/inventory/rows", "audit", true},
+		{"/inventory/rows", "internal", false},
+		{"/missing", "trust", false},
+	} {
+		if got := PointerAbove(s, c.ptr, c.level); got != c.want {
+			t.Errorf("PointerAbove(%s, %s) = %v, want %v", c.ptr, c.level, got, c.want)
+		}
+	}
+}
+
 const metricsSchema = `{
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"type": "object",

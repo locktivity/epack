@@ -182,6 +182,11 @@
       },
       "description": "What the collect config key listed and what it left out, at every level. Absent when the config has no such key."
     },
+    "targets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/target" },
+      "description": "What the run was pointed at: its container and the resources it assessed, each kind with how it was chosen and where its targets sit in the pack. Absent when the collector declares none."
+    },
     "run": {
       "type": "object",
       "required": ["started_at", "finished_at", "proxy", "custom_ca"],
@@ -219,6 +224,52 @@
     }
   },
   "$defs": {
+    "location": {
+      "type": "object",
+      "required": ["pointer"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "type": "string", "description": "The artifact's schema." },
+        "path": { "type": "string", "description": "The artifact's path in the pack." },
+        "pointer": { "type": "string", "pattern": "^(/.*)?$", "description": "JSON pointer to the value." }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["kind", "chosen_by"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["organization", "tenant", "customer", "workspace", "group", "account", "subscription", "region", "repository", "project", "service", "environment", "endpoint", "domain"],
+          "description": "What the targets are. A container the run signed in to or was configured for, or a resource it assessed in it."
+        },
+        "chosen_by": {
+          "enum": ["config_list", "discovery", "discovery_filtered", "granted", "granted_filtered", "collector"],
+          "description": "config_list when a person listed the targets in the config, discovery when the collector found every one its credential can see, discovery_filtered when the config narrowed what it found, granted when the credential was given only some, so others may exist, granted_filtered when the config also narrowed those, and collector when the collector picked them itself, such as a default region."
+        },
+        "config_key": { "type": "string", "description": "The config key that listed or narrowed the targets." },
+        "at": { "$ref": "#/$defs/location", "description": "The targets in an artifact: each item of an array, a single value for a container, the whole artifact, with the pointer \"\", for a container it describes, or, with one * token in the pointer, each item of an array inside each item of another. Absent when the pack doesn't hold them at the run's level." },
+        "name": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^/" },
+          "description": "Pointers inside each target whose values, joined with a colon, name it. Absent when a target is itself its name."
+        },
+        "label": { "type": "string", "pattern": "^/", "description": "A pointer inside each target to the name people know it by, to show beside its name, or alone when the run's level leaves the name out." },
+        "reached": { "type": "string", "pattern": "^/", "description": "A pointer inside each target to a boolean that is false when the target did not answer." },
+        "found": { "$ref": "#/$defs/location", "description": "A count of the targets the collector found." },
+        "assessed": { "$ref": "#/$defs/location", "description": "A count of the targets the run assessed." },
+        "coverage": { "$ref": "#/$defs/location", "description": "The share of the found targets the run assessed, as a percentage." },
+        "include": { "$ref": "#/$defs/location", "description": "The include patterns the config narrowed the targets by." },
+        "exclude": { "$ref": "#/$defs/location", "description": "The exclude patterns the config narrowed the targets by." },
+        "for": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/location" },
+          "description": "The values the run read in these targets alone, when it read its other values in more of them, such as security services read in one region of several. A pointer may hold one * token. Absent when the targets are what the whole run read."
+        },
+        "count": { "type": "integer", "minimum": 0, "x-epack-level": "audit", "description": "How many targets the artifact holds. Present at the audit and internal levels only." },
+        "complete": { "type": "boolean", "description": "True when every target was reached and has no gap that makes the run partial, at every level. Absent when at is." }
+      }
+    },
     "code": {
       "enum": ["auth_failed", "permission_denied", "config_invalid", "not_licensed", "unsupported", "not_read", "rate_limited", "vendor_error", "timeout", "invalid_response", "too_large", "internal", "not_shared"]
     },
@@ -335,7 +386,7 @@
       "required": ["check", "pointer", "message"],
       "additionalProperties": false,
       "properties": {
-        "check": { "type": "string", "description": "schema, schema_unusable, population, nulls, rollups, ratios, guidance, or levels." },
+        "check": { "type": "string", "description": "schema, schema_unusable, population, nulls, rollups, ratios, guidance, levels, or targets." },
         "path": { "type": "string", "description": "The artifact the finding is about. A schema_unusable finding has none." },
         "pointer": {
           "type": "string",

@@ -585,7 +585,7 @@ func (k *kit) runWith(check, name string, scenario Scenario, wrap func(*network)
 		// The collector can copy a changed state into a field whose schema
 		// lists the allowed states. A schema failure in a fields check run
 		// is then not a bug in the collector.
-		k.checkSchemas(check, name, res)
+		k.checkSchemas(check, name, res, componentsdk.LevelOf(config))
 	}
 	k.checkOutput(check, name, res, componentsdk.LevelOf(config))
 	k.runEachRun(check, name, res)
@@ -798,7 +798,7 @@ func runKeys[V any](s Suite, m map[string]V) map[string]V {
 	return out
 }
 
-func (k *kit) checkSchemas(check, name string, res componentsdk.InProcessResult) {
+func (k *kit) checkSchemas(check, name string, res componentsdk.InProcessResult, level componentsdk.Level) {
 	for _, a := range res.Artifacts {
 		if a.File != "" {
 			continue
@@ -822,7 +822,7 @@ func (k *kit) checkSchemas(check, name string, res componentsdk.InProcessResult)
 			k.violate("schema", check+"/"+name, "%s is not JSON: %v", a.Path, err)
 			continue
 		}
-		for _, f := range outputcheck.Validate(sch, a.Path, doc) {
+		for _, f := range outputcheck.ValidateAt(sch, a.Path, doc, string(level)) {
 			k.violateFinding(check, name, f.Check, f.Path, f.Pointer, f.Message)
 		}
 	}

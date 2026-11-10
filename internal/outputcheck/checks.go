@@ -506,6 +506,26 @@ func levelOf(v view) int {
 	return rankOf(v.text("x-epack-level"))
 }
 
+// PointerAbove reports whether the schema places the value at ptr, or a
+// value that holds it, above level with x-epack-level. It reads the schema
+// alone, so it answers for a value the artifact leaves out. An array index
+// or "*" token walks into an array's items.
+func PointerAbove(s *Schema, ptr, level string) bool {
+	v := s.rootView()
+	rank := levelOf(v)
+	for _, token := range jsonpointer.Tokens(ptr) {
+		if index, err := strconv.Atoi(token); err == nil && index >= 0 {
+			v = s.item(v, index)
+		} else if token == "*" {
+			v = s.item(v, 0)
+		} else {
+			v = s.member(v, token)
+		}
+		rank = max(rank, levelOf(v))
+	}
+	return rank > rankOf(level)
+}
+
 // WholeAbove reports whether s sets x-epack-level at its root, on the whole
 // artifact, to a level above level.
 func WholeAbove(s *Schema, level string) bool {

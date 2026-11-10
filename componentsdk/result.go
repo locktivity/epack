@@ -55,6 +55,8 @@ type CollectorResult struct {
 	// Collect is what the collect config key listed and what it left out,
 	// at every level. It is absent when the key is.
 	Collect *ResultCollect `json:"collect,omitempty"`
+	// Targets says what the run was pointed at. See Recorder.Targets.
+	Targets []ResultTarget `json:"targets,omitempty"`
 	Run     ResultRun      `json:"run"`
 }
 
@@ -232,6 +234,18 @@ func buildResult(in resultInput) (CollectorResult, error) {
 		},
 	}
 	result.Collect = r.collect.result(r.name, r.collector)
+	targets, targetFindings, err := set.resolveTargets(r.records.targetList(), gaps, r.schemas, in.level)
+	if err != nil {
+		return CollectorResult{}, err
+	}
+	result.Targets = targets
+	for _, f := range targetFindings {
+		if len(result.Checks) >= maxCheckFindings {
+			result.ChecksDropped++
+			continue
+		}
+		result.Checks = append(result.Checks, f)
+	}
 	for _, g := range gaps {
 		if g.Code.makesPartial() {
 			result.Outcome = ResultOutcome{Status: OutcomePartial, Code: g.Code, Owner: g.Owner}

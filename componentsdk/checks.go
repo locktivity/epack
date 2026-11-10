@@ -40,6 +40,10 @@ const (
 	// CheckLevels reports a value the collector wrote that its schema places
 	// above the run's level with x-epack-level. The SDK leaves the value out.
 	CheckLevels = outputcheck.CheckLevels
+	// CheckTargets reports a Targets declaration the artifacts don't bear
+	// out: targets declared at a value the artifact doesn't hold, or a
+	// target with no value where its name should be.
+	CheckTargets = outputcheck.CheckTargets
 )
 
 // CheckFinding is one problem the output checks found when the collector
@@ -207,7 +211,7 @@ func outputChecks(set *emittedSet, spec map[string]*artifactSchema, gaps []Gap, 
 		if err != nil {
 			continue
 		}
-		found = append(found, outputcheck.Validate(s, e.path, doc)...)
+		found = append(found, outputcheck.ValidateAt(s, e.path, doc, string(level))...)
 		found = append(found, outputcheck.Check(s, e.path, doc, located, string(level))...)
 	}
 	dropped := 0

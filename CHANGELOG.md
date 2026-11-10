@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-11-10
+
+### ENHANCEMENTS
+
+- The schema check skips a required property that the schema places above
+  the run's level with `x-epack-level`, on the property or on a value that
+  holds it. A collector can gate an identifier to `audit` and keep it
+  required for the runs that write it. `outputcheck.ValidateAt` runs the
+  check, and the collectortest kit uses it as well
+- `Recorder.Targets` declares what a run was pointed at: its container and
+  the resources it assessed, each kind with how it was chosen and where its
+  targets sit in the pack. The result artifact writes the declarations as
+  `targets`, pointing into the artifacts so names follow their own levels,
+  with the SDK's `count` from the audit level and `complete` at every level.
+  A declaration the artifacts don't bear out is a `targets` check finding.
+  A choice says when the credential was given only some targets (`granted`,
+  `granted_filtered`) or the collector picked them itself (`collector`),
+  `For` narrows a declaration to the values read in fewer targets, such as
+  security services read in one region, and a container the artifact
+  describes is declared at the whole artifact, so its label can sit beside
+  its ID
+- The collect protocol says which identifiers each level may hold: account,
+  tenant, and workspace identifiers sit at `audit` and above, and names the
+  company publishes stay at every level
+
 ## [0.10.4] - 2026-11-06
 
 ### ENHANCEMENTS

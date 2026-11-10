@@ -198,6 +198,8 @@ type Recorder struct {
 	// moved to and To the value.
 	moved    []Mirrored
 	warnings []RunWarning
+	// targets holds the Targets declarations, in the order made.
+	targets []ResultTarget
 	// rename gives an artifact path as the run writes it. See RunPath.
 	rename func(string) string
 }

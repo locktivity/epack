@@ -235,6 +235,12 @@ if level.AtLeast(componentsdk.LevelInternal) {
 
 A collector's schema can set `x-epack-level` at its root to mark the whole artifact for a level. A collector whose normalized artifact carries what profiles read marks its detailed schema `audit`, so a trust run leaves the detailed file out. The normalized values copied from it stay. The SDK leaves such an artifact out of a run below its level, as it would a field, and drops the gaps inside it. A gap that `Recorder.Mirror` copied to a normalized value stays with that value. A collector with no normalized artifact keeps its detailed artifact at trust, and each field's level decides what appears.
 
+### Identifiers
+
+A trust artifact never holds an identifier of the company's own accounts or resources. Account, subscription, tenant, customer, organization, and workspace IDs, ARNs, and the hosts of private services sit at `audit` or above. That covers the data, diagnostics text, and warnings alike. Names the company publishes stay at every level: the domains and endpoints it serves, such as TLS endpoints, email domains, and MX hosts, and the name or domain of its organization. A trust diagnostic about one account names it by its configured label, or not at all.
+
+A field the schema marks `audit` can stay in its object's `required` list. The SDK's schema check skips a required property whose level is above the run's, set on the property or on a value that holds it, since the level leaves it out. Gate the field in code as well, with `level.AtLeast(componentsdk.LevelAudit)`, so a trust run never writes it. The SDK would otherwise leave it out and report a levels finding.
+
 ## Artifact Paths
 
 Each data artifact a collector writes sits at `artifacts/<collector>.<kind>.json`. The kind comes from its schema ID, or is `details` for the collector's own detailed file, which has none. So AWS writes `artifacts/aws.cloud-posture.json` and `artifacts/aws.details.json`, and TLS writes `artifacts/tls.tls.json`. `componentsdk.ArtifactPath(collector, schemaID)` gives the path. A collector with more than one file of its own gives each a schema ID, such as `microsoft-cloud/azure@v1`, so each is a kind of its own. That file sits at `artifacts/microsoft-cloud.azure.json`, and `collect` lists it as `azure`. The collector result and the build file follow the rule too, as the kinds `collector-result` and `collector-build`. File artifacts, such as documents, keep the paths the collector gives them.
@@ -551,6 +557,7 @@ SDK collectors add one artifact when they emit, at `artifacts/{collector}.collec
 - `signed_in_as` is the principal the collector signed in as. `auth_method` says how it proved its identity, `requested_scopes` lists the scopes it asked for, of which one missing from `scopes` was not granted, and `read_only` is true when the collector can show that its credential could only read. Its `tenant_id` and `id` are included at the `audit` and `internal` levels.
 - `run.proxy` and `run.custom_ca` say whether a proxy or a custom CA bundle was configured.
 - `checks` lists what the output checks found in the collector's artifacts (see Output Checks). It is left out when they found nothing.
+- `targets` says what the run was pointed at (see Targets). It is left out when the collector declares none.
 
 Collectors name their sign-in methods with these `auth_method` values, which `componentsdk` has as constants. A sign-in that fits none names its own in the same form.
 
@@ -563,6 +570,63 @@ Collectors name their sign-in methods with these `auth_method` values, which `co
 | `access_key` | `AuthAccessKey` | A cloud provider's access key pair, such as AWS's |
 
 `Emit` fails when an artifact still has a value at a gap's pointer, so no field carries both a value and a gap. The one exception is a list or object under a `partial` gap. The schema is published as `componentsdk.ResultSchemaJSON()`. Every field this section names after the ones the first SDK result held is optional, so a result from an older SDK still matches it.
+
+### Targets
+
+A collector declares what it was pointed at, so a reader can set the run's scope beside what the company says is in scope. It declares its container, the organization, tenant, customer, workspace, or group it signed in to or was configured for, and the resources it assessed in it: accounts, subscriptions, regions, repositories, projects, services, environments, endpoints, and domains. Users, apps, groups of people, and devices are populations, not targets: the counts and checks on them cover them.
+
+```go
+rec := componentsdk.Records(ctx)
+rec.Targets(componentsdk.TargetEndpoint, componentsdk.Location{Path: "artifacts/tls.tls.json", Pointer: "/endpoints"}, "/host", "/port").
+    ChosenBy(componentsdk.ChosenByConfig, "endpoints").
+    Reached("/reachable")
+rec.Targets(componentsdk.TargetRepository, componentsdk.Location{Path: "artifacts/github.details.json", Pointer: "/repositories/per_repo"}, "/name").
+    ChosenBy(componentsdk.ChosenByFilter, "exclude_patterns").
+    Found(componentsdk.Location{Path: "artifacts/github.details.json", Pointer: "/scope/repository_count"}).
+    Coverage(componentsdk.Location{Schema: "evidencepack/vcs-posture@v1", Pointer: "/repo_coverage_pct"})
+```
+
+The declaration points into the artifacts and copies no names, so each name follows its own field's level.
+
+- **`at`** is one of four shapes:
+  - an array, each item one target, such as `/endpoints`
+  - a single value for a container, such as `/tenant_id` or `/organization`
+  - the whole artifact, with the pointer `""`, for a container the artifact describes, such as a tenant whose ID and domain sit at its top
+  - an array inside each item of another array, written with one `*` token, such as `/accounts/*/regions`
+- **The name pointers** sit inside each item. Their values, joined with a colon, name the target, so `/host` and `/port` read `app.example.com:443`. A string item, and a single value, is its own name.
+- **`ChosenBy`** says how the list was made:
+  - `config_list`: a person listed the targets in the config, so the list is as complete as they made it
+  - `discovery`: the collector found every target its credential can see
+  - `discovery_filtered`: the config narrowed what it found, such as with patterns
+  - `granted`: the credential was given only some targets, such as a GitHub App installed on selected repositories, so others may exist
+  - `granted_filtered`: the credential was given only some, and the config narrowed those
+  - `collector`: the collector picked them itself, such as a default region, and the config doesn't name them
+
+  It also names the config key that listed or narrowed them.
+- **`Label`** points inside each item to the name people know a target by, such as `/account_label` or `/org_domain`. A reader shows it beside the name, or alone when the run's level leaves the name out.
+- **`Reached`** points to a boolean that is false when the target didn't answer.
+- **`Found`, `Assessed`, `Coverage`, and `Patterns`** point at counts, a percentage, and patterns the artifacts hold, so their levels follow the data's.
+- **`For`** narrows a declaration to the values the run read in these targets alone, when it read its other values in more of them. A collector that scans every region but reads its security services in one declares regions twice:
+
+  ```go
+  rec.Targets(componentsdk.TargetRegion, componentsdk.Location{Path: details, Pointer: "/accounts/*/regions"}).
+      ChosenBy(componentsdk.ChosenByDiscovery, "")
+  rec.Targets(componentsdk.TargetRegion, componentsdk.Location{Path: details, Pointer: "/accounts/*/primary_region"}).
+      ChosenBy(componentsdk.ChosenByCollector, "").
+      For(componentsdk.Location{Path: details, Pointer: "/accounts/*/account_security/security_hub"})
+  ```
+
+  A reader names each value by its schema label. A pointer may hold one `*` token, as `at` does.
+
+At `Emit` the SDK reads the declaration against the artifacts as written:
+
+- **What the pack doesn't hold is dropped.** A location whose artifact the run didn't write, whose value the schema places above the run's level, or whose value a gap leaves out on purpose (`not_read`, `unsupported`, `not_shared`) is left out of the result, with the parts that read it. A trust run can then declare the same targets as an audit one. A `For` value is dropped the same way, and a declaration with none left is dropped whole.
+- **The SDK counts and checks the targets.** It writes `count`, how many targets the artifact holds, at the `audit` and `internal` levels. It writes `complete` at every level: true when every target was reached and no gap that makes the run partial sits on one or on the value that holds them. A list holding fewer targets than the count `Assessed` points at, such as one cut at a row cap, is not complete. For a `*` declaration, a gap elsewhere inside an outer item, such as one account's password policy, doesn't bear on the regions.
+- **A target set the run couldn't read keeps its location.** When a gap covers the value that holds the targets, the result writes `count` 0 and `complete` false, and reports no finding.
+- **A declaration the artifacts don't bear out is a `targets` finding.** That covers targets declared at a value the artifact should hold and doesn't, and a target with no value where its name should be. A target a gap covers may lack its name, such as an account whose role was refused.
+- **A malformed declaration fails `Emit`.** That covers a kind or choice outside the lists above, a pointer that doesn't start with `/` (other than `at`'s `""`), a `For` value at the whole artifact, and more than one `*`.
+
+Declare each kind once, and again with `For` for values read in fewer of them. For a container declared at the whole artifact, a gap anywhere in it that makes the run partial leaves the container incomplete. A collector configured under another name has its paths renamed, as gaps do.
 
 ### Build File
 
@@ -1236,7 +1300,7 @@ A collector's JSON Schemas can say what a value means with `x-epack-*` keywords 
 
 | Keyword | Meaning |
 |---------|---------|
-| `x-epack-level` | `trust`, `audit`, or `internal`: the lowest level whose output includes the field. Fields under it inherit it unless they name a higher level. At the schema's root it marks the whole artifact, which the SDK leaves out below that level. |
+| `x-epack-level` | `trust`, `audit`, or `internal`: the lowest level whose output includes the field. Fields under it inherit it unless they name a higher level. At the schema's root it marks the whole artifact, which the SDK leaves out below that level. A required property above the run's level is not reported missing. |
 | `x-epack-denominator` | The count the value is a percentage or ratio of. |
 | `x-epack-present` | A boolean field that is true when the value's population has any members. It is for a level that leaves the denominator out. When it is false, the value must be null or absent. |
 | `x-epack-numerator` | The count a percentage is taken of, as a reference in the same form as `x-epack-denominator`. On a boolean it is the count of "all of them": the boolean is true exactly when the numerator equals the denominator. |
@@ -1262,6 +1326,7 @@ When the collector emits, the SDK checks each data artifact that has a schema an
 - `nulls`: a number or boolean is null with no gap covering it, no `x-epack-null`, no denominator of 0 or unread, and no `x-epack-present` of false or unread.
 - `rollups`: a count differs from its rows, or a percentage is off by more than 1. Rows cut short are not recomputed: those the rollup's `truncated` boolean marks, and those as many as their schema's `maxItems`. Nor is a rollup whose rows or `where` field the schema places above the level the collector ran at, where the rows exist without the field, such as per-person MFA flags kept for the `internal` level.
 - `ratios`: where a value, its `x-epack-numerator`, and its `x-epack-denominator` are all present and the denominator is not 0, a percentage that is not 100 × numerator ÷ denominator rounded as its `x-epack-rounding` says, or within 1 of it when the schema states no rounding; a numerator larger than its denominator; a boolean that disagrees with its numerator; and a rounding that is not one of the three. A numerator works at every level, including for counts the collector takes from calls rather than rows, which a rollup cannot recompute.
+- `targets`: a `Targets` declaration the artifacts don't bear out (see Targets).
 - `levels`: a value the collector wrote that its schema marks with `x-epack-level` above the level the run collected at. The SDK leaves the value out of the artifact, as it leaves values out of the result, so a trust pack never holds it. Fix the collector so it does not collect the value at that level. A staged file is written as it is.
 
 `collectortest` reports each finding as a violation. It runs the same checks itself on artifacts whose schema comes only from `Suite.Schemas`. Sensitivity runs skip `population`, `nulls`, `rollups`, and `ratios`, since their changed responses make rows and rollups disagree. The `levels` check runs the clean scenario at each level. Every higher level must emit what a lower level emits. A field marked with a level must be absent below that level, and writing it as null is a finding. `SkipChecks` turns off any of the kit's checks by name, such as `levels`, `population`, or `tracemap`. `collectortest.CheckNames()` lists the names.

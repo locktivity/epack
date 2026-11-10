@@ -66,7 +66,7 @@ func (k *kit) checkOutput(check, name string, res componentsdk.InProcessResult, 
 		}
 		var findings []outputcheck.Finding
 		if fromSDK {
-			findings = outputcheck.Validate(sch, a.Path, doc)
+			findings = outputcheck.ValidateAt(sch, a.Path, doc, string(level))
 		}
 		if valueChecksApply(check) {
 			findings = append(findings, outputcheck.Check(sch, a.Path, doc, gaps, string(level))...)
