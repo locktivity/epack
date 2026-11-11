@@ -33,15 +33,15 @@
           "type": ["boolean", "null"],
           "description": "Whether the provider has any users the user_security percentages count. When false, those percentages are null",
           "x-epack-label": "Users present",
-          "x-epack-summary": "Whether the provider has any accounts that can sign in."
+          "x-epack-summary": "Whether the provider has any users, as user_count counts them."
         },
         "user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Accounts that can sign in. The user_security percentages and policy.mfa_required_coverage_pct count these",
+          "description": "Enabled accounts of people in the organization. Guests from other organizations and disabled accounts are not counted. The user_security percentages and policy.mfa_required_coverage_pct count these",
           "x-epack-label": "Users",
-          "x-epack-summary": "Accounts that can sign in."
+          "x-epack-summary": "Enabled accounts of people in the organization, guests left out."
         },
         "mfa_user_count": {
           "type": ["integer", "null"],
@@ -266,16 +266,16 @@
       "properties": {
         "privileged_users_present": {
           "type": ["boolean", "null"],
-          "description": "Whether the provider has any users with privileged administrative access. When false, the privileged percentages are null",
+          "description": "Whether the provider has any users privileged_users_count counts. When false, the privileged percentages are null",
           "x-epack-label": "Admins present",
-          "x-epack-summary": "Whether the provider has any users with admin access."
+          "x-epack-summary": "Whether any user has a role that can change who has access, reset another user's credentials, or change sign-in or security settings."
         },
         "privileged_users_count": {
           "type": ["integer", "null"],
           "minimum": 0,
-          "description": "Count of users with privileged administrative access",
+          "description": "Count of users who hold a role that can change who has access, reset another user's credentials, or change sign-in or security settings. Roles that can only read are not counted. A guest with such a role counts",
           "x-epack-label": "Admins",
-          "x-epack-summary": "Users with admin access.",
+          "x-epack-summary": "Users with a role that can change who has access, reset another user's credentials, or change sign-in or security settings.",
           "x-epack-level": "audit"
         },
         "super_admin_count": {
@@ -414,27 +414,27 @@
       "properties": {
         "mfa_required": {
           "type": ["boolean", "null"],
-          "description": "Whether the tenant enforces MFA for all covered users",
+          "description": "Whether enforced sign-in policies, one or several together, require MFA of every user on every sign-in, or block the sign-in, whatever the app, client type, device, location or risk. Report-only policies do not count. Users a policy names as exceptions, such as break-glass accounts, do not make this false, and count as not covered in mfa_required_user_count. mfa_required_coverage_pct gives the share of users the requirement covers",
           "x-epack-label": "MFA required",
-          "x-epack-summary": "Whether every user must use MFA to sign in.",
+          "x-epack-summary": "Whether sign-in policies require MFA, or block the sign-in, for every user on every sign-in, apart from named exceptions such as break-glass accounts.",
           "x-epack-goal": true
         },
         "mfa_required_user_count": {
           "type": ["integer", "null"],
           "minimum": 0,
           "x-epack-level": "audit",
-          "description": "Users covered by policies that require MFA, out of user_security.user_count",
+          "description": "Users whose every sign-in requires MFA or is blocked, by one enforced policy or several together, out of user_security.user_count",
           "x-epack-label": "Users required to use MFA",
-          "x-epack-summary": "Users covered by a policy that requires MFA."
+          "x-epack-summary": "Users whose every sign-in requires MFA or is blocked."
         },
         "mfa_required_coverage_pct": {
           "type": ["number", "null"],
           "minimum": 0,
           "maximum": 100,
           "x-epack-rounding": "floor",
-          "description": "Percentage of users covered by policies that require MFA",
+          "description": "Percentage of users whose every sign-in requires MFA or is blocked",
           "x-epack-label": "MFA enforcement",
-          "x-epack-summary": "Share of users covered by a policy that requires MFA.",
+          "x-epack-summary": "Share of users whose every sign-in requires MFA or is blocked.",
           "x-epack-numerator": "mfa_required_user_count",
           "x-epack-denominator": "/user_security/user_count",
           "x-epack-present": "/user_security/users_present"
@@ -457,7 +457,7 @@
         },
         "legacy_auth_blocked": {
           "type": ["boolean", "null"],
-          "description": "Whether legacy authentication protocols are blocked",
+          "description": "Whether legacy authentication protocols are blocked for every user and every app, by one enforced policy or several together",
           "x-epack-label": "Legacy sign-in blocked",
           "x-epack-summary": "Whether sign-in through legacy authentication protocols is blocked.",
           "x-epack-goal": true

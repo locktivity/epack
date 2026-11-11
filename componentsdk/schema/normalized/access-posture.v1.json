@@ -37,12 +37,12 @@
     "members": {
       "$ref": "#/$defs/members",
       "x-epack-label": "Members",
-      "x-epack-summary": "People with an account in the system. Service users and service accounts count as credentials."
+      "x-epack-summary": "People with an account in the system, or with a role anywhere in it, such as on one project, resource group or resource. Service users and service accounts count as credentials."
     },
     "admins": {
       "$ref": "#/$defs/admins",
       "x-epack-label": "Admins",
-      "x-epack-summary": "Members who can administer the system."
+      "x-epack-summary": "Members who can change who has access to the system, or change or delete any resource in it."
     },
     "root": {
       "$ref": "#/$defs/root",
@@ -233,7 +233,7 @@
           "x-epack-level": "audit",
           "description": "Admins",
           "x-epack-label": "Admins",
-          "x-epack-summary": "Members with admin access."
+          "x-epack-summary": "Members who can change who has access, or change or delete any resource."
         },
         "admin_share_pct": {
           "$ref": "#/$defs/pct",
@@ -480,12 +480,12 @@
         "members": {
           "$ref": "#/$defs/members",
           "x-epack-label": "Members",
-          "x-epack-summary": "Members of this account or subscription. Service users and service accounts count as credentials."
+          "x-epack-summary": "People who hold a role anywhere in this account or subscription, including on one resource group or resource. Service users and service accounts count as credentials."
         },
         "admins": {
           "$ref": "#/$defs/admins",
           "x-epack-label": "Admins",
-          "x-epack-summary": "Members who can administer this account or subscription."
+          "x-epack-summary": "Members whose admin role covers the whole account or subscription: they can change who has access to it, or change or delete any resource in it."
         },
         "root": {
           "$ref": "#/$defs/root",

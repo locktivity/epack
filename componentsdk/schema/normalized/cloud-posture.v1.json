@@ -66,26 +66,34 @@
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Storage resources with encryption at rest",
+                "description": "Storage resources encrypted at rest, with a key the provider manages or one the customer manages",
                 "x-epack-label": "Encrypted storage resources",
-                "x-epack-summary": "Storage resources with encryption at rest."
+                "x-epack-summary": "Storage resources encrypted at rest, with a key the provider manages or one the customer manages."
               },
               "public_access_blocked_storage_resource_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Storage resources with public access blocked",
+                "description": "Storage resources that refuse anonymous access to their data, such as S3 Block Public Access or Azure storage with blob public access turned off. Whether the internet can reach the resource at all is network_restricted_storage_resource_count",
                 "x-epack-label": "Storage resources with public access blocked",
-                "x-epack-summary": "Storage resources that have public access blocked."
+                "x-epack-summary": "Storage resources that refuse anonymous access to their data."
+              },
+              "network_restricted_storage_resource_count": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "x-epack-level": "audit",
+                "description": "Storage resources that refuse traffic from the public internet: public network access is turned off, or only listed networks and private endpoints may connect",
+                "x-epack-label": "Network-restricted storage resources",
+                "x-epack-summary": "Storage resources that refuse traffic from the public internet."
               },
               "encryption_pct": {
                 "type": ["number", "null"],
                 "minimum": 0,
                 "maximum": 100,
                 "x-epack-rounding": "floor",
-                "description": "Percentage of storage resources with encryption at rest",
+                "description": "Percentage of storage resources encrypted at rest, with a key the provider manages or one the customer manages",
                 "x-epack-label": "Storage encryption",
-                "x-epack-summary": "Share of storage resources with encryption at rest.",
+                "x-epack-summary": "Share of storage resources encrypted at rest, with a key the provider manages or one the customer manages.",
                 "x-epack-numerator": "encrypted_storage_resource_count",
                 "x-epack-denominator": "storage_resource_count",
                 "x-epack-present": "storage_resources_present"
@@ -95,16 +103,28 @@
                 "minimum": 0,
                 "maximum": 100,
                 "x-epack-rounding": "floor",
-                "description": "Percentage of storage resources with public access blocked",
+                "description": "Percentage of storage resources that refuse anonymous access to their data. Whether the internet can reach the resource at all is network_restricted_pct",
                 "x-epack-label": "Storage public access blocked",
-                "x-epack-summary": "Share of storage resources that have public access blocked.",
+                "x-epack-summary": "Share of storage resources that refuse anonymous access to their data.",
                 "x-epack-numerator": "public_access_blocked_storage_resource_count",
+                "x-epack-denominator": "storage_resource_count",
+                "x-epack-present": "storage_resources_present"
+              },
+              "network_restricted_pct": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 100,
+                "x-epack-rounding": "floor",
+                "description": "Percentage of storage resources that refuse traffic from the public internet: public network access is turned off, or only listed networks and private endpoints may connect",
+                "x-epack-label": "Storage network restricted",
+                "x-epack-summary": "Share of storage resources that refuse traffic from the public internet.",
+                "x-epack-numerator": "network_restricted_storage_resource_count",
                 "x-epack-denominator": "storage_resource_count",
                 "x-epack-present": "storage_resources_present"
               }
             },
             "x-epack-label": "Storage",
-            "x-epack-summary": "Storage encryption and public access for the account."
+            "x-epack-summary": "Storage encryption, anonymous access, and network access for the account."
           },
           "database": {
             "type": ["object", "null"],
@@ -248,18 +268,18 @@
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Security groups with a rule that allows SSH (port 22) from any address",
+                "description": "Security groups that let a connection to port 22 in from any address, with their rules applied as the cloud applies them, so a deny rule processed first closes the port. Any address means every IPv4 or IPv6 address, or the cloud's tag for the internet",
                 "x-epack-label": "Security groups open to SSH",
-                "x-epack-summary": "Security groups with a rule that allows SSH (port 22) from any address.",
+                "x-epack-summary": "Security groups that let an SSH connection (port 22) in from any address.",
                 "x-epack-goal": "lower"
               },
               "rdp_open_security_group_count": {
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Security groups with a rule that allows RDP (port 3389) from any address",
+                "description": "Security groups that let a connection to port 3389 in from any address, with their rules applied as the cloud applies them, so a deny rule processed first closes the port. Any address means every IPv4 or IPv6 address, or the cloud's tag for the internet",
                 "x-epack-label": "Security groups open to RDP",
-                "x-epack-summary": "Security groups with a rule that allows RDP (port 3389) from any address.",
+                "x-epack-summary": "Security groups that let an RDP connection (port 3389) in from any address.",
                 "x-epack-goal": "lower"
               },
               "ssh_open_to_world_pct": {
@@ -267,9 +287,9 @@
                 "minimum": 0,
                 "maximum": 100,
                 "x-epack-rounding": "ceil",
-                "description": "Percentage of security groups or network security groups (firewall rules on Google Cloud) with a rule that allows SSH (port 22) from any address",
+                "description": "Percentage of security groups or network security groups (firewall rules on Google Cloud) that let a connection to port 22 in from any address, with their rules applied as the cloud applies them, so a deny rule processed first closes the port. Any address means every IPv4 or IPv6 address, or the cloud's tag for the internet",
                 "x-epack-label": "SSH exposed to internet",
-                "x-epack-summary": "Share of security groups with a rule that allows SSH (port 22) from any address.",
+                "x-epack-summary": "Share of security groups that let an SSH connection (port 22) in from any address.",
                 "x-epack-numerator": "ssh_open_security_group_count",
                 "x-epack-denominator": "security_group_count",
                 "x-epack-present": "security_groups_present"
@@ -279,9 +299,9 @@
                 "minimum": 0,
                 "maximum": 100,
                 "x-epack-rounding": "ceil",
-                "description": "Percentage of security groups or network security groups (firewall rules on Google Cloud) with a rule that allows RDP (port 3389) from any address",
+                "description": "Percentage of security groups or network security groups (firewall rules on Google Cloud) that let a connection to port 3389 in from any address, with their rules applied as the cloud applies them, so a deny rule processed first closes the port. Any address means every IPv4 or IPv6 address, or the cloud's tag for the internet",
                 "x-epack-label": "RDP exposed to internet",
-                "x-epack-summary": "Share of security groups with a rule that allows RDP (port 3389) from any address.",
+                "x-epack-summary": "Share of security groups that let an RDP connection (port 3389) in from any address.",
                 "x-epack-numerator": "rdp_open_security_group_count",
                 "x-epack-denominator": "security_group_count",
                 "x-epack-present": "security_groups_present"

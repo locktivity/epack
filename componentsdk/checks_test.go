@@ -353,7 +353,7 @@ func TestNormalizedSummariesCheckTheirPercentages(t *testing.T) {
 		{
 			"evidencepack/cloud-posture@v1",
 			`{"schema_version": "1.0.0", "collected_at": "2026-01-01T00:00:00Z", "provider": "aws",
-			  "accounts": [{"storage": {"storage_resources_present": false, "encryption_pct": 100, "public_access_blocked_pct": null}}]}`,
+			  "accounts": [{"storage": {"storage_resources_present": false, "encryption_pct": 100, "public_access_blocked_pct": null, "network_restricted_pct": null}}]}`,
 			outputcheck.CheckPopulation, "/accounts/0/storage/encryption_pct",
 		},
 		{

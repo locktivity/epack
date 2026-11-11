@@ -5,7 +5,55 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.6] - 2026-11-11
+
+### ENHANCEMENTS
+
+- `evidencepack/cloud-posture@v1`'s `storage` object has
+  `network_restricted_pct` and its audit-level count: the storage resources
+  that refuse traffic from the public internet, because public network access
+  is off or only listed networks and private endpoints may connect
+- `storage.encryption_pct` says it counts encryption at rest with any key,
+  the provider's own or the customer's, and `storage.public_access_blocked_pct`
+  says it counts anonymous access to the data, not whether the internet can
+  reach the resource. Each points at the other field for the other question
+- `evidencepack/idp-posture@v1`'s `policy.mfa_required` says enforced
+  policies combine: between them they must require MFA of every user on
+  every sign-in, or block it, whatever the app, client type, device,
+  location or risk. Exceptions a policy names, such as break-glass
+  accounts, don't make it false. It said every user must use MFA, which no
+  tenant with a break-glass account meets. `mfa_required_user_count` counts
+  the users whose every sign-in requires MFA or is blocked, so an excluded
+  user counts as not covered, and `legacy_auth_blocked` combines policies
+  the same way
+- `user_security.user_count` says it counts enabled accounts of people in
+  the organization, leaving out guests from other organizations, as the
+  collectors already did. `privileged_users_count` says it counts users with
+  a role that can change who has access, reset another user's credentials,
+  or change sign-in or security settings, and not roles that only read
+- `evidencepack/access-posture@v1`'s members are people with an account in
+  the system or a role anywhere in it, such as on one resource group, and
+  its admins are members who can change who has access or change or delete
+  any resource. In a scope, an admin's role covers the whole account or
+  subscription
+- `evidencepack/cloud-posture@v1`'s SSH and RDP fields count a security
+  group as open when its rules, applied as the cloud applies them, let a
+  connection in from any address. A deny rule processed first closes the
+  port
+- `componentsdk/collectortest/roster` reads a roster: a tenant's accounts,
+  roles, sign-in policies, apps and cloud resources in the vendor's terms,
+  with a block that maps each term to a normalized one. `roster.Derive`
+  gives the normalized values the roster determines, following the
+  schemas' definitions, so a collector's simulated or sandbox output can be
+  checked against values worked out apart from its code. `OneAtATime`,
+  `Pairwise` and `Build` make roster variants that change one setting at a
+  time or every pair of settings. `Roster.Applies` says whether a sign-in
+  policy applies to one account's sign-in to an app, and `Roster.Outcome`
+  what the enforced policies that apply ask of it, so a vendor's own policy
+  evaluation can be checked against the roster's reading
+- `collectortest.CompareResponses` reports where a simulator's responses
+  differ from a recording: fields, JSON types, list lengths, status codes
+  and enum spellings
 
 ## [0.10.5] - 2026-11-10
 
