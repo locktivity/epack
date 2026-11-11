@@ -41,6 +41,7 @@ jobs:
         with:
           version: v2.9.0
           args: --build-tags components
+          skip-cache: true
 
       - name: Verify import boundary
         run: make lint-boundary
