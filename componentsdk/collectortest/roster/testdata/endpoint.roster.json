@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "vendor": "jumpcloud",
+  "providers": {"endpoint-posture": "jumpcloud"},
+  "endpoint": {
+    "organization_id": "5f0c2b7e9a1d4c0012345678",
+    "scope": {"name": "managed_devices", "max_observation_age_seconds": 2592000, "management": ["managed"]},
+    "compliance_policy": {"baseline_id": "cis_endpoint_level_1", "baseline_version": "1.2.0"},
+    "screen_lock_policy": {"max_idle_seconds": 900},
+    "os_support": {"macos": "13", "windows": "10.0.19045", "linux": "22.04", "ios": "17"},
+    "os_baseline": {"id": "os_minimums", "version": "2026.11", "min_versions": {"macos": "15.1", "windows": "10.0.22631"}},
+    "not_applicable": {
+      "disk_encryption": ["ios", "ipados"],
+      "firewall": ["ios", "ipados", "android"],
+      "antimalware_installed": ["ios", "ipados"],
+      "antimalware_healthy": ["ios", "ipados"],
+      "edr_installed": ["ios", "ipados"],
+      "edr_healthy": ["ios", "ipados"]
+    },
+    "devices": {
+      "64f1a0c1e3b2d4f5a6b7c8d1": {
+        "hostname": "alice-mbp",
+        "displayName": "Alice's MacBook Pro",
+        "os": "darwin",
+        "os_name": "macOS",
+        "os_version": "15.1.1",
+        "user": {"id": "5f8e1d2c3b4a596877665544", "login": "alice"},
+        "management": "agent",
+        "mdm": "internal",
+        "agentVersion": "2.14.0",
+        "created_at": "2025-03-04T16:20:00Z",
+        "last_seen_seconds_ago": 1800,
+        "volumes": {"Macintosh HD": "fileVaultOn"},
+        "screen_lock": {"enabled": true, "idle_seconds": 300},
+        "compliance": "success",
+        "modules": {
+          "XProtect": {"enabled": true, "current": true},
+          "alf": {"enabled": true},
+          "CrowdStrike Falcon": {"enabled": true, "reporting": true}
+        },
+        "local_accounts": {
+          "501": {"username": "alice", "groups": ["admin", "staff"]},
+          "502": {"username": "it-support", "groups": ["staff"]}
+        }
+      },
+      "64f1a0c1e3b2d4f5a6b7c8d2": {
+        "hostname": "bob-xps",
+        "os": "windows",
+        "os_name": "Windows 10 Pro",
+        "os_version": "10.0.19045",
+        "user": {"id": "5f8e1d2c3b4a596877665545", "login": "bob"},
+        "management": "agent",
+        "mdm": "none",
+        "created_at": "2024-11-18T10:05:00Z",
+        "last_seen_seconds_ago": 5400,
+        "volumes": {"C:": "protectionOn", "D:": "protectionOff"},
+        "screen_lock": {"enabled": true, "idle_seconds": 1800},
+        "compliance": "failed",
+        "modules": {
+          "Windows Defender Antivirus": {"enabled": true, "current": false},
+          "Windows Firewall": {"enabled": false},
+          "CrowdStrike Falcon": {"enabled": true, "running": true, "reporting": false}
+        },
+        "local_accounts": {
+          "S-1-5-21-3623811015-3361044348-30300820-500": {"username": "Administrator", "groups": ["Administrators"]},
+          "S-1-5-21-3623811015-3361044348-30300820-1001": {"username": "bob", "groups": ["Users"]}
+        },
+        "findings": {
+          "6a10f2e0c1d2b3a4f5e6d7c8": {"type": "bitlocker_off", "status": "active", "first_seen_at": "2026-10-02T08:00:00Z",
+            "last_seen_at": "2026-11-10T08:00:00Z", "reason_code": "BITLOCKER_PROTECTION_OFF"},
+          "6a10f2e0c1d2b3a4f5e6d7c9": {"type": "av_signatures_outdated", "status": "active", "first_seen_at": "2026-11-01T14:30:00Z",
+            "last_seen_at": "2026-11-10T08:00:00Z", "reason_code": "SIGNATURES_OUT_OF_DATE"},
+          "6a10f2e0c1d2b3a4f5e6d7ca": {"type": "firewall_off", "status": "fixed", "first_seen_at": "2026-09-14T09:00:00Z",
+            "last_seen_at": "2026-09-20T11:45:00Z", "resolved_at": "2026-09-20T12:00:00Z", "reason_code": "FIREWALL_DISABLED"}
+        }
+      },
+      "64f1a0c1e3b2d4f5a6b7c8d3": {
+        "hostname": "build-01",
+        "os": "linux",
+        "os_name": "Ubuntu",
+        "os_version": "20.04",
+        "management": "agent",
+        "created_at": "2023-06-01T00:00:00Z",
+        "last_seen_seconds_ago": 120
+      },
+      "64f1a0c1e3b2d4f5a6b7c8d4": {
+        "hostname": "carol-iphone",
+        "os": "ios",
+        "os_name": "iOS",
+        "os_version": "18.1",
+        "user": {"id": "5f8e1d2c3b4a596877665546"},
+        "management": "agent",
+        "mdm": "internal",
+        "last_seen_seconds_ago": 86400,
+        "screen_lock": {"enabled": true, "idle_seconds": 60},
+        "compliance": "success"
+      },
+      "64f1a0c1e3b2d4f5a6b7c8d5": {
+        "hostname": "old-imac",
+        "os": "darwin",
+        "os_name": "macOS",
+        "os_version": "12.7.6",
+        "management": "agent",
+        "mdm": "internal",
+        "last_seen_seconds_ago": 3456000,
+        "volumes": {"Macintosh HD": "fileVaultOff"},
+        "compliance": "failed"
+      },
+      "64f1a0c1e3b2d4f5a6b7c8d6": {
+        "hostname": "lobby-kiosk",
+        "os": "windows",
+        "os_name": "Windows 11 Pro",
+        "os_version": "10.0.22631",
+        "management": "agentless",
+        "last_seen_seconds_ago": 7200
+      },
+      "64f1a0c1e3b2d4f5a6b7c8d7": {
+        "hostname": "dave-mba",
+        "os": "darwin",
+        "os_name": "macOS",
+        "os_version": "14.7",
+        "user": {"id": "5f8e1d2c3b4a596877665547", "login": "dave"},
+        "management": "agent",
+        "mdm": "external",
+        "last_seen_seconds_ago": 600,
+        "observed_seconds_ago": {"disk_encryption": 3000000},
+        "volumes": {"Macintosh HD": "fileVaultOn"},
+        "screen_lock": {"enabled": false},
+        "compliance": "pending",
+        "modules": {
+          "XProtect": {"enabled": true, "current": true},
+          "alf": {"installed": false}
+        }
+      }
+    }
+  },
+  "terms": {
+    "endpoint_os": {"darwin": "macos", "windows": "windows", "linux": "linux", "ios": "ios"},
+    "endpoint_management": {"agent": "managed", "agentless": "unmanaged"},
+    "endpoint_mdm": {"internal": "enrolled", "external": "enrolled", "none": "not_enrolled", "unknown": "unknown"},
+    "endpoint_encryption": {"fileVaultOn": "encrypted", "fileVaultOff": "not_encrypted", "protectionOn": "encrypted",
+      "protectionOff": "not_encrypted", "protectionUnknown": "unknown"},
+    "endpoint_verdicts": {"success": "pass", "failed": "fail", "pending": "unknown"},
+    "endpoint_modules": {"XProtect": "antimalware", "Windows Defender Antivirus": "antimalware", "alf": "firewall",
+      "Windows Firewall": "firewall", "CrowdStrike Falcon": "edr"},
+    "endpoint_local_groups": {"admin": "admin", "staff": "none", "Administrators": "admin", "Users": "none"},
+    "endpoint_finding_types": {"bitlocker_off": "disk_encryption", "av_signatures_outdated": "antimalware_healthy",
+      "firewall_off": "firewall"},
+    "endpoint_finding_statuses": {"active": "open", "fixed": "resolved"}
+  }
+}

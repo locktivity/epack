@@ -5,6 +5,45 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ENHANCEMENTS
+
+- `roster.Derive` gives a value for every field of the eight normalized
+  schemas, apart from the time of the run and the free text a schema leaves
+  to the collector, such as issue and error messages. New roster blocks
+  describe the rest of a tenant: `directory` for its domain, account states,
+  passwords, app provisioning and session limits, `cloud` for its cloud
+  accounts, databases, audit logs, backups, threat detection, local users
+  and machine credentials, and `endpoint`, `scanning`, `vcs`, `tls` and
+  `email_dns` for its devices, vulnerability scanners, repositories, TLS
+  endpoints and mail domains. `providers` gives each schema's provider. A
+  roster without a block derives what it did before
+- A roster with a `vcs` block gives a code host's whole access-posture
+  artifact. Its accounts are the organization's members, outside
+  collaborators and bots, its roles the organization roles, and its apps
+  the installed apps. The block adds the organization's single sign-on,
+  SCIM provisioning, IP allow list and machine credentials, such as tokens
+  and deploy keys, each belonging to the organization or to repositories.
+  A repository with `collector_access` false, such as one a GitHub App
+  isn't installed on, is out of the scan. Such a roster gives no
+  idp-posture values
+- `roster.AboveLevel` reports whether a run at a level leaves out a value,
+  so a test can drop the audit-level values Derive gives when it compares
+  them with a trust run. `roster.Align` also takes `Settle`'s values
+- `roster.Uncovered` lists the fields an artifact writes that Derive has no
+  value for, so a test that compares a collector's output with a roster can
+  fail on what the comparison doesn't reach. `roster.Unanswered` lists the
+  fields of a schema no roster's values hold, `roster.NotDerived` the fields
+  Derive never gives with the reason for each, and `roster.Align` matches
+  Derive's list entries to an artifact's by the fields that identify them,
+  such as a TLS endpoint's host and port
+- Derive gives percentages in every entry of a list, and the `all_*`
+  booleans in tls and email-dns, true when every endpoint or domain counts
+  and null over none. `Expect` compares lists and objects by their JSON
+  encoding, so a derived list or count by name matches one read from an
+  artifact
+
 ## [0.10.6] - 2026-11-11
 
 ### ENHANCEMENTS

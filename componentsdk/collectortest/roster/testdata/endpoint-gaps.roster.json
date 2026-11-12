@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "vendor": "bitdefender",
+  "providers": {"endpoint-posture": "bitdefender"},
+  "endpoint": {
+    "organization_id": "6a1b2c3d4e5f60718293a4b5",
+    "scope": {"name": "managed_endpoints", "max_observation_age_seconds": 604800, "management": ["managed"]},
+    "os_support": {"windows": "10.0.19045"},
+    "unsupported": ["mdm", "screen_lock", "compliance"],
+    "not_read": ["disk_encryption"],
+    "permission_denied": ["edr_installed", "edr_healthy"],
+    "devices": {
+      "5d8f0e1a2b3c4d5e6f708192": {
+        "hostname": "srv-web-01",
+        "os": "Windows Server 2022 Datacenter",
+        "os_name": "Windows Server 2022 Datacenter",
+        "os_version": "10.0.20348",
+        "management": "managed",
+        "machineType": 2,
+        "last_seen_seconds_ago": 3600,
+        "observed_seconds_ago": {"antimalware_healthy": 900000},
+        "modules": {
+          "antimalware": {"enabled": true, "current": true},
+          "firewall": {"enabled": true},
+          "edrSensor": {"enabled": true, "reporting": true},
+          "deviceControl": {"enabled": false},
+          "contentControl": {"enabled": true}
+        }
+      },
+      "5d8f0e1a2b3c4d5e6f708193": {
+        "hostname": "ws-finance-02",
+        "os": "Windows 10 Pro",
+        "os_name": "Windows 10 Pro",
+        "os_version": "10.0.17763",
+        "management": "managed",
+        "machineType": 1,
+        "last_seen_seconds_ago": 43200,
+        "observed_seconds_ago": {"antimalware_healthy": 1209600},
+        "modules": {
+          "antimalware": {"enabled": true, "current": false},
+          "firewall": {"enabled": false}
+        }
+      },
+      "5d8f0e1a2b3c4d5e6f708194": {
+        "hostname": "PRINTER-3F",
+        "os": "Windows 10 Pro",
+        "management": "unmanaged",
+        "machineType": 1,
+        "last_seen_seconds_ago": 86400
+      }
+    }
+  },
+  "terms": {
+    "endpoint_os": {"Windows Server 2022 Datacenter": "windows", "Windows 10 Pro": "windows"},
+    "endpoint_management": {"managed": "managed", "unmanaged": "unmanaged"},
+    "endpoint_modules": {"antimalware": "antimalware", "firewall": "firewall", "edrSensor": "edr",
+      "deviceControl": "device_control", "contentControl": "other"}
+  }
+}

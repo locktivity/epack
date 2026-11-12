@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "vendor": "github",
+  "providers": {"vcs-posture": "github", "vuln-scanning": "github", "access-posture": "github"},
+  "accounts": {
+    "octo-owner": {"kind": "member", "enabled": true, "roles": ["owner"], "mfa": "security_key", "logins": ["saml", "password"], "signed_in_days_ago": 2},
+    "ops-owner": {"kind": "member", "enabled": true, "roles": ["owner"], "logins": "password", "signed_in_days_ago": 30},
+    "dev-1": {"kind": "member", "enabled": true, "roles": ["member"], "mfa": "totp", "logins": ["saml", "password"], "signed_in_days_ago": 120},
+    "dev-2": {"kind": "member", "enabled": true, "roles": ["member"], "logins": "password"},
+    "contractor": {"kind": "outside_collaborator", "enabled": true, "mfa": "sms", "logins": "password", "signed_in_days_ago": 10},
+    "ci-bot": {"kind": "bot", "enabled": true, "logins": "password", "signed_in_days_ago": 1}
+  },
+  "apps": {
+    "collector": {"enabled": true, "publisher": "this_organization"},
+    "ci-app": {"enabled": true, "publisher": "marketplace"},
+    "old-app": {"enabled": false, "publisher": "marketplace"}
+  },
+  "vcs": {
+    "organization": "acme-test",
+    "two_factor_requirement": true,
+    "single_sign_on": true,
+    "provisioning": ["scim_create", "scim_deprovision"],
+    "credentials": {
+      "dev-1-token": {"owner": "dev-1", "expires_in_days": 30, "last_used_days_ago": 5, "permissions": "contents:write"},
+      "api-deploy": {"repositories": ["api"], "created_days_ago": 200, "last_used_days_ago": 100, "permissions": "read_only"},
+      "sandbox-deploy": {"repositories": ["sandbox-play"], "created_days_ago": 5, "permissions": "read_write"}
+    },
+    "include_patterns": ["*"],
+    "exclude_patterns": ["sandbox-*"],
+    "repositories": {
+      "api": {
+        "visibility": "private",
+        "protections": {
+          "branch_protection": {
+            "enforcement": "active",
+            "enforce_admins": false,
+            "rules": {
+              "required_pull_request_reviews": {"approvals": 2},
+              "required_status_checks": {"checks": ["ci/build", "ci/test"], "strict": true},
+              "required_signatures": {}
+            }
+          }
+        }
+      },
+      "web": {
+        "protections": {
+          "ruleset:main": {
+            "enforcement": "active",
+            "rules": {
+              "pull_request": {"approvals": 0},
+              "required_status_checks": {"checks": []},
+              "required_linear_history": {}
+            }
+          },
+          "ruleset:signing": {"enforcement": "evaluate", "rules": {"required_signatures": {}}}
+        }
+      },
+      "legacy": {
+        "archived": true,
+        "protections": {
+          "branch_protection": {"enforcement": "active", "rules": {"required_pull_request_reviews": {"approvals": 1}}}
+        }
+      },
+      "api-fork": {"fork": true},
+      "sandbox-play": {
+        "protections": {
+          "branch_protection": {"enforcement": "active", "rules": {"required_signatures": {}}}
+        }
+      }
+    }
+  },
+  "scanning": {
+    "resources": {
+      "api": {
+        "type": "repository",
+        "scans": {"Dependabot alerts": "enabled", "Code scanning": "configured", "Secret scanning": "enabled"},
+        "findings": {
+          "dependabot-1": {"scanner": "Dependabot alerts", "severity": "critical", "state": "open", "open_days": 40, "ghsa": "GHSA-xxxx-yyyy-zzzz"},
+          "dependabot-2": {"scanner": "Dependabot alerts", "severity": "high", "state": "open", "open_days": 95},
+          "dependabot-3": {"scanner": "Dependabot alerts", "severity": "medium", "state": "fixed", "open_days": 20},
+          "dependabot-4": {"scanner": "Dependabot alerts", "severity": "low", "state": "open", "open_days": 7},
+          "code-1": {"scanner": "Code scanning", "severity": "medium", "state": "open", "open_days": 3},
+          "code-2": {"scanner": "Code scanning", "severity": "critical", "state": "dismissed", "open_days": 90},
+          "secret-1": {"scanner": "Secret scanning", "state": "open", "open_days": 100}
+        }
+      },
+      "web": {
+        "type": "repository",
+        "scans": {"Dependabot alerts": "enabled", "Code scanning": "not-configured", "Secret scanning": "disabled"}
+      },
+      "legacy": {"type": "repository", "scans": {"Dependabot alerts": "disabled"}},
+      "api-fork": {"type": "repository"},
+      "sandbox-play": {"type": "repository", "scans": {"Secret scanning": "enabled"}}
+    }
+  },
+  "terms": {
+    "account_kinds": {"member": "member", "outside_collaborator": "guest", "bot": "service"},
+    "roles": {"owner": "admin", "member": "none"},
+    "mfa_methods": {"security_key": "phishing_resistant", "totp": "mfa", "sms": "mfa"},
+    "login_methods": {"saml": "sso", "password": "local"},
+    "app_publishers": {"this_organization": "organization", "marketplace": "third_party"},
+    "provisioning_features": {"scim_create": "create", "scim_deprovision": "deactivate"},
+    "vcs_credential_permissions": {"contents:write": "write", "read_only": "read", "read_write": "write"},
+    "vcs_enforcements": {"active": "enforced", "evaluate": "report_only", "disabled": "off"},
+    "vcs_rules": {
+      "required_pull_request_reviews": "pull_request",
+      "pull_request": "pull_request",
+      "required_status_checks": "status_checks",
+      "required_signatures": "signed_commits",
+      "required_linear_history": "other"
+    },
+    "vuln_scanners": {
+      "Dependabot alerts": {"name": "dependabot", "categories": {"repository": "dependencies"}},
+      "Code scanning": {"name": "code_scanning", "categories": {"repository": "code"}},
+      "Secret scanning": {"name": "secret_scanning", "categories": {"repository": "secrets"}}
+    },
+    "vuln_scan_statuses": {"enabled": "scanned", "disabled": "not_scanned", "configured": "scanned", "not-configured": "not_scanned"},
+    "vuln_severities": {"critical": "critical", "high": "high", "medium": "medium", "low": "low"},
+    "vuln_finding_states": {"open": "open", "fixed": "closed", "dismissed": "closed", "auto_dismissed": "closed", "resolved": "closed"}
+  }
+}
