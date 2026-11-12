@@ -135,7 +135,7 @@
         "open_critical_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Open critical findings",
+          "description": "Open findings the scanner rates critical, using its own severity rating.",
           "x-epack-label": "Open critical findings",
           "x-epack-summary": "Open findings rated critical.",
           "x-epack-goal": "lower"
@@ -143,7 +143,7 @@
         "open_high_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Open high findings",
+          "description": "Open findings the scanner rates high, using its own severity rating.",
           "x-epack-label": "Open high findings",
           "x-epack-summary": "Open findings rated high.",
           "x-epack-goal": "lower"
@@ -151,7 +151,7 @@
         "open_medium_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Open medium findings",
+          "description": "Open findings the scanner rates medium, using its own severity rating.",
           "x-epack-label": "Open medium findings",
           "x-epack-summary": "Open findings rated medium.",
           "x-epack-goal": "lower"
@@ -159,7 +159,7 @@
         "open_low_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Open low findings",
+          "description": "Open findings the scanner rates low, using its own severity rating.",
           "x-epack-label": "Open low findings",
           "x-epack-summary": "Open findings rated low.",
           "x-epack-goal": "lower"

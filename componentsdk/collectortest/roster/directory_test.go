@@ -1,6 +1,7 @@
 package roster
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -210,6 +211,48 @@ func TestParseRefusesBadDirectoryFacts(t *testing.T) {
 			}
 			if _, err := Parse([]byte(changed)); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Parse() error = %v, want one containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// Another identity provider decides MFA for the accounts it signs in. With
+// Carol signing in through one, the MFA values over users are left out and
+// the admins' stay. With Helpdesk, an admin, the admins' go too.
+func TestDeriveLeavesMFAOutForAccountsAnotherProviderSignsIn(t *testing.T) {
+	raw, err := os.ReadFile("testdata/identity.roster.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	userMFA := []string{
+		"/user_security/mfa_user_count", "/user_security/phishing_resistant_user_count",
+		"/user_security/mfa_coverage_pct", "/user_security/mfa_phishing_resistant_pct",
+		"/policy/mfa_required", "/policy/mfa_required_user_count", "/policy/mfa_required_coverage_pct",
+	}
+	adminMFA := []string{"/privileged_access/privileged_mfa_user_count", "/privileged_access/privileged_mfa_coverage_pct"}
+	for name, tc := range map[string]struct {
+		from, to    string
+		adminsUnset bool
+	}{
+		"user":  {`"carol": {"kind": "user", "enabled": true,`, `"carol": {"kind": "user", "enabled": true, "signs_in_through": "partner-idp",`, false},
+		"admin": {`"helpdesk": {"kind": "user", "enabled": true,`, `"helpdesk": {"kind": "user", "enabled": true, "signs_in_through": "partner-idp",`, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := strings.Replace(string(raw), tc.from, tc.to, 1)
+			if changed == string(raw) {
+				t.Fatalf("%q is not in the roster", tc.from)
+			}
+			r, err := Parse([]byte(changed))
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := deriveSchema(t, r, IDPPosture)
+			checkPointers(t, v, map[string]any{"/user_security/user_count": 5})
+			checkUnset(t, v, userMFA...)
+			if tc.adminsUnset {
+				checkUnset(t, v, adminMFA...)
+			} else if _, ok := v["/privileged_access/privileged_mfa_user_count"]; !ok {
+				t.Error("/privileged_access/privileged_mfa_user_count is unset, want it given")
 			}
 		})
 	}

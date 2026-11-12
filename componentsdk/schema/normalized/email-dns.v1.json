@@ -7,11 +7,13 @@
   "required": ["schema_version", "collected_at", "domains"],
   "properties": {
     "schema_version": {
+      "description": "Version of this schema, always 1.0.0.",
       "type": "string",
       "const": "1.0.0",
       "x-epack-label": "Schema version"
     },
     "collected_at": {
+      "description": "When the collector read the domains' DNS records, as an ISO 8601 timestamp.",
       "type": "string",
       "format": "date-time",
       "x-epack-label": "Collected at"
@@ -83,6 +85,7 @@
           "x-epack-summary": "Email authentication assessment for the domain."
         },
         "errors": {
+          "description": "Problems the collector hit while reading this domain's DNS records, such as a lookup that timed out.",
           "type": "array",
           "items": {
             "type": "string"

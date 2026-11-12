@@ -111,12 +111,15 @@ func (r *Roster) addMember(sa *scopeAccess, a Account, admin bool) {
 // repository the scan covers.
 func (r *Roster) codeHostAccess() scopeAccess {
 	var out scopeAccess
+	g := r.VCS
+	// Every member, but no outside collaborator, holds the base permission.
+	class := r.Terms.Roles[g.BasePermission]
+	baseAdmin := class == RoleAdmin || class == RoleSuperAdmin
 	for _, a := range r.Accounts {
 		if a.Enabled && r.person(a) {
-			r.addMember(&out, a, r.admin(a))
+			r.addMember(&out, a, r.admin(a) || (baseAdmin && r.kindOf(a) == KindMember))
 		}
 	}
-	g := r.VCS
 	for _, m := range g.Credentials {
 		if m.Active && (len(m.Repositories) == 0 || slices.ContainsFunc(m.Repositories, g.scans)) {
 			out.credentials = append(out.credentials, m)

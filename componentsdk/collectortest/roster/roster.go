@@ -20,6 +20,7 @@
 //	    "partial_cloud_roles": [...], "mfa": "..." or [...],
 //	    "signed_in_days_ago": 3, "state": "...", "password_strength": "...",
 //	    "password_length": 12, "logins": "..." or [...],
+//	    "signs_in_through": "<identity provider>",
 //	    "cloud_account": "<cloud account key>",
 //	    "cloud_access": {"<cloud account key>": {"roles": [...], "partial_roles": [...]}}}},
 //	  "groups": {"<key>": {"members": [...], "roles": [...], "cloud_roles": [...],
@@ -57,7 +58,9 @@
 //
 // Any other field of an entry, or of the file, is a vendor extra that Parse
 // keeps for the vendor's simulator and Derive never reads. An account with no
-// signed_in_days_ago has never signed in. A policy's requires lists what a
+// signed_in_days_ago has never signed in. An account with signs_in_through
+// signs in through that other identity provider, which decides whether it
+// uses MFA. A policy's requires lists what a
 // sign-in it covers must satisfy: all of a list, or one of an "any" list. Its
 // conditions are vendor conditions, such as a sign-in risk level, that limit
 // it to some sign-ins.
@@ -296,6 +299,10 @@ type Account struct {
 	// Logins are the ways the account can sign in to the cloud side, or reach
 	// a vcs block's organization.
 	Logins []string
+	// SignsInThrough names another identity provider the account signs in
+	// through, such as a SAML provider a directory sends it to. That
+	// provider, not this one, decides whether the account uses MFA.
+	SignsInThrough string
 	// CloudAccount is the cloud account the account is local to, or empty
 	// for an account in the directory.
 	CloudAccount string
@@ -652,6 +659,7 @@ func parseAccount(key string, raw json.RawMessage) (Account, error) {
 		PasswordRating  string                     `json:"password_strength"`
 		PasswordLength  *int                       `json:"password_length"`
 		Logins          oneOrMore                  `json:"logins"`
+		SignsInThrough  string                     `json:"signs_in_through"`
 		CloudAccount    string                     `json:"cloud_account"`
 		CloudAccess     map[string]json.RawMessage `json:"cloud_access"`
 	}
@@ -662,7 +670,7 @@ func parseAccount(key string, raw json.RawMessage) (Account, error) {
 		return Account{}, fmt.Errorf("account %s has no enabled", key)
 	}
 	e, err := extra(raw, "kind", "enabled", "roles", "eligible_roles", "cloud_roles", "partial_cloud_roles", "mfa", "signed_in_days_ago",
-		"state", "password_strength", "password_length", "logins", "cloud_account", "cloud_access")
+		"state", "password_strength", "password_length", "logins", "signs_in_through", "cloud_account", "cloud_access")
 	if err != nil {
 		return Account{}, fmt.Errorf("account %s: %w", key, err)
 	}
@@ -674,7 +682,7 @@ func parseAccount(key string, raw json.RawMessage) (Account, error) {
 		Key: key, Kind: a.Kind, Enabled: *a.Enabled, Roles: a.Roles, EligibleRoles: a.EligibleRoles,
 		CloudRoles: a.CloudRoles, PartialCloudRoles: a.PartialRoles, Methods: a.MFA, SignedInDaysAgo: a.SignedInDaysAgo,
 		State: a.State, PasswordStrength: a.PasswordRating, PasswordLength: a.PasswordLength, Logins: a.Logins,
-		CloudAccount: a.CloudAccount, CloudAccess: access, Extra: e,
+		SignsInThrough: a.SignsInThrough, CloudAccount: a.CloudAccount, CloudAccess: access, Extra: e,
 	}, nil
 }
 

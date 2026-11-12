@@ -30,7 +30,7 @@ const (
 //
 //	"vcs": {
 //	  "organization": "...",
-//	  "two_factor_requirement": true,
+//	  "two_factor_requirement": true, "base_permission": "...",
 //	  "single_sign_on": true, "provisioning": [...],
 //	  "allowed_sources": [...],
 //	  "include_patterns": ["*"], "exclude_patterns": [...],
@@ -58,7 +58,9 @@ const (
 // terms.provisioning_features, are those of its SCIM provisioning.
 // allowed_sources are the networks its IP allow list lets every credential
 // in from, mapped in terms.network_sources, and left out when it has no
-// allow list.
+// allow list. base_permission is the permission every member gets on every
+// repository, mapped in terms.roles. When it maps to admin or super_admin,
+// every member is an admin. Outside collaborators don't get it.
 //
 // A roster with a vcs block describes the one organization. Its accounts
 // are the organization's members and outside collaborators, and the bot
@@ -93,6 +95,7 @@ const (
 type VCS struct {
 	Organization         string
 	TwoFactorRequirement bool
+	BasePermission       string
 	SingleSignOn         bool
 	Provisioning         []string
 	AllowedSources       []string
@@ -168,6 +171,7 @@ func parseVCS(raw json.RawMessage) (*VCS, error) {
 	var b struct {
 		Organization   string                     `json:"organization"`
 		TwoFactor      bool                       `json:"two_factor_requirement"`
+		Base           string                     `json:"base_permission"`
 		SingleSignOn   bool                       `json:"single_sign_on"`
 		Provisioning   oneOrMore                  `json:"provisioning"`
 		AllowedSources []string                   `json:"allowed_sources"`
@@ -180,11 +184,11 @@ func parseVCS(raw json.RawMessage) (*VCS, error) {
 		return nil, err
 	}
 	g := &VCS{
-		Organization: b.Organization, TwoFactorRequirement: b.TwoFactor, SingleSignOn: b.SingleSignOn, Provisioning: b.Provisioning,
+		Organization: b.Organization, TwoFactorRequirement: b.TwoFactor, BasePermission: b.Base, SingleSignOn: b.SingleSignOn, Provisioning: b.Provisioning,
 		AllowedSources: b.AllowedSources, IncludePatterns: b.Include, ExcludePatterns: b.Exclude,
 	}
 	var err error
-	if g.Extra, err = extra(raw, "organization", "two_factor_requirement", "single_sign_on", "provisioning", "allowed_sources",
+	if g.Extra, err = extra(raw, "organization", "two_factor_requirement", "base_permission", "single_sign_on", "provisioning", "allowed_sources",
 		"include_patterns", "exclude_patterns", "repositories", "credentials"); err != nil {
 		return nil, err
 	}
@@ -249,6 +253,11 @@ func parseRepository(name string, raw json.RawMessage) (Repository, error) {
 
 func validateVCS(r *Roster) error {
 	t := r.Terms
+	if r.VCS != nil && r.VCS.BasePermission != "" {
+		if err := mapped(t.Roles, "roles", "vcs base_permission", r.VCS.BasePermission); err != nil {
+			return err
+		}
+	}
 	for name, m := range map[string]struct {
 		terms map[string]string
 		allow []string

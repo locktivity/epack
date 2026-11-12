@@ -4,6 +4,7 @@
   "required": ["schema_version", "collected_at", "provider", "accounts"],
   "properties": {
     "schema_version": {
+      "description": "Version of this schema, always 1.0.0.",
       "type": "string",
       "const": "1.0.0",
       "x-epack-label": "Schema version"
@@ -268,7 +269,7 @@
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Security groups that let a connection to port 22 in from any address, with their rules applied as the cloud applies them, so a deny rule processed first closes the port. Any address means every IPv4 or IPv6 address, or the cloud's tag for the internet",
+                "description": "Security groups that let a connection to port 22 in from any address, with their rules applied as the cloud applies them, so a deny rule processed first closes the port. Any address means every IPv4 or IPv6 address, or the cloud's tag for the internet. Each security group is judged on its own rules. Network ACLs and other subnet-level rules are not considered.",
                 "x-epack-label": "Security groups open to SSH",
                 "x-epack-summary": "Security groups that let an SSH connection (port 22) in from any address.",
                 "x-epack-goal": "lower"
@@ -277,7 +278,7 @@
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "x-epack-level": "audit",
-                "description": "Security groups that let a connection to port 3389 in from any address, with their rules applied as the cloud applies them, so a deny rule processed first closes the port. Any address means every IPv4 or IPv6 address, or the cloud's tag for the internet",
+                "description": "Security groups that let a connection to port 3389 in from any address, with their rules applied as the cloud applies them, so a deny rule processed first closes the port. Any address means every IPv4 or IPv6 address, or the cloud's tag for the internet. Each security group is judged on its own rules. Network ACLs and other subnet-level rules are not considered.",
                 "x-epack-label": "Security groups open to RDP",
                 "x-epack-summary": "Security groups that let an RDP connection (port 3389) in from any address.",
                 "x-epack-goal": "lower"

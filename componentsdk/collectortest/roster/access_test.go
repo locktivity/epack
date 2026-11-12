@@ -446,3 +446,33 @@ func TestParseRefusesBadAccessFacts(t *testing.T) {
 		})
 	}
 }
+
+// A base permission of admin makes every member an admin, the owners and
+// both developers, but not the outside collaborator. A base permission
+// with no entry in terms.roles is refused.
+func TestCodeHostBasePermissionMakesEveryMemberAnAdmin(t *testing.T) {
+	raw, err := os.ReadFile("testdata/vcs.roster.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withBase := func(base string) string {
+		s := strings.Replace(string(raw), `"two_factor_requirement": true,`, `"two_factor_requirement": true, "base_permission": "`+base+`",`, 1)
+		return strings.Replace(s, `"roles": {"owner": "admin", "member": "none"}`, `"roles": {"owner": "admin", "member": "none", "admin": "admin", "write": "none"}`, 1)
+	}
+	for base, want := range map[string]map[string]any{
+		"admin": {"/admins/admin_count": 4, "/admins/admin_share_pct": 80, "/members/member_count": 5},
+		"write": {"/admins/admin_count": 2, "/admins/admin_share_pct": 40, "/members/member_count": 5},
+	} {
+		t.Run(base, func(t *testing.T) {
+			r, err := Parse([]byte(withBase(base)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkPointers(t, deriveSchema(t, r, AccessPosture), want)
+		})
+	}
+	unmapped := strings.Replace(string(raw), `"two_factor_requirement": true,`, `"two_factor_requirement": true, "base_permission": "maintain",`, 1)
+	if _, err := Parse([]byte(unmapped)); err == nil || !strings.Contains(err.Error(), `vcs base_permission "maintain" has no entry in terms.roles`) {
+		t.Fatalf("Parse() error = %v, want one about the unmapped base permission", err)
+	}
+}
