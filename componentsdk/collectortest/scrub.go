@@ -96,6 +96,17 @@ var (
 		`|(?:[A-Za-z0-9+/_-]|%2[BbFf])+(?:=|%3[Dd]){0,2}`)
 )
 
+// odataControl lists the control information OData's JSON format names
+// odata.<name>, lowercased. A key such as "members@odata.nextLink" or
+// "inheritsPermissionsFrom@odata.context" reads as an email address but
+// names no one, and replacing it breaks the recording's structure.
+var odataControl = map[string]bool{
+	"context": true, "metadataetag": true, "type": true, "count": true, "nextlink": true, "delta": true,
+	"deltalink": true, "id": true, "editlink": true, "readlink": true, "etag": true, "navigationlink": true,
+	"associationlink": true, "mediaeditlink": true, "mediareadlink": true, "mediacontenttype": true,
+	"mediaetag": true, "removed": true, "bind": true,
+}
+
 var (
 	reservedIPv4 = cidrs("0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4")
 	globalIPv6   = cidrs("2000::/3")[0]
@@ -479,6 +490,9 @@ func (s *scrubber) emails(in string) string {
 		}
 		key := strings.ToLower(m[:at] + "@" + m[at+len(sep):])
 		if s.keep[m] || s.keep[key] || fakeEmail.MatchString(key) {
+			return m
+		}
+		if name, ok := strings.CutPrefix(key[at+1:], "odata."); ok && odataControl[name] {
 			return m
 		}
 		f := s.fake("email", key, nthFakeEmail)

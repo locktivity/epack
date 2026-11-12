@@ -77,6 +77,17 @@ func TestScrubbingFakesDistinctValuesDistinctly(t *testing.T) {
 	}
 }
 
+func TestScrubbingKeepsODataAnnotations(t *testing.T) {
+	s := newScrubber(nil, ScrubRules{})
+	in := `{"@odata.context":"https://graph.example.com/v1.0/$metadata#roles","value":[{"inheritsPermissionsFrom@odata.context":"x",` +
+		`"members@odata.nextLink":"y","manager@odata.bind":"z","owner":"alice@contoso.com","contact":"bob@odata.org"}]}`
+	want := `{"@odata.context":"https://graph.example.com/v1.0/$metadata#roles","value":[{"inheritsPermissionsFrom@odata.context":"x",` +
+		`"members@odata.nextLink":"y","manager@odata.bind":"z","owner":"user1@example.com","contact":"user2@example.com"}]}`
+	if got := s.text(in); got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
 func TestScrubbingKeepsAddressesACollectorTellsApart(t *testing.T) {
 	s := newScrubber(nil, ScrubRules{})
 	in := "0.0.0.0/0 ::/0 10.1.2.3 172.16.5.4 192.168.1.1 127.0.0.1 169.254.169.254 100.64.0.1 255.255.255.0 192.0.2.10 fe80::1 2001:db8::5 " +
