@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-12
+
+## [0.11.0] - 2026-11-12
+
 ### ENHANCEMENTS
 
 - `roster.Derive` gives a value for every field of the eight normalized
