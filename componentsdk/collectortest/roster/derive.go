@@ -187,15 +187,12 @@ func deriveIdentity(r *Roster) map[string]any {
 	// that include everyone and name exceptions, such as a break-glass
 	// account, still make mfa_required true.
 	protects := func(p Policy) bool { return r.requiresMFA(p) || p.Blocks != "" }
-	blocksLegacy := func(p Policy) bool { return r.Terms.Blocks[p.Blocks] == BlocksLegacyAuth }
-	everyone := func(keep func(Policy) bool) []Policy {
-		return r.policiesThat(func(p Policy) bool { return p.Include.All && keep(p) })
-	}
-	v["/policy/mfa_required"] = r.coversSignIns(everyone(protects), clientKinds)
+	blocksLegacy := func(p Policy) bool { return p.Blocks != "" }
+	v["/policy/mfa_required"] = r.everyoneCovered(users, protects, clientKinds)
 	v["/policy/mfa_required_user_count"] = count(users, func(a Account) bool {
-		return r.coversSignIns(r.policiesThat(func(p Policy) bool { return protects(p) && r.covers(p, a) }), clientKinds)
+		return r.coversSignIns(r.policiesThat(func(p Policy) bool { return r.covers(p, a) }), clientKinds, protects)
 	})
-	v["/policy/legacy_auth_blocked"] = r.coversSignIns(everyone(blocksLegacy), legacyClientKinds)
+	v["/policy/legacy_auth_blocked"] = r.everyoneCovered(users, blocksLegacy, legacyClientKinds)
 	if len(admins) > 0 {
 		v["/policy/phishing_resistant_required_for_privileged"] = slices.ContainsFunc(r.Policies, func(p Policy) bool {
 			return r.applies(p) && r.requires(p, RequiresPhishingResistantMFA) && r.includesAdmins(p, admins)
@@ -246,6 +243,32 @@ var (
 	}
 )
 
+// everyoneCovered reports whether the policies counts keeps cover every
+// sign-in from each kind of client in kinds, whoever signs in, leaving aside
+// the exceptions policies name. With no ordered policies, that is the
+// policies that include everyone. In a first_match set a policy for some
+// people shadows the later policies for them, so with ordered policies each
+// user must be covered once every policy's exclusions are set aside, and
+// with no users an account in no group and holding no role must be.
+func (r *Roster) everyoneCovered(users []Account, counts func(Policy) bool, kinds []string) bool {
+	if !slices.ContainsFunc(r.Policies, func(p Policy) bool { return p.FirstMatch != "" }) {
+		return r.coversSignIns(r.policiesThat(func(p Policy) bool { return p.Include.All }), kinds, counts)
+	}
+	if len(users) == 0 {
+		users = []Account{{}}
+	}
+	return !slices.ContainsFunc(users, func(a Account) bool {
+		var including []Policy
+		for _, p := range r.Policies {
+			if r.inAudience(p.Include, a) {
+				p.Exclude = Audience{}
+				including = append(including, p)
+			}
+		}
+		return !r.coversSignIns(including, kinds, counts)
+	})
+}
+
 func (r *Roster) policiesThat(keep func(Policy) bool) []Policy {
 	var out []Policy
 	for _, p := range r.Policies {
@@ -256,26 +279,39 @@ func (r *Roster) policiesThat(keep func(Policy) bool) []Policy {
 	return out
 }
 
-// coversSignIns reports whether the enforced policies among policies,
-// between them, cover every sign-in to every app from each kind of client in
-// kinds, whatever the sign-in's other parts. A sign-in is one value of each
-// part some policy limits.
-func (r *Roster) coversSignIns(policies []Policy, kinds []string) bool {
+// coversSignIns reports whether the enforced policies among policies that
+// counts keeps, between them, cover every sign-in to every app from each
+// kind of client in kinds, whatever the sign-in's other parts. A sign-in is
+// one value of each part some policy limits. In a first_match set only the
+// first enforced policy that applies to a sign-in counts for it, and only
+// when counts keeps it.
+func (r *Roster) coversSignIns(policies []Policy, kinds []string, counts func(Policy) bool) bool {
 	type limited struct {
 		policy Policy
 		limits map[string][]string
 	}
 	var enforced []limited
+	sets := map[string][]limited{}
 	parts := map[string]bool{PartClient: true}
 	for _, p := range policies {
 		limits, ok := r.limits(p)
 		if !ok || r.Terms.PolicyStates[p.State] != StateEnforced {
 			continue
 		}
-		enforced = append(enforced, limited{p, limits})
+		switch {
+		case p.FirstMatch != "":
+			sets[p.FirstMatch] = append(sets[p.FirstMatch], limited{p, limits})
+		case counts(p):
+			enforced = append(enforced, limited{p, limits})
+		default:
+			continue
+		}
 		for part := range limits {
 			parts[part] = true
 		}
+	}
+	for _, set := range sets {
+		slices.SortFunc(set, func(a, b limited) int { return a.policy.Priority - b.policy.Priority })
 	}
 	signIns := []map[string]string{{}}
 	for _, part := range sortedKeys(parts) {
@@ -293,15 +329,24 @@ func (r *Roster) coversSignIns(policies []Policy, kinds []string) bool {
 		}
 		signIns = next
 	}
+	allows := func(l limited, in map[string]string) bool {
+		for part, values := range l.limits {
+			if !slices.Contains(values, in[part]) {
+				return false
+			}
+		}
+		return true
+	}
 	for _, in := range signIns {
 		var forSignIn []Policy
 		for _, l := range enforced {
-			allows := true
-			for part, values := range l.limits {
-				allows = allows && slices.Contains(values, in[part])
-			}
-			if allows {
+			if allows(l, in) {
 				forSignIn = append(forSignIn, l.policy)
+			}
+		}
+		for _, name := range sortedKeys(sets) {
+			if i := slices.IndexFunc(sets[name], func(l limited) bool { return allows(l, in) }); i >= 0 && counts(sets[name][i].policy) {
+				forSignIn = append(forSignIn, sets[name][i].policy)
 			}
 		}
 		if !coverEveryApp(forSignIn) {

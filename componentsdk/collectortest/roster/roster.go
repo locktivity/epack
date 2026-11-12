@@ -29,7 +29,7 @@
 //	    "apps": "all" or [...], "exclude_apps": [...],
 //	    "requires": "..." or [...] or {"any": [...]}, "blocks": "...",
 //	    "conditions": [...], "session_lifetime_minutes": 720,
-//	    "idle_timeout_minutes": 60}},
+//	    "idle_timeout_minutes": 60, "first_match": "...", "priority": 1}},
 //	  "apps": {"<key>": {"enabled": true, "sso_mode": "...",
 //	    "publisher": "...", "provisioning": "..." or [...], "cloud_roles": [...],
 //	    "credentials": {"<key>": {"kind": "...", "start": "...", "end": "..."}}}},
@@ -62,6 +62,12 @@
 // conditions are vendor conditions, such as a sign-in risk level, that limit
 // it to some sign-ins.
 //
+// Policies that name the same first_match set apply in priority order,
+// lowest first, as a vendor such as Okta applies them: for each sign-in,
+// the first enforced policy in the set that applies to it decides, and the
+// set's later policies count for nothing. Every policy in a set covers the
+// same apps. Policies in different sets, or in none, combine as above.
+//
 // A condition terms.conditions maps limits a policy to the sign-ins whose
 // parts take the values listed there. The parts are the client (browser,
 // apps for mobile and desktop apps with modern sign-in, mail_sync for legacy
@@ -71,7 +77,8 @@
 // (trusted or untrusted), and the sign-in and user risk (none, low, medium,
 // high). Any other condition limits a policy in a way Derive doesn't
 // follow. A policy that blocks legacy authentication covers mail_sync and
-// legacy clients only.
+// legacy clients only, and one that blocks all, such as a rule that denies
+// access, covers every sign-in.
 //
 // The cloud side is one subscription or account. Its members are the
 // accounts that hold a cloud role, directly or through a group, over the
@@ -189,6 +196,7 @@ const (
 	RequiresOther = "other"
 
 	BlocksLegacyAuth = "legacy_auth"
+	BlocksAll        = "all"
 
 	PartClient     = "client"
 	PartPlatform   = "platform"
@@ -372,7 +380,11 @@ type Policy struct {
 	// the policy sets, or nil when it sets none.
 	SessionLifetimeMinutes *int
 	IdleTimeoutMinutes     *int
-	Extra                  Extra
+	// FirstMatch names the ordered set the policy belongs to, if any, and
+	// Priority its place in that set, lowest first.
+	FirstMatch string
+	Priority   int
+	Extra      Extra
 }
 
 // Audience is who a policy includes or excludes.
@@ -699,6 +711,8 @@ func parsePolicy(key string, raw json.RawMessage) (Policy, error) {
 		Conditions  []string        `json:"conditions"`
 		Lifetime    *int            `json:"session_lifetime_minutes"`
 		Idle        *int            `json:"idle_timeout_minutes"`
+		FirstMatch  string          `json:"first_match"`
+		Priority    int             `json:"priority"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return Policy{}, fmt.Errorf("policy %s: %w", key, err)
@@ -721,14 +735,15 @@ func parsePolicy(key string, raw json.RawMessage) (Policy, error) {
 	if err != nil {
 		return Policy{}, fmt.Errorf("policy %s: %w", key, err)
 	}
-	e, err := extra(raw, "state", "include", "exclude", "apps", "exclude_apps", "requires", "blocks", "conditions", "session_lifetime_minutes", "idle_timeout_minutes")
+	e, err := extra(raw, "state", "include", "exclude", "apps", "exclude_apps", "requires", "blocks", "conditions", "session_lifetime_minutes", "idle_timeout_minutes", "first_match", "priority")
 	if err != nil {
 		return Policy{}, fmt.Errorf("policy %s: %w", key, err)
 	}
 	return Policy{
 		Key: key, State: p.State, Include: include, Exclude: exclude, Apps: apps, ExcludeApps: p.ExcludeApps,
 		Requires: requires, RequireAny: requireAny, Blocks: p.Blocks, Conditions: p.Conditions,
-		SessionLifetimeMinutes: p.Lifetime, IdleTimeoutMinutes: p.Idle, Extra: e,
+		SessionLifetimeMinutes: p.Lifetime, IdleTimeoutMinutes: p.Idle,
+		FirstMatch: p.FirstMatch, Priority: p.Priority, Extra: e,
 	}, nil
 }
 
@@ -829,7 +844,7 @@ func (r *Roster) Validate() error {
 		"cloud_roles":           {t.CloudRoles, []string{RoleAdmin, RoleNone}},
 		"policy_states":         {t.PolicyStates, []string{StateEnforced, StateReportOnly, StateOff}},
 		"requirements":          {t.Requirements, []string{RequiresMFA, RequiresPhishingResistantMFA, RequiresManagedDevice, RequiresOther}},
-		"blocks":                {t.Blocks, []string{BlocksLegacyAuth}},
+		"blocks":                {t.Blocks, []string{BlocksLegacyAuth, BlocksAll}},
 		"sso_modes":             {t.SSOModes, []string{SSO, NoSSO}},
 		"protocols":             {t.Protocols, []string{ProtocolTCP, ProtocolUDP, ProtocolAny}},
 		"network_sources":       {t.NetworkSources, []string{SourceAny, SourceLimited}},
@@ -966,6 +981,9 @@ func (r *Roster) Validate() error {
 			}
 		}
 	}
+	if err := r.validateSets(); err != nil {
+		return err
+	}
 	for _, a := range r.Apps {
 		if err := mapped(t.ProvisioningFeatures, "provisioning_features", "app "+a.Key+" provisioning", a.Provisioning...); err != nil {
 			return err
@@ -1015,6 +1033,36 @@ func (r *Roster) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateSets checks that the policies of each first_match set cover the
+// same apps and hold distinct priorities.
+func (r *Roster) validateSets() error {
+	first := map[string]Policy{}
+	priorities := map[string]map[int]string{}
+	for _, p := range r.Policies {
+		if p.FirstMatch == "" {
+			continue
+		}
+		f, seen := first[p.FirstMatch]
+		if !seen {
+			first[p.FirstMatch], priorities[p.FirstMatch] = p, map[int]string{}
+		} else if !sameSet(f.Apps, p.Apps) || !sameSet(f.ExcludeApps, p.ExcludeApps) {
+			return fmt.Errorf("policies %s and %s are both in first_match set %s, and cover different apps", f.Key, p.Key, p.FirstMatch)
+		}
+		if other, taken := priorities[p.FirstMatch][p.Priority]; taken {
+			return fmt.Errorf("policies %s and %s in first_match set %s both have priority %d", other, p.Key, p.FirstMatch, p.Priority)
+		}
+		priorities[p.FirstMatch][p.Priority] = p.Key
+	}
+	return nil
+}
+
+func sameSet(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(slices.Compact(a), slices.Compact(b))
 }
 
 func mapped(terms map[string]string, block, what string, vendor ...string) error {

@@ -43,6 +43,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and null over none. `Expect` compares lists and objects by their JSON
   encoding, so a derived list or count by name matches one read from an
   artifact
+- `componentsdk/collectortest/simulate` builds a vendor simulator from a
+  roster and checks a collector against the values `roster.Derive` gives.
+  A simulator lists each endpoint with the recorded operation it mirrors,
+  what it needs, and how the vendor pages it: a next link in the body, a
+  Link header, a cursor, or an offset. It builds each item from a copy of
+  one the sandbox's recording holds, so its answers keep the vendor's
+  nulls, optional fields and envelopes. The kit answers a call the
+  credential or the plan can't make with the vendor's refusal, and gives
+  stable IDs. Its harness checks every simulated answer's shape against
+  the recording, and fails on a field, type, operation or status the
+  recording doesn't hold unless the simulator lists it with why. It lines
+  a collector's normalized values up with the derived ones, fails on a
+  difference no verdict lists and on a listed one that matches again, and
+  runs a matrix of roster variants, rules on random rosters, and a
+  comparison with the recording's values
+- `simulate.Harness.Coverage` turns on a coverage check: `Tenants` also
+  fails on a field a collector writes that the roster gives no value for,
+  as `roster.Uncovered` finds it, unless `Harness.Uncompared` lists the
+  field with why, and on a listing every scenario now compares
+- A roster's sign-in policies can name a `first_match` set and a
+  `priority`, for a vendor such as Okta that applies the first policy and
+  rule that match a sign-in. `blocks` can be `all`, for a rule that denies
+  every sign-in
 
 ## [0.10.6] - 2026-11-11
 
