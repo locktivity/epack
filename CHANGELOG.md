@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `already_exists` or left two releases for one tag. The release still
   carries each `.intoto.jsonl` next to its `.sigstore.json` copy. Collector
   scaffolds already worked this way
+- `roster.Derive` sets idp-posture's `privileged_users_present` from the
+  admin count. It used to come only with the admin MFA percentages, which
+  0.11.1 leaves out when an admin has `signs_in_through`, so a roster with
+  such an admin gave no value for it
 
 ## [0.11.1] - 2026-11-12
 
