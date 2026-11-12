@@ -15,7 +15,7 @@ func TestCheckNamesListEveryCheckOnce(t *testing.T) {
 		seen[name] = true
 	}
 	for _, want := range []string{"determinism", "coverage", "levels", "permissions", "redaction", "credentials", "faults", "responses", "guidance",
-		"pages", "vocabulary", "order", "variants", "fields", "sensitivity", "tracemap", "population", "nulls", "rollups", "ratios"} {
+		"pages", "vocabulary", "order", "variants", "fields", "field_faults", "sensitivity", "tracemap", "population", "nulls", "rollups", "ratios"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("CheckNames lacks %s", want)
 		}

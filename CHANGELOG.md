@@ -66,6 +66,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `priority`, for a vendor such as Okta that applies the first policy and
   rule that match a sign-in. `blocks` can be `all`, for a rule that denies
   every sign-in
+- `Suite.FieldFaults` turns on the test kit's `field_faults` check, which
+  holds that a missing or unreadable field never lowers a count. For each
+  field the collector reads in an operation's answers, it runs the clean
+  scenario with the field set to null, dropped, and, for a list, emptied.
+  Every number and boolean in the output must keep its clean value or be
+  left out under a gap, which must name the operation when
+  `Suite.GapOperations` is on. An XML element is dropped or, for a list,
+  emptied. Paging fields are left alone. A change to an object is reported
+  only where no field inside it explains the same values, so a finding
+  names the field the collector reads. It would have caught Microsoft
+  v0.2.4's Global Administrator count of 0 from roles Graph sends with
+  `isPrivileged` null, and its soft delete share of 0 from vaults listed
+  without their security settings
+- `Suite.Populations` declares a list whose emptying is a real answer, such
+  as a users list, and `Suite.Omissions` a field the vendor leaves out, or
+  sends as null, to mean a value. Each entry names one operation's list or
+  field and says why. A `*` in an entry matches any one key, such as each
+  of a resource's tags. The `field_faults` check reports an entry it never
+  used
 
 ## [0.10.6] - 2026-11-11
 
