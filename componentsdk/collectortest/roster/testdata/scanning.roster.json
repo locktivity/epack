@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "vendor": "aws",
+  "providers": {"vuln-scanning": "aws"},
+  "scanning": {
+    "scopes": {
+      "111111111111": {
+        "kind": "AWS_ACCOUNT",
+        "name": "production",
+        "scanners": {
+          "Amazon Inspector": {
+            "states": {"AWS_EC2_INSTANCE": "ENABLED", "AWS_ECR_CONTAINER_IMAGE": "ENABLED", "AWS_LAMBDA_FUNCTION": "DISABLED"},
+            "delegated_admin": "999999999999"
+          }
+        },
+        "resources": {
+          "arn:aws:ec2:us-east-1:111111111111:instance/i-0a1": {
+            "type": "AWS_EC2_INSTANCE",
+            "scans": {"Amazon Inspector": "ACTIVE"},
+            "findings": {
+              "f-critical-old": {"scanner": "Amazon Inspector", "severity": "CRITICAL", "state": "ACTIVE", "open_days": 45, "cve": "CVE-2024-0001"},
+              "f-critical-new": {"scanner": "Amazon Inspector", "severity": "CRITICAL", "state": "ACTIVE", "open_days": 30},
+              "f-high-old": {"scanner": "Amazon Inspector", "severity": "HIGH", "state": "ACTIVE", "open_days": 120},
+              "f-medium": {"scanner": "Amazon Inspector", "severity": "MEDIUM", "state": "ACTIVE", "open_days": 400},
+              "f-low": {"scanner": "Amazon Inspector", "severity": "LOW", "state": "ACTIVE", "open_days": 5},
+              "f-info": {"scanner": "Amazon Inspector", "severity": "INFORMATIONAL", "state": "ACTIVE", "open_days": 3},
+              "f-closed": {"scanner": "Amazon Inspector", "severity": "CRITICAL", "state": "CLOSED", "open_days": 200}
+            }
+          },
+          "arn:aws:ec2:us-east-1:111111111111:instance/i-0a2": {
+            "type": "AWS_EC2_INSTANCE",
+            "scans": {"Amazon Inspector": "INACTIVE"},
+            "scan_status_reason": "UNMANAGED_EC2_INSTANCE"
+          },
+          "arn:aws:ec2:us-east-1:111111111111:instance/i-0a3": {"type": "AWS_EC2_INSTANCE"},
+          "arn:aws:ecr:us-east-1:111111111111:repository/api/sha256:aaa": {
+            "type": "AWS_ECR_CONTAINER_IMAGE",
+            "scans": {"Amazon Inspector": "ACTIVE"},
+            "findings": {
+              "f-image-high": {"scanner": "Amazon Inspector", "severity": "HIGH", "state": "ACTIVE", "open_days": 30},
+              "f-image-suppressed": {"scanner": "Amazon Inspector", "severity": "CRITICAL", "state": "SUPPRESSED", "open_days": 60}
+            }
+          },
+          "arn:aws:lambda:us-east-1:111111111111:function:resize": {"type": "AWS_LAMBDA_FUNCTION"}
+        }
+      },
+      "222222222222": {
+        "kind": "AWS_ACCOUNT",
+        "name": "staging",
+        "scanners": {
+          "Amazon Inspector": {"states": {"AWS_EC2_INSTANCE": "ENABLED", "AWS_ECR_CONTAINER_IMAGE": "DISABLED", "AWS_LAMBDA_FUNCTION": "ENABLED"}}
+        },
+        "resources": {
+          "arn:aws:ec2:us-east-1:222222222222:instance/i-0b1": {
+            "type": "AWS_EC2_INSTANCE",
+            "scans": {"Amazon Inspector": "ACTIVE"},
+            "findings": {
+              "f-staging-critical": {"scanner": "Amazon Inspector", "severity": "CRITICAL", "state": "ACTIVE", "open_days": 10},
+              "f-staging-high": {"scanner": "Amazon Inspector", "severity": "HIGH", "state": "ACTIVE", "open_days": 91},
+              "f-staging-untriaged": {"scanner": "Amazon Inspector", "severity": "UNTRIAGED", "state": "ACTIVE", "open_days": 1}
+            }
+          },
+          "arn:aws:lambda:us-east-1:222222222222:function:thumbs": {
+            "type": "AWS_LAMBDA_FUNCTION",
+            "scans": {"Amazon Inspector": "ACTIVE"},
+            "findings": {
+              "f-lambda-low": {"scanner": "Amazon Inspector", "severity": "LOW", "state": "ACTIVE", "open_days": 2}
+            }
+          }
+        }
+      }
+    }
+  },
+  "terms": {
+    "vuln_scanners": {
+      "Amazon Inspector": {
+        "name": "inspector",
+        "categories": {"AWS_EC2_INSTANCE": "hosts", "AWS_ECR_CONTAINER_IMAGE": "containers", "AWS_LAMBDA_FUNCTION": "functions"}
+      }
+    },
+    "vuln_scope_kinds": {"AWS_ACCOUNT": "account"},
+    "vuln_scanner_states": {"ENABLED": "on", "DISABLED": "off", "SUSPENDED": "off"},
+    "vuln_scan_statuses": {"ACTIVE": "scanned", "INACTIVE": "not_scanned"},
+    "vuln_severities": {"CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium", "LOW": "low", "INFORMATIONAL": "none", "UNTRIAGED": "none"},
+    "vuln_finding_states": {"ACTIVE": "open", "SUPPRESSED": "closed", "CLOSED": "closed"}
+  }
+}

@@ -162,6 +162,25 @@ type Suite struct {
 	// XML element's name.
 	IgnoredFields map[string][]string
 
+	// FieldFaults turns on the field_faults check. For each field the
+	// collector reads in an operation's answers, the check runs the clean
+	// scenario with the field set to null, dropped, and, for a list,
+	// emptied. Each number and boolean in the output must keep its clean
+	// value or be left out under a gap, so a missing or unreadable field
+	// never shows as a count of 0. See Populations and Omissions for the
+	// lists and fields whose change is a real answer.
+	FieldFaults bool
+
+	// Populations lists the lists in operations' answers that are
+	// populations, such as a users list, which the field_faults check may
+	// empty without a gap. See Population.
+	Populations []Population
+
+	// Omissions lists the fields the vendor leaves out, or sends as null, to
+	// mean a value, which the field_faults check may drop or set to null
+	// without a gap. See Omission.
+	Omissions []Omission
+
 	// ResponseSchemas maps an operation to the JSON Schema of its
 	// successful answer as the vendor's API spec defines it, such as a
 	// schema taken from the vendor's OpenAPI document. The responses check
@@ -356,6 +375,9 @@ func validateSuite(s Suite) (map[string]*outputcheck.Schema, error) {
 				return nil, fmt.Errorf("the semantic for %s/%s lists position %q, which is not all, first, middle, or last", sem.Operation, sem.Fault, pos)
 			}
 		}
+	}
+	if err := checkFieldDeclarations(s); err != nil {
+		return nil, err
 	}
 	for i, a := range s.Semantics {
 		for _, b := range s.Semantics[i+1:] {

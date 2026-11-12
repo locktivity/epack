@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "vendor": "internet",
+  "email_dns": {
+    "domains": [
+      "enforced.email.example.test",
+      "monitor.email.example.test",
+      "malformed.email.example.test",
+      "bare.email.example.test",
+      "example.test"
+    ],
+    "names": {
+      "enforced.email.example.test": {"txt": ["v=spf1 -all"]},
+      "_dmarc.enforced.email.example.test": {"txt": ["v=DMARC1; p=reject; rua=mailto:dmarc-reports@example.test"]},
+      "s1._domainkey.enforced.email.example.test": {"txt": ["v=DKIM1; k=ed25519; p=11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="]},
+
+      "monitor.email.example.test": {"txt": ["v=spf1 ~all"]},
+      "_dmarc.monitor.email.example.test": {"txt": ["v=DMARC1; p=none"]},
+
+      "malformed.email.example.test": {"txt": ["v=spf1 ipv4:192.0.2.10 -all"]},
+      "_dmarc.malformed.email.example.test": {"txt": ["v=DMARC1; p=quarentine"]},
+      "selector1._domainkey.malformed.email.example.test": {"txt": ["v=DKIM1; k=rsa; p="]},
+
+      "example.test": {
+        "mx": [{"host": "mx1.mail.example.test", "priority": 10}, {"host": "mx2.mail.example.test", "priority": 20}],
+        "txt": ["google-site-verification=abc123", "v=spf1 include:_spf.mail.example.test mx -all"]
+      },
+      "_dmarc.example.test": {"txt": ["v=DMARC1; p=reject; sp=reject; pct=50; ruf=mailto:forensic@example.test; fo=1"]},
+      "google._domainkey.example.test": {"txt": ["v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDkHlOQoBTzWRiGs5V6NpP3idY6Wk08a5qhdR6wy5bdOKb2jLQiY/J16JYi0Qvx/byYzCNb3W91y3FutACDfzwQ/BC/e/8uBsCR+yz1Lxj+PL6lHvqMKrM3rG4hstT5QjvHO9PzoxZyVYLzBfO2EeC3Ip3G+2kryOTIKT+l/K4w3QIDAQAB"]},
+      "custom._domainkey.example.test": {"txt": ["v=DKIM1; k=ed25519; p=11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="]},
+      "_spf.mail.example.test": {"txt": ["v=spf1 ip4:192.0.2.0/24 ip6:2001:db8::/32 -all"]}
+    }
+  },
+  "terms": {
+    "dkim_selectors": {"google": "common", "s1": "common", "selector1": "common", "custom": "other"}
+  }
+}

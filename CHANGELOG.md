@@ -5,6 +5,89 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.11.0] - 2026-11-12
+
+### ENHANCEMENTS
+
+- `roster.Derive` gives a value for every field of the eight normalized
+  schemas, apart from the time of the run and the free text a schema leaves
+  to the collector, such as issue and error messages. New roster blocks
+  describe the rest of a tenant: `directory` for its domain, account states,
+  passwords, app provisioning and session limits, `cloud` for its cloud
+  accounts, databases, audit logs, backups, threat detection, local users
+  and machine credentials, and `endpoint`, `scanning`, `vcs`, `tls` and
+  `email_dns` for its devices, vulnerability scanners, repositories, TLS
+  endpoints and mail domains. `providers` gives each schema's provider. A
+  roster without a block derives what it did before
+- A roster with a `vcs` block gives a code host's whole access-posture
+  artifact. Its accounts are the organization's members, outside
+  collaborators and bots, its roles the organization roles, and its apps
+  the installed apps. The block adds the organization's single sign-on,
+  SCIM provisioning, IP allow list and machine credentials, such as tokens
+  and deploy keys, each belonging to the organization or to repositories.
+  A repository with `collector_access` false, such as one a GitHub App
+  isn't installed on, is out of the scan. Such a roster gives no
+  idp-posture values
+- `roster.AboveLevel` reports whether a run at a level leaves out a value,
+  so a test can drop the audit-level values Derive gives when it compares
+  them with a trust run. `roster.Align` also takes `Settle`'s values
+- `roster.Uncovered` lists the fields an artifact writes that Derive has no
+  value for, so a test that compares a collector's output with a roster can
+  fail on what the comparison doesn't reach. `roster.Unanswered` lists the
+  fields of a schema no roster's values hold, `roster.NotDerived` the fields
+  Derive never gives with the reason for each, and `roster.Align` matches
+  Derive's list entries to an artifact's by the fields that identify them,
+  such as a TLS endpoint's host and port
+- Derive gives percentages in every entry of a list, and the `all_*`
+  booleans in tls and email-dns, true when every endpoint or domain counts
+  and null over none. `Expect` compares lists and objects by their JSON
+  encoding, so a derived list or count by name matches one read from an
+  artifact
+- `componentsdk/collectortest/simulate` builds a vendor simulator from a
+  roster and checks a collector against the values `roster.Derive` gives.
+  A simulator lists each endpoint with the recorded operation it mirrors,
+  what it needs, and how the vendor pages it: a next link in the body, a
+  Link header, a cursor, or an offset. It builds each item from a copy of
+  one the sandbox's recording holds, so its answers keep the vendor's
+  nulls, optional fields and envelopes. The kit answers a call the
+  credential or the plan can't make with the vendor's refusal, and gives
+  stable IDs. Its harness checks every simulated answer's shape against
+  the recording, and fails on a field, type, operation or status the
+  recording doesn't hold unless the simulator lists it with why. It lines
+  a collector's normalized values up with the derived ones, fails on a
+  difference no verdict lists and on a listed one that matches again, and
+  runs a matrix of roster variants, rules on random rosters, and a
+  comparison with the recording's values
+- `simulate.Harness.Coverage` turns on a coverage check: `Tenants` also
+  fails on a field a collector writes that the roster gives no value for,
+  as `roster.Uncovered` finds it, unless `Harness.Uncompared` lists the
+  field with why, and on a listing every scenario now compares
+- A roster's sign-in policies can name a `first_match` set and a
+  `priority`, for a vendor such as Okta that applies the first policy and
+  rule that match a sign-in. `blocks` can be `all`, for a rule that denies
+  every sign-in
+- `Suite.FieldFaults` turns on the test kit's `field_faults` check, which
+  holds that a missing or unreadable field never lowers a count. For each
+  field the collector reads in an operation's answers, it runs the clean
+  scenario with the field set to null, dropped, and, for a list, emptied.
+  Every number and boolean in the output must keep its clean value or be
+  left out under a gap, which must name the operation when
+  `Suite.GapOperations` is on. An XML element is dropped or, for a list,
+  emptied. Paging fields are left alone. A change to an object is reported
+  only where no field inside it explains the same values, so a finding
+  names the field the collector reads. It would have caught Microsoft
+  v0.2.4's Global Administrator count of 0 from roles Graph sends with
+  `isPrivileged` null, and its soft delete share of 0 from vaults listed
+  without their security settings
+- `Suite.Populations` declares a list whose emptying is a real answer, such
+  as a users list, and `Suite.Omissions` a field the vendor leaves out, or
+  sends as null, to mean a value. Each entry names one operation's list or
+  field and says why. A `*` in an entry matches any one key, such as each
+  of a resource's tags. The `field_faults` check reports an entry it never
+  used
+
 ## [0.10.6] - 2026-11-11
 
 ### ENHANCEMENTS

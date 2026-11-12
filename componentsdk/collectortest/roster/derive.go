@@ -11,13 +11,6 @@ import (
 	"github.com/locktivity/epack/componentsdk"
 )
 
-// The normalized schemas Derive gives values for.
-const (
-	IDPPosture    = "evidencepack/idp-posture@v1"
-	CloudPosture  = "evidencepack/cloud-posture@v1"
-	AccessPosture = "evidencepack/access-posture@v1"
-)
-
 // Values maps a normalized artifact type to the values a roster determines,
 // by JSON pointer. A value is an int, a bool, or nil for a percentage over no
 // one. A pointer the roster does not determine is not in the map.
@@ -32,47 +25,75 @@ const inactiveDays = 90
 // x-epack-denominator, rounded as its x-epack-rounding says, and its
 // x-epack-present flag says whether the denominator is above zero.
 //
-// A roster with a cloud side, cloud roles, security groups, or storage, also
-// gives cloud-posture and access-posture values, for one account or
-// subscription. Access-posture's totals and its one scope hold the same
-// values.
+// A roster with a cloud side, a cloud block, cloud roles, security groups,
+// or storage, also gives cloud-posture and access-posture values, for each
+// cloud account the collector can read, or for the one account a roster
+// without a cloud block has. Access-posture's totals are then across those
+// accounts. A roster with a vcs block and no cloud side gives access-posture
+// values for the version control organization instead, and no idp-posture
+// values, since its accounts are the organization's and not a directory's.
+// Each domain the roster has adds its values. A list's entries are
+// in the roster's order, and Align matches them to an artifact's.
+//
+// Every schema Derive gives values for also gets its schema_version, when
+// the schema fixes it, and its provider, when the roster's providers block
+// gives one.
 func Derive(r *Roster) (Values, error) {
-	out := Values{IDPPosture: deriveIdentity(r)}
-	if r.hasCloud() {
+	out := Values{}
+	switch {
+	case r.hasCloud():
+		out[IDPPosture] = deriveIdentity(r)
 		out[CloudPosture] = deriveCloud(r)
 		out[AccessPosture] = deriveAccess(r)
+	case r.VCS != nil:
+		out[AccessPosture] = deriveCodeHostAccess(r)
+	default:
+		out[IDPPosture] = deriveIdentity(r)
+	}
+	for _, d := range domains {
+		if err := d.derive(r, out); err != nil {
+			return nil, fmt.Errorf("%s: %w", d.key, err)
+		}
 	}
 	for schemaID, v := range out {
 		if err := addPercentages(schemaID, v); err != nil {
+			return nil, err
+		}
+		if err := addBookkeeping(r, schemaID, v); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
 }
 
+// addBookkeeping adds schemaID's schema_version when its schema fixes one,
+// and its provider when r's providers block gives one.
+func addBookkeeping(r *Roster, schemaID string, v map[string]any) error {
+	var schema struct {
+		Properties struct {
+			SchemaVersion struct {
+				Const *string `json:"const"`
+			} `json:"schema_version"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(componentsdk.NormalizedSchemaJSON(schemaID), &schema); err != nil {
+		return fmt.Errorf("%s: %w", schemaID, err)
+	}
+	if c := schema.Properties.SchemaVersion.Const; c != nil {
+		v["/schema_version"] = *c
+	}
+	if p, ok := r.Providers[shortName(schemaID)]; ok {
+		v["/provider"] = p
+	}
+	return nil
+}
+
 func (r *Roster) hasCloud() bool {
-	if len(r.SecurityGroups) > 0 || len(r.Storage) > 0 {
+	if r.Cloud != nil || len(r.SecurityGroups) > 0 || len(r.Storage) > 0 {
 		return true
 	}
 	return slices.ContainsFunc(r.Accounts, func(a Account) bool { return len(a.CloudRoles) > 0 || len(a.PartialCloudRoles) > 0 }) ||
 		slices.ContainsFunc(r.Groups, func(g Group) bool { return len(g.CloudRoles) > 0 })
-}
-
-// deriveCloud gives cloud-posture's network and storage counts. A security
-// group is open to a port when a connection to it over TCP from any address
-// gets in. Storage counts as encrypted with any key, the provider's own
-// included, and as blocking public access when no one can read its data
-// without signing in.
-func deriveCloud(r *Roster) map[string]any {
-	const at = "/accounts/0"
-	v := map[string]any{}
-	v[at+"/network/security_group_count"] = len(r.SecurityGroups)
-	v[at+"/network/ssh_open_security_group_count"] = count(r.SecurityGroups, func(g SecurityGroup) bool { return r.openToAny(g, 22) })
-	v[at+"/network/rdp_open_security_group_count"] = count(r.SecurityGroups, func(g SecurityGroup) bool { return r.openToAny(g, 3389) })
-	v[at+"/storage/storage_resource_count"] = len(r.Storage)
-	v[at+"/storage/encrypted_storage_resource_count"] = count(r.Storage, func(s Storage) bool { return r.Terms.KeySources[s.KeySource] != NoKey })
-	v[at+"/storage/public_access_blocked_storage_resource_count"] = count(r.Storage, func(s Storage) bool { return !s.AnonymousAccess })
-	return v
 }
 
 // openToAny reports whether a TCP connection to port from any address gets
@@ -101,49 +122,25 @@ func (r *Roster) openToAny(g SecurityGroup, port int) bool {
 	return first.Access == Allow
 }
 
-// deriveAccess gives access-posture's members and admins. Members are the
-// enabled accounts that hold a cloud role anywhere in the subscription,
-// directly or through a group, guests included. Admins are those of them
-// with an admin role over the whole subscription.
-func deriveAccess(r *Roster) map[string]any {
-	var members []Account
-	for _, a := range r.Accounts {
-		if a.Enabled && (len(r.HeldCloudRoles(a)) > 0 || len(a.PartialCloudRoles) > 0) {
-			members = append(members, a)
-		}
-	}
-	admins := count(members, func(a Account) bool {
-		return slices.ContainsFunc(r.HeldCloudRoles(a), func(role string) bool { return r.Terms.CloudRoles[role] == RoleAdmin })
-	})
-	external := count(members, r.Guest)
-	inactive := count(members, func(a Account) bool { return a.SignedInDaysAgo == nil || *a.SignedInDaysAgo > inactiveDays })
-	v := map[string]any{}
-	for _, at := range []string{"", "/scopes/0"} {
-		v[at+"/members/member_count"] = len(members)
-		v[at+"/members/external_members_present"] = external > 0
-		v[at+"/members/external_member_count"] = external
-		v[at+"/members/inactive_member_count"] = inactive
-		v[at+"/members/members_present"] = len(members) > 0
-		v[at+"/admins/admin_count"] = admins
-		v[at+"/admins/admins_present"] = admins > 0
-	}
-	return v
-}
-
-// deriveIdentity gives idp-posture's counts and flags. Users are enabled
-// members, guests left out. Admins are enabled accounts, guests included,
-// that hold an admin role now.
+// deriveIdentity gives idp-posture's counts and flags. It reads the
+// accounts in the directory only. Users are enabled members, guests left
+// out. Admins are enabled accounts of people, guests included, that hold an
+// admin role now. Service accounts are neither.
 func deriveIdentity(r *Roster) map[string]any {
 	v := map[string]any{}
-	var users, admins []Account
+	var directory, users, admins []Account
 	for _, a := range r.Accounts {
+		if !inDirectory(a) {
+			continue
+		}
+		directory = append(directory, a)
 		if !a.Enabled {
 			continue
 		}
-		if !r.Guest(a) {
+		if r.kindOf(a) == KindMember {
 			users = append(users, a)
 		}
-		if r.admin(a) {
+		if r.person(a) && r.admin(a) {
 			admins = append(admins, a)
 		}
 	}
@@ -178,8 +175,11 @@ func deriveIdentity(r *Roster) map[string]any {
 	v["/privileged_access/standing_privileged_users_count"] = len(admins)
 	v["/privileged_access/standing_privileged_users_present"] = len(admins) > 0
 
-	v["/lifecycle/account_count"] = len(r.Accounts)
-	v["/lifecycle/suspended_account_count"] = count(r.Accounts, func(a Account) bool { return !a.Enabled })
+	v["/lifecycle/account_count"] = len(directory)
+	v["/lifecycle/suspended_account_count"] = count(directory, func(a Account) bool { return !a.Enabled && r.stateOf(a) != AccountArchived })
+	if r.Directory != nil {
+		r.deriveDirectory(v, users, directory)
+	}
 
 	// Policies combine. A user is covered when the enforced policies that
 	// include them and don't exclude them, between them, require MFA for or
@@ -187,15 +187,12 @@ func deriveIdentity(r *Roster) map[string]any {
 	// that include everyone and name exceptions, such as a break-glass
 	// account, still make mfa_required true.
 	protects := func(p Policy) bool { return r.requiresMFA(p) || p.Blocks != "" }
-	blocksLegacy := func(p Policy) bool { return r.Terms.Blocks[p.Blocks] == BlocksLegacyAuth }
-	everyone := func(keep func(Policy) bool) []Policy {
-		return r.policiesThat(func(p Policy) bool { return p.Include.All && keep(p) })
-	}
-	v["/policy/mfa_required"] = r.coversSignIns(everyone(protects), clientKinds)
+	blocksLegacy := func(p Policy) bool { return p.Blocks != "" }
+	v["/policy/mfa_required"] = r.everyoneCovered(users, protects, clientKinds)
 	v["/policy/mfa_required_user_count"] = count(users, func(a Account) bool {
-		return r.coversSignIns(r.policiesThat(func(p Policy) bool { return protects(p) && r.covers(p, a) }), clientKinds)
+		return r.coversSignIns(r.policiesThat(func(p Policy) bool { return r.covers(p, a) }), clientKinds, protects)
 	})
-	v["/policy/legacy_auth_blocked"] = r.coversSignIns(everyone(blocksLegacy), legacyClientKinds)
+	v["/policy/legacy_auth_blocked"] = r.everyoneCovered(users, blocksLegacy, legacyClientKinds)
 	if len(admins) > 0 {
 		v["/policy/phishing_resistant_required_for_privileged"] = slices.ContainsFunc(r.Policies, func(p Policy) bool {
 			return r.applies(p) && r.requires(p, RequiresPhishingResistantMFA) && r.includesAdmins(p, admins)
@@ -246,6 +243,32 @@ var (
 	}
 )
 
+// everyoneCovered reports whether the policies counts keeps cover every
+// sign-in from each kind of client in kinds, whoever signs in, leaving aside
+// the exceptions policies name. With no ordered policies, that is the
+// policies that include everyone. In a first_match set a policy for some
+// people shadows the later policies for them, so with ordered policies each
+// user must be covered once every policy's exclusions are set aside, and
+// with no users an account in no group and holding no role must be.
+func (r *Roster) everyoneCovered(users []Account, counts func(Policy) bool, kinds []string) bool {
+	if !slices.ContainsFunc(r.Policies, func(p Policy) bool { return p.FirstMatch != "" }) {
+		return r.coversSignIns(r.policiesThat(func(p Policy) bool { return p.Include.All }), kinds, counts)
+	}
+	if len(users) == 0 {
+		users = []Account{{}}
+	}
+	return !slices.ContainsFunc(users, func(a Account) bool {
+		var including []Policy
+		for _, p := range r.Policies {
+			if r.inAudience(p.Include, a) {
+				p.Exclude = Audience{}
+				including = append(including, p)
+			}
+		}
+		return !r.coversSignIns(including, kinds, counts)
+	})
+}
+
 func (r *Roster) policiesThat(keep func(Policy) bool) []Policy {
 	var out []Policy
 	for _, p := range r.Policies {
@@ -256,26 +279,39 @@ func (r *Roster) policiesThat(keep func(Policy) bool) []Policy {
 	return out
 }
 
-// coversSignIns reports whether the enforced policies among policies,
-// between them, cover every sign-in to every app from each kind of client in
-// kinds, whatever the sign-in's other parts. A sign-in is one value of each
-// part some policy limits.
-func (r *Roster) coversSignIns(policies []Policy, kinds []string) bool {
+// coversSignIns reports whether the enforced policies among policies that
+// counts keeps, between them, cover every sign-in to every app from each
+// kind of client in kinds, whatever the sign-in's other parts. A sign-in is
+// one value of each part some policy limits. In a first_match set only the
+// first enforced policy that applies to a sign-in counts for it, and only
+// when counts keeps it.
+func (r *Roster) coversSignIns(policies []Policy, kinds []string, counts func(Policy) bool) bool {
 	type limited struct {
 		policy Policy
 		limits map[string][]string
 	}
 	var enforced []limited
+	sets := map[string][]limited{}
 	parts := map[string]bool{PartClient: true}
 	for _, p := range policies {
 		limits, ok := r.limits(p)
 		if !ok || r.Terms.PolicyStates[p.State] != StateEnforced {
 			continue
 		}
-		enforced = append(enforced, limited{p, limits})
+		switch {
+		case p.FirstMatch != "":
+			sets[p.FirstMatch] = append(sets[p.FirstMatch], limited{p, limits})
+		case counts(p):
+			enforced = append(enforced, limited{p, limits})
+		default:
+			continue
+		}
 		for part := range limits {
 			parts[part] = true
 		}
+	}
+	for _, set := range sets {
+		slices.SortFunc(set, func(a, b limited) int { return a.policy.Priority - b.policy.Priority })
 	}
 	signIns := []map[string]string{{}}
 	for _, part := range sortedKeys(parts) {
@@ -293,15 +329,24 @@ func (r *Roster) coversSignIns(policies []Policy, kinds []string) bool {
 		}
 		signIns = next
 	}
+	allows := func(l limited, in map[string]string) bool {
+		for part, values := range l.limits {
+			if !slices.Contains(values, in[part]) {
+				return false
+			}
+		}
+		return true
+	}
 	for _, in := range signIns {
 		var forSignIn []Policy
 		for _, l := range enforced {
-			allows := true
-			for part, values := range l.limits {
-				allows = allows && slices.Contains(values, in[part])
-			}
-			if allows {
+			if allows(l, in) {
 				forSignIn = append(forSignIn, l.policy)
+			}
+		}
+		for _, name := range sortedKeys(sets) {
+			if i := slices.IndexFunc(sets[name], func(l limited) bool { return allows(l, in) }); i >= 0 && counts(sets[name][i].policy) {
+				forSignIn = append(forSignIn, sets[name][i].policy)
 			}
 		}
 		if !coverEveryApp(forSignIn) {
@@ -416,35 +461,96 @@ func (r *Roster) includesAdmins(p Policy, admins []Account) bool {
 type field struct {
 	numerator, denominator, present string
 	rounding                        componentsdk.Rounding
+	// all marks a boolean with a numerator and denominator: true when
+	// every one counts, and null over none.
+	all bool
 }
 
 // addPercentages adds each of schemaID's percentages whose numerator and
-// denominator v holds, and the present flag of each, unless v has one.
+// denominator v holds, and the present flag of each, unless v has one. A
+// percentage in a list is added for each entry v has.
 func addPercentages(schemaID string, v map[string]any) error {
 	fields, err := percentFields(schemaID)
 	if err != nil {
 		return err
 	}
-	for _, pointer := range sortedKeys(fields) {
-		f := fields[pointer]
-		num, numOK := v[f.numerator].(int)
-		den, denOK := v[f.denominator].(int)
-		if !numOK || !denOK {
-			continue
-		}
-		if num > den {
-			return fmt.Errorf("%s: %s is %d, more than %s's %d", pointer, f.numerator, num, f.denominator, den)
-		}
-		if p := componentsdk.Percent(num, den, f.rounding); p != nil {
-			v[pointer] = *p
-		} else {
-			v[pointer] = nil
-		}
-		if _, set := v[f.present]; f.present != "" && !set {
-			v[f.present] = den > 0
+	for _, pattern := range sortedKeys(fields) {
+		f := fields[pattern]
+		for _, at := range bindings(f.numerator, v) {
+			pointer, numerator, denominator, present := fill(pattern, at), fill(f.numerator, at), fill(f.denominator, at), fill(f.present, at)
+			num, numOK := v[numerator].(int)
+			den, denOK := v[denominator].(int)
+			if !numOK || !denOK {
+				continue
+			}
+			if num > den {
+				return fmt.Errorf("%s: %s is %d, more than %s's %d", pointer, numerator, num, denominator, den)
+			}
+			switch {
+			case f.all && den > 0:
+				v[pointer] = num == den
+			case f.all:
+				v[pointer] = nil
+			default:
+				if p := componentsdk.Percent(num, den, f.rounding); p != nil {
+					v[pointer] = *p
+				} else {
+					v[pointer] = nil
+				}
+			}
+			if _, set := v[present]; present != "" && !set {
+				v[present] = den > 0
+			}
 		}
 	}
 	return nil
+}
+
+// bindings lists, for each pointer in v that pattern matches, the indexes
+// its *s stand for there.
+func bindings(pattern string, v map[string]any) [][]string {
+	want := strings.Split(pattern, "/")
+	seen := map[string]bool{}
+	var out [][]string
+	for _, pointer := range sortedKeys(v) {
+		got := strings.Split(pointer, "/")
+		if len(got) != len(want) {
+			continue
+		}
+		var at []string
+		matches := true
+		for i := range want {
+			if want[i] == "*" && isIndex(got[i]) {
+				at = append(at, got[i])
+			} else if want[i] != got[i] {
+				matches = false
+				break
+			}
+		}
+		if key := strings.Join(at, "/"); matches && !seen[key] {
+			seen[key] = true
+			out = append(out, at)
+		}
+	}
+	return out
+}
+
+// fill puts the indexes at in place of pattern's *s, in order.
+func fill(pattern string, at []string) string {
+	tokens := strings.Split(pattern, "/")
+	n := 0
+	for i, t := range tokens {
+		if t == "*" && n < len(at) {
+			tokens[i] = at[n]
+			n++
+		}
+	}
+	return strings.Join(tokens, "/")
+}
+
+func isIndex(token string) bool {
+	_, err := strconv.Atoi(token)
+	return err == nil && token != "" && (token == "0" || token[0] != '0')
 }
 
 // percentFields reads the percentages from schemaID's SDK schema, by
@@ -474,22 +580,24 @@ type schemaNode struct {
 	Denominator string                `json:"x-epack-denominator"`
 	Rounding    string                `json:"x-epack-rounding"`
 	Present     string                `json:"x-epack-present"`
+	Type        any                   `json:"type"`
 }
 
-// collect walks n's properties, and the first element of each list, as
-// the values Derive gives hold one account or scope.
+// collect walks n's properties, and each list's items with * for the
+// index.
 func (n schemaNode) collect(root *schemaNode, parent string, out map[string]field) error {
 	n = root.deref(n)
 	if n.Items != nil {
-		return n.Items.collect(root, parent+"/0", out)
+		return n.Items.collect(root, parent+"/*", out)
 	}
 	for name, child := range n.Properties {
 		pointer := parent + "/" + name
 		if child.Numerator != "" {
-			if child.Denominator == "" || child.Rounding == "" {
+			all := child.allowsBoolean()
+			if child.Denominator == "" || (child.Rounding == "" && !all) {
 				return fmt.Errorf("%s has a numerator but no denominator or rounding", pointer)
 			}
-			f := field{rounding: componentsdk.Rounding(child.Rounding)}
+			f := field{rounding: componentsdk.Rounding(child.Rounding), all: all}
 			var ok bool
 			if f.numerator, ok = resolve(parent, child.Numerator); !ok {
 				return fmt.Errorf("%s: numerator %q leaves the document", pointer, child.Numerator)
@@ -507,6 +615,17 @@ func (n schemaNode) collect(root *schemaNode, parent string, out map[string]fiel
 		}
 	}
 	return nil
+}
+
+// allowsBoolean reports whether n's type is boolean, alone or with null.
+func (n schemaNode) allowsBoolean() bool {
+	switch t := n.Type.(type) {
+	case string:
+		return t == "boolean"
+	case []any:
+		return slices.Contains(t, any("boolean"))
+	}
+	return false
 }
 
 // deref follows a node's $ref into the root's $defs, keeping the node's own

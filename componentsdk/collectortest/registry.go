@@ -72,6 +72,7 @@ func init() {
 		{name: "order", afterBaseline: (*kit).checkOrder},
 		{name: "variants", afterBaseline: (*kit).checkVariants},
 		{name: "fields", on: func(s Suite) bool { return s.FieldSensitivity }, afterBaseline: (*kit).checkFields},
+		{name: "field_faults", on: func(s Suite) bool { return s.FieldFaults }, afterBaseline: (*kit).checkFieldFaults},
 		{name: "sensitivity", afterBaseline: (*kit).checkSensitivity},
 		{name: "tracemap", afterBaseline: func(k *kit) {
 			if k.trace != nil && os.Getenv(tracemap.Env) == "" {

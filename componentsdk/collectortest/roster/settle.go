@@ -1,6 +1,8 @@
 package roster
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -151,7 +153,7 @@ func mergeExpect(prev Expect, seen bool, value any) Expect {
 			prev.Exact = nil
 		}
 		return prev
-	case !prev.Range && prev.Exact == value:
+	case !prev.Range && sameValue(prev.Exact, value):
 		return prev
 	default:
 		return Expect{Either: true}
@@ -170,7 +172,15 @@ func (e Expect) Holds(got any) bool {
 	if want, ok := e.Exact.(int); ok {
 		return isNumber && n == want
 	}
-	return got == e.Exact
+	return sameValue(e.Exact, got)
+}
+
+// sameValue reports whether two values encode to the same JSON, so a
+// derived list or count by name compares with one decoded from an artifact.
+func sameValue(a, b any) bool {
+	ra, errA := json.Marshal(a)
+	rb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(ra, rb)
 }
 
 func asInt(v any) (int, bool) {

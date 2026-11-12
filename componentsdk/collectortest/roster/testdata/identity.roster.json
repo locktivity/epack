@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "vendor": "okta",
+  "directory": {"domain": "example.okta.com", "password_policy": {"min_length": 12}},
+  "accounts": {
+    "admin": {"kind": "user", "enabled": true, "roles": ["SUPER_ADMIN"], "mfa": "webauthn", "signed_in_days_ago": 2,
+      "state": "ACTIVE", "password_strength": "STRONG", "password_length": 20},
+    "helpdesk": {"kind": "user", "enabled": true, "roles": ["HELP_DESK_ADMIN"], "mfa": "okta_verify", "signed_in_days_ago": 5,
+      "state": "ACTIVE", "password_length": 16},
+    "alice": {"kind": "user", "enabled": true, "mfa": "okta_verify", "signed_in_days_ago": 10,
+      "state": "PASSWORD_EXPIRED", "password_strength": "WEAK", "password_length": 8},
+    "bob": {"kind": "user", "enabled": true, "signed_in_days_ago": 200, "state": "LOCKED_OUT", "password_length": 10},
+    "carol": {"kind": "user", "enabled": true, "mfa": "sms", "state": "ACTIVE"},
+    "partner": {"kind": "partner", "enabled": true, "roles": ["APP_ADMIN"], "mfa": "okta_verify", "signed_in_days_ago": 30},
+    "robot": {"kind": "service", "enabled": true, "roles": ["APP_ADMIN"], "password_strength": "WEAK", "password_length": 6},
+    "suspended": {"kind": "user", "enabled": false, "state": "SUSPENDED"},
+    "departed": {"kind": "user", "enabled": false, "state": "DEPROVISIONED"}
+  },
+  "groups": {"admins": {"members": ["admin", "helpdesk"]}},
+  "sign_in_policies": {
+    "default": {"state": "ACTIVE", "include": "all", "requires": "mfa", "session_lifetime_minutes": 720, "idle_timeout_minutes": 120},
+    "admins": {"state": "ACTIVE", "include": {"groups": ["admins"], "roles": ["SUPER_ADMIN", "HELP_DESK_ADMIN", "APP_ADMIN", "READ_ONLY_ADMIN"]},
+      "requires": ["phishing_resistant", "managed"], "session_lifetime_minutes": 60, "idle_timeout_minutes": 15},
+    "legacy": {"state": "ACTIVE", "include": "all", "blocks": "legacy"},
+    "trial": {"state": "INACTIVE", "include": "all", "requires": "mfa", "session_lifetime_minutes": 10080}
+  },
+  "apps": {
+    "workday": {"sso_mode": "SAML_2_0", "publisher": "okta_integration_network", "provisioning": ["PUSH_NEW_USERS", "PUSH_USER_DEACTIVATION"]},
+    "intranet": {"sso_mode": "OPENID_CONNECT", "publisher": "self", "provisioning": "PUSH_PROFILE_UPDATES"},
+    "zoom": {"sso_mode": "SAML_2_0", "publisher": "okta_integration_network", "provisioning": "PUSH_NEW_USERS"},
+    "admin_console": {"sso_mode": "SAML_2_0", "publisher": "okta"},
+    "bookmark": {"sso_mode": "BOOKMARK"},
+    "retired": {"enabled": false, "sso_mode": "SAML_2_0", "publisher": "okta_integration_network", "provisioning": ["PUSH_NEW_USERS", "PUSH_USER_DEACTIVATION"]}
+  },
+  "providers": {"idp-posture": "okta"},
+  "terms": {
+    "account_kinds": {"user": "member", "partner": "guest", "service": "service"},
+    "mfa_methods": {"webauthn": "phishing_resistant", "okta_verify": "mfa", "sms": "mfa"},
+    "roles": {"SUPER_ADMIN": "super_admin", "HELP_DESK_ADMIN": "admin", "APP_ADMIN": "admin", "READ_ONLY_ADMIN": "none"},
+    "policy_states": {"ACTIVE": "enforced", "INACTIVE": "off"},
+    "requirements": {"mfa": "mfa", "phishing_resistant": "phishing_resistant_mfa", "managed": "managed_device"},
+    "blocks": {"legacy": "legacy_auth"},
+    "sso_modes": {"SAML_2_0": "sso", "OPENID_CONNECT": "sso", "BOOKMARK": "none"},
+    "account_states": {"ACTIVE": "other", "PASSWORD_EXPIRED": "other", "SUSPENDED": "other", "LOCKED_OUT": "locked_out", "DEPROVISIONED": "archived"},
+    "password_strengths": {"WEAK": "weak", "STRONG": "strong"},
+    "app_publishers": {"self": "organization", "okta": "provider", "okta_integration_network": "third_party"},
+    "provisioning_features": {"PUSH_NEW_USERS": "create", "PUSH_USER_DEACTIVATION": "deactivate", "PUSH_PROFILE_UPDATES": "other"}
+  },
+  "unsettled": {"carol": ["signed_in"]}
+}

@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "vendor": "internet",
+  "tls": {
+    "endpoints": [
+      {
+        "host": "modern.tls.example.test", "port": 443,
+        "accepts": ["TLSv1.2", "TLSv1.3"],
+        "negotiates": {"version": "TLSv1.3", "cipher_suite": "TLS_AES_128_GCM_SHA256"},
+        "certificate": {
+          "subject_common_name": "modern.tls.example.test", "issuer_common_name": "E5",
+          "serial_number": "301856080525954483946262561144304836989",
+          "not_before": "2026-10-12T00:00:00Z", "not_after": "2027-01-10T00:00:00Z",
+          "valid_from_days_ago": 30, "expires_in_days": 59,
+          "dns_names": ["modern.tls.example.test"],
+          "fingerprint_sha256": "9F2A417C6B8E0D3F5A1B2C4D6E8F0A1B3C5D7E9F1A3B5C7D9E1F3A5B7C9D0E2F",
+          "signature_algorithm": "ECDSA-SHA384", "public_key_algorithm": "ECDSA",
+          "chain": ["modern.tls.example.test", "E5"], "root": "ISRG Root X1"
+        }
+      },
+      {
+        "host": "legacy.tls.example.test", "port": 8443,
+        "accepts": ["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"],
+        "negotiates": {"version": "TLSv1.3", "cipher_suite": "TLS_AES_256_GCM_SHA384"},
+        "certificate": {
+          "subject_common_name": "legacy.tls.example.test", "issuer_common_name": "E6",
+          "valid_from_days_ago": 20, "expires_in_days": 69,
+          "dns_names": ["legacy.tls.example.test"],
+          "signature_algorithm": "ECDSA-SHA384", "public_key_algorithm": "ECDSA",
+          "chain": ["legacy.tls.example.test", "E6", "ISRG Root X1"], "root": "ISRG Root X1"
+        }
+      },
+      {
+        "host": "legacy-only.tls.example.test", "port": 8444,
+        "accepts": ["TLSv1", "TLSv1.1"],
+        "negotiates": {"version": "TLSv1.1", "cipher_suite": "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA"},
+        "certificate": {
+          "subject_common_name": "legacy-only.tls.example.test", "issuer_common_name": "E5",
+          "expires_in_days": 45, "dns_names": ["legacy-only.tls.example.test"],
+          "chain": ["legacy-only.tls.example.test", "E5"], "root": "ISRG Root X1"
+        }
+      },
+      {
+        "host": "self-signed.tls.example.test", "port": 443,
+        "accepts": ["TLSv1.2", "TLSv1.3"],
+        "negotiates": {"version": "TLSv1.3", "cipher_suite": "TLS_AES_128_GCM_SHA256"},
+        "certificate": {
+          "subject_common_name": "self-signed.tls.example.test", "issuer_common_name": "self-signed.tls.example.test",
+          "valid_from_days_ago": 400, "expires_in_days": 3249,
+          "dns_names": ["self-signed.tls.example.test"],
+          "public_key_algorithm": "ECDSA",
+          "chain": ["self-signed.tls.example.test"], "root": "self-signed.tls.example.test"
+        }
+      },
+      {
+        "host": "mismatch.tls.example.test", "port": 443,
+        "accepts": ["TLSv1.2", "TLSv1.3"],
+        "negotiates": {"version": "TLSv1.3", "cipher_suite": "TLS_AES_128_GCM_SHA256"},
+        "certificate": {
+          "subject_common_name": "modern.tls.example.test", "issuer_common_name": "E5",
+          "valid_from_days_ago": 30, "expires_in_days": 59,
+          "dns_names": ["modern.tls.example.test"],
+          "chain": ["modern.tls.example.test", "E5"], "root": "ISRG Root X1"
+        }
+      },
+      {
+        "host": "expired.tls.example.test", "port": 443,
+        "accepts": ["TLSv1.2", "TLSv1.3"],
+        "negotiates": {"version": "TLSv1.3", "cipher_suite": "TLS_AES_128_GCM_SHA256"},
+        "certificate": {
+          "subject_common_name": "expired.tls.example.test", "issuer_common_name": "E5",
+          "valid_from_days_ago": 9, "expires_in_days": -3,
+          "dns_names": ["expired.tls.example.test"],
+          "chain": ["expired.tls.example.test", "E5"], "root": "ISRG Root X1"
+        }
+      },
+      {
+        "host": "api.tls.example.test", "port": 443,
+        "accepts": ["TLSv1.2"],
+        "negotiates": {"version": "TLSv1.2", "cipher_suite": "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+        "certificate": {
+          "subject_common_name": "*.tls.example.test", "issuer_common_name": "R11",
+          "valid_from_days_ago": 78, "expires_in_days": 11,
+          "dns_names": ["*.tls.example.test", "tls.example.test"],
+          "signature_algorithm": "SHA256-RSA", "public_key_algorithm": "RSA",
+          "chain": ["*.tls.example.test", "R11"], "root": "ISRG Root X1"
+        }
+      },
+      {
+        "host": "192.0.2.10", "port": 443,
+        "accepts": ["TLSv1.2", "TLSv1.3"],
+        "negotiates": {"version": "TLSv1.3", "cipher_suite": "TLS_CHACHA20_POLY1305_SHA256"},
+        "certificate": {
+          "subject_common_name": "192.0.2.10", "issuer_common_name": "Example Internal CA",
+          "valid_from_days_ago": 100, "expires_in_days": 265,
+          "ip_addresses": ["192.0.2.10"],
+          "chain": ["192.0.2.10", "Example Internal CA"], "root": "Example Internal Root"
+        }
+      },
+      {
+        "host": "anon.tls.example.test", "port": 4433,
+        "accepts": ["TLSv1.2"],
+        "negotiates": {"version": "TLSv1.2", "cipher_suite": "TLS_ECDH_anon_WITH_AES_128_CBC_SHA"},
+        "certificate": null
+      },
+      {
+        "host": "closed.tls.example.test", "port": 443,
+        "accepts": []
+      }
+    ]
+  },
+  "terms": {
+    "tls_versions": {"SSLv3": "ssl_3_0", "TLSv1": "tls_1_0", "TLSv1.1": "tls_1_1", "TLSv1.2": "tls_1_2", "TLSv1.3": "tls_1_3"},
+    "tls_roots": {
+      "ISRG Root X1": "trusted",
+      "self-signed.tls.example.test": "untrusted",
+      "Example Internal Root": "untrusted"
+    }
+  }
+}

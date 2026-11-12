@@ -397,6 +397,84 @@ func TestDeriveCombinesPolicies(t *testing.T) {
 	}
 }
 
+// TestDeriveOrderedPolicies checks a first_match set: the first policy that
+// applies to a sign-in decides it, so a group's password-only policy ahead of
+// everyone's MFA policy leaves the group uncovered.
+func TestDeriveOrderedPolicies(t *testing.T) {
+	r, err := Parse([]byte(tenant))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Terms.Requirements = map[string]string{"mfa": RequiresMFA, "password": RequiresOther}
+	r.Terms.Blocks = map[string]string{"deny": BlocksAll}
+	r.Terms.Conditions = map[string]map[string][]string{
+		"on_network":  {PartLocation: {"trusted"}},
+		"off_network": {PartLocation: {"untrusted"}},
+	}
+	r.Groups = []Group{{Key: "password_only", Members: []string{"alice"}}}
+	ordered := func(key string, priority int, include Audience, requires string, conditions ...string) Policy {
+		return Policy{Key: key, State: "enabled", Include: include, Requires: []string{requires}, Conditions: conditions, FirstMatch: "session", Priority: priority}
+	}
+	everyone := Audience{All: true}
+	group := Audience{Groups: []string{"password_only"}}
+	cases := []struct {
+		name     string
+		policies []Policy
+		users    int
+		required bool
+	}{
+		{"a group's password policy first", []Policy{ordered("group", 1, group, "password"), ordered("all", 2, everyone, "mfa")}, 2, false},
+		{"a group denied first", []Policy{
+			func() Policy {
+				p := ordered("group", 1, group, "password")
+				p.Requires, p.Blocks = nil, "deny"
+				return p
+			}(),
+			ordered("all", 2, everyone, "mfa"),
+		}, 3, true},
+		{"everyone's MFA policy first", []Policy{ordered("all", 1, everyone, "mfa"), ordered("group", 2, group, "password")}, 3, true},
+		{"on and off network rules both require MFA", []Policy{
+			ordered("on", 1, everyone, "mfa", "on_network"), ordered("off", 2, everyone, "mfa", "off_network"), ordered("rest", 3, everyone, "password"),
+		}, 3, true},
+		{"a password rule on the network first", []Policy{ordered("on", 1, everyone, "password", "on_network"), ordered("all", 2, everyone, "mfa")}, 0, false},
+		{"an exception falls through to a password policy", []Policy{
+			func() Policy {
+				p := ordered("all", 1, everyone, "mfa")
+				p.Exclude = Audience{Accounts: []string{"bob"}}
+				return p
+			}(),
+			ordered("rest", 2, everyone, "password"),
+		}, 2, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := r.Clone()
+			c.Policies = tc.policies
+			if err := c.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			values, err := Derive(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			idp := values[IDPPosture]
+			if idp["/policy/mfa_required"] != tc.required || idp["/policy/mfa_required_user_count"] != tc.users {
+				t.Errorf("mfa_required %v, mfa_required_user_count %v, want %v and %d", idp["/policy/mfa_required"], idp["/policy/mfa_required_user_count"], tc.required, tc.users)
+			}
+		})
+	}
+
+	c := r.Clone()
+	c.Policies = []Policy{ordered("a", 1, everyone, "mfa"), ordered("b", 1, everyone, "mfa")}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "both have priority 1") {
+		t.Errorf("Validate took two policies of one set at one priority: %v", err)
+	}
+	c.Policies[1].Priority, c.Policies[1].Apps = 2, []string{"Office365"}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "cover different apps") {
+		t.Errorf("Validate took a set whose policies cover different apps: %v", err)
+	}
+}
+
 func TestDeriveCloudAndAccess(t *testing.T) {
 	r, err := Parse([]byte(cloud))
 	if err != nil {

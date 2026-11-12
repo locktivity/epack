@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "vendor": "aws",
+  "accounts": {
+    "ana": {"kind": "member", "enabled": true, "logins": "identity_center", "mfa": "totp", "signed_in_days_ago": 1,
+      "cloud_access": {"prod": {"roles": ["AdministratorAccess"]}, "dev": {"roles": ["ReadOnlyAccess"]}}},
+    "ben": {"kind": "member", "enabled": true, "logins": "identity_center", "signed_in_days_ago": 120},
+    "gia": {"kind": "guest", "enabled": true, "logins": "identity_center", "signed_in_days_ago": 4,
+      "cloud_access": {"prod": {"partial_roles": ["ReadOnlyAccess"]}}},
+    "ops_admin": {"kind": "member", "enabled": true, "cloud_account": "prod", "logins": "console_password",
+      "mfa": "virtual_mfa", "cloud_roles": ["AdministratorAccess"], "signed_in_days_ago": 5},
+    "dev_user": {"kind": "member", "enabled": true, "cloud_account": "dev", "logins": "console_password", "signed_in_days_ago": 30},
+    "ci": {"kind": "service", "enabled": true, "cloud_account": "dev", "cloud_roles": ["PowerUserAccess"]},
+    "prod_root": {"kind": "root", "enabled": true, "cloud_account": "prod", "logins": "console_password", "mfa": "hardware_mfa"},
+    "dev_root": {"kind": "root", "enabled": true, "cloud_account": "dev", "logins": "console_password"},
+    "audit_root": {"kind": "root", "enabled": true, "cloud_account": "audit"}
+  },
+  "groups": {
+    "engineers": {"members": ["ben"], "cloud_access": {"dev": {"roles": ["PowerUserAccess"]}}}
+  },
+  "apps": {
+    "datadog": {"publisher": "aws_partner", "cloud_roles": ["ReadOnlyAccess"]},
+    "deployer": {"publisher": "self", "cloud_roles": ["PowerUserAccess"]}
+  },
+  "security_groups": {
+    "web": {"cloud_account": "prod", "rules": {
+      "ssh": {"direction": "inbound", "access": "allow", "protocol": "tcp", "ports": ["22"], "sources": ["0.0.0.0/0"]},
+      "https": {"direction": "inbound", "access": "allow", "protocol": "tcp", "ports": ["443"], "sources": ["0.0.0.0/0"]}
+    }},
+    "internal": {"cloud_account": "prod", "rules": {
+      "all": {"direction": "inbound", "access": "allow", "protocol": "-1", "ports": ["*"], "sources": ["10.0.0.0/8"]}
+    }},
+    "bastion": {"cloud_account": "dev", "rules": {
+      "rdp": {"direction": "inbound", "access": "allow", "protocol": "tcp", "ports": ["3389"], "sources": ["0.0.0.0/0"]}
+    }}
+  },
+  "storage": {
+    "logs": {"cloud_account": "prod", "key_source": "aws:kms", "anonymous_access": false, "network_access": "vpc_only", "backup_retention_days": 30},
+    "assets": {"cloud_account": "prod", "key_source": "AES256", "anonymous_access": true, "network_access": "public"},
+    "scratch": {"cloud_account": "dev", "key_source": "AES256", "anonymous_access": false, "network_access": "listed",
+      "allowed_sources": ["10.0.0.0/8"], "backup_retention_days": 7}
+  },
+  "cloud": {
+    "system_type": "cloud",
+    "accounts": {
+      "prod": {"id": "111111111111", "name": "Production", "kind": "ACCOUNT", "regions": ["us-east-1", "eu-west-1"],
+        "identity_providers": {"sso": {"kind": "AWSSSO"}, "okta": {"kind": "SAML"}},
+        "local_mfa_enforced": true, "provisioning": ["scim_create", "scim_delete"],
+        "audit_logs": {"org_trail": {"regions": ["*"]}},
+        "threat_detection": ["us-east-1", "eu-west-1"]},
+      "dev": {"id": "222222222222", "name": "Development", "kind": "ACCOUNT", "regions": ["us-east-1"],
+        "identity_providers": {"sso": {"kind": "AWSSSO"}},
+        "audit_logs": {"dev_trail": {"enabled": false, "regions": ["us-east-1"]}},
+        "threat_detection": []},
+      "audit": {"id": "333333333333", "name": "Audit", "kind": "ACCOUNT", "collector_access": false}
+    },
+    "databases": {
+      "orders": {"cloud_account": "prod", "key_source": "aws:kms", "network_access": "vpc_only", "zones": 2, "backup_retention_days": 14},
+      "reports": {"cloud_account": "prod", "key_source": "AES256", "network_access": "listed", "allowed_sources": ["0.0.0.0/0"], "backup_retention_days": 35},
+      "test": {"cloud_account": "dev", "key_source": "none", "network_access": "public"}
+    },
+    "credentials": {
+      "ops_key": {"cloud_account": "prod", "owner": "ops_admin", "created_days_ago": 200, "last_used_days_ago": 3, "permissions": "AdministratorAccess"},
+      "root_key": {"cloud_account": "prod", "owner": "prod_root", "created_days_ago": 400, "permissions": "root"},
+      "ci_key": {"cloud_account": "dev", "owner": "ci", "created_days_ago": 30, "last_used_days_ago": 1, "expires_in_days": 60,
+        "allowed_sources": ["10.0.0.0/8"], "permissions": "PowerUserAccess"},
+      "ci_old": {"cloud_account": "dev", "owner": "ci", "active": false, "created_days_ago": 500, "permissions": "PowerUserAccess"},
+      "datadog_key": {"cloud_account": "dev", "app": "datadog", "created_days_ago": 10, "last_used_days_ago": 100, "permissions": "ReadOnlyAccess"}
+    },
+    "workforce_sign_in": {"identity_source": "EXTERNAL"}
+  },
+  "scanning": {
+    "scopes": {
+      "111111111111": {
+        "kind": "AWS_ACCOUNT",
+        "scanners": {"Amazon Inspector": {"states": {"AWS_EC2_INSTANCE": "ENABLED"}}},
+        "resources": {
+          "i-1": {"type": "AWS_EC2_INSTANCE", "scans": {"Amazon Inspector": "ACTIVE"},
+            "findings": {"f-1": {"scanner": "Amazon Inspector", "severity": "HIGH", "state": "ACTIVE", "open_days": 12}}},
+          "i-2": {"type": "AWS_EC2_INSTANCE", "scans": {"Amazon Inspector": "ACTIVE"},
+            "findings": {"f-2": {"scanner": "Amazon Inspector", "severity": "HIGH", "state": "CLOSED", "open_days": 40}}},
+          "i-3": {"type": "AWS_EC2_INSTANCE", "scans": {"Amazon Inspector": "ACTIVE"}},
+          "i-4": {"type": "AWS_EC2_INSTANCE"}
+        }
+      },
+      "222222222222": {
+        "kind": "AWS_ACCOUNT",
+        "scanners": {"Amazon Inspector": {"states": {"AWS_EC2_INSTANCE": "DISABLED"}}}
+      }
+    }
+  },
+  "providers": {"cloud-posture": "aws", "access-posture": "aws"},
+  "terms": {
+    "account_kinds": {"member": "member", "guest": "guest", "service": "service", "root": "root"},
+    "mfa_methods": {"totp": "mfa", "virtual_mfa": "mfa", "hardware_mfa": "mfa"},
+    "login_methods": {"identity_center": "sso", "console_password": "local"},
+    "cloud_roles": {"AdministratorAccess": "admin", "PowerUserAccess": "admin", "ReadOnlyAccess": "none"},
+    "protocols": {"tcp": "tcp", "-1": "any"},
+    "network_sources": {"0.0.0.0/0": "any", "10.0.0.0/8": "limited"},
+    "key_sources": {"aws:kms": "customer_key", "AES256": "provider_key", "none": "none"},
+    "app_publishers": {"aws_partner": "third_party", "self": "organization"},
+    "provisioning_features": {"scim_create": "create", "scim_delete": "deactivate"},
+    "cloud_account_kinds": {"ACCOUNT": "account"},
+    "cloud_network_access": {"public": "open", "listed": "limited", "vpc_only": "off"},
+    "cloud_identity_providers": {"AWSSSO": "workforce", "SAML": "saml"},
+    "cloud_credential_permissions": {"AdministratorAccess": "full", "root": "full", "PowerUserAccess": "write", "ReadOnlyAccess": "read"},
+    "workforce_identity_sources": {"EXTERNAL": "external_idp", "IDENTITY_STORE": "sign_in_service"},
+    "vuln_scanners": {"Amazon Inspector": {"name": "inspector", "categories": {"AWS_EC2_INSTANCE": "hosts"}}},
+    "vuln_scope_kinds": {"AWS_ACCOUNT": "account"},
+    "vuln_scanner_states": {"ENABLED": "on", "DISABLED": "off"},
+    "vuln_scan_statuses": {"ACTIVE": "scanned", "INACTIVE": "not_scanned"},
+    "vuln_severities": {"HIGH": "high"},
+    "vuln_finding_states": {"ACTIVE": "open", "CLOSED": "closed"}
+  }
+}

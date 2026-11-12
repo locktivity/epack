@@ -18,23 +18,39 @@
 //	  "accounts": {"<key>": {"kind": "...", "enabled": true, "roles": [...],
 //	    "eligible_roles": [...], "cloud_roles": [...],
 //	    "partial_cloud_roles": [...], "mfa": "..." or [...],
-//	    "signed_in_days_ago": 3}},
-//	  "groups": {"<key>": {"members": [...], "roles": [...], "cloud_roles": [...]}},
+//	    "signed_in_days_ago": 3, "state": "...", "password_strength": "...",
+//	    "password_length": 12, "logins": "..." or [...],
+//	    "cloud_account": "<cloud account key>",
+//	    "cloud_access": {"<cloud account key>": {"roles": [...], "partial_roles": [...]}}}},
+//	  "groups": {"<key>": {"members": [...], "roles": [...], "cloud_roles": [...],
+//	    "cloud_access": {...}}},
 //	  "sign_in_policies": {"<key>": {"state": "...", "include": "all" or
 //	    {"accounts": [...], "groups": [...], "roles": [...]}, "exclude": {...},
 //	    "apps": "all" or [...], "exclude_apps": [...],
 //	    "requires": "..." or [...] or {"any": [...]}, "blocks": "...",
-//	    "conditions": [...]}},
+//	    "conditions": [...], "session_lifetime_minutes": 720,
+//	    "idle_timeout_minutes": 60, "first_match": "...", "priority": 1}},
 //	  "apps": {"<key>": {"enabled": true, "sso_mode": "...",
+//	    "publisher": "...", "provisioning": "..." or [...], "cloud_roles": [...],
 //	    "credentials": {"<key>": {"kind": "...", "start": "...", "end": "..."}}}},
-//	  "security_groups": {"<key>": {"rules": {"<key>": {"direction": "inbound",
+//	  "security_groups": {"<key>": {"cloud_account": "...",
+//	    "rules": {"<key>": {"direction": "inbound",
 //	    "access": "allow", "protocol": "...", "ports": ["22", "1000-2000", "*"],
 //	    "sources": [...], "priority": 100}}}},
-//	  "storage": {"<key>": {"key_source": "...", "anonymous_access": false}},
+//	  "storage": {"<key>": {"key_source": "...", "anonymous_access": false,
+//	    "cloud_account": "...", "network_access": "...", "allowed_sources": [...],
+//	    "backup_retention_days": 7}},
+//	  "directory": {...}, "cloud": {...},
+//	  "providers": {"<schema short name>": "..."},
+//	  "endpoint": {...}, "scanning": {...}, "vcs": {...}, "tls": {...},
+//	  "email_dns": {...},
 //	  "terms": {"account_kinds": {...}, "mfa_methods": {...}, "roles": {...},
 //	    "cloud_roles": {...}, "policy_states": {...}, "requirements": {...},
 //	    "blocks": {...}, "sso_modes": {...}, "protocols": {...},
 //	    "network_sources": {...}, "key_sources": {...},
+//	    "account_states": {...}, "password_strengths": {...},
+//	    "login_methods": {...}, "app_publishers": {...},
+//	    "provisioning_features": {...},
 //	    "conditions": {"<condition>": {"<part>": [...]}}},
 //	  "unsettled": {"<account key>": ["mfa", "signed_in"]}
 //	}
@@ -46,6 +62,12 @@
 // conditions are vendor conditions, such as a sign-in risk level, that limit
 // it to some sign-ins.
 //
+// Policies that name the same first_match set apply in priority order,
+// lowest first, as a vendor such as Okta applies them: for each sign-in,
+// the first enforced policy in the set that applies to it decides, and the
+// set's later policies count for nothing. Every policy in a set covers the
+// same apps. Policies in different sets, or in none, combine as above.
+//
 // A condition terms.conditions maps limits a policy to the sign-ins whose
 // parts take the values listed there. The parts are the client (browser,
 // apps for mobile and desktop apps with modern sign-in, mail_sync for legacy
@@ -55,7 +77,8 @@
 // (trusted or untrusted), and the sign-in and user risk (none, low, medium,
 // high). Any other condition limits a policy in a way Derive doesn't
 // follow. A policy that blocks legacy authentication covers mail_sync and
-// legacy clients only.
+// legacy clients only, and one that blocks all, such as a rule that denies
+// access, covers every sign-in.
 //
 // The cloud side is one subscription or account. Its members are the
 // accounts that hold a cloud role, directly or through a group, over the
@@ -67,12 +90,53 @@
 // rules. A storage resource's key source is how its data is encrypted at
 // rest, and anonymous_access whether anyone can read its data without
 // signing in.
+//
+// An account's kind is a person in the organization (member), a person
+// from outside it (guest), an account a program uses (service), or a
+// built-in account that bypasses normal administration, such as the AWS
+// root user (root). An account with a cloud_account is a local account of
+// that cloud account, such as an AWS IAM user or the root user, rather than
+// one in the identity provider's directory, and the identity side doesn't
+// count it. Its cloud_roles and partial_cloud_roles are in that cloud
+// account. cloud_access gives the roles an account or group holds in each of
+// several cloud accounts.
+//
+// directory and cloud say more about the identity and cloud sides, in the
+// formats Directory and Cloud document. Without a directory block, Derive
+// gives none of the identity side's values that need one: the domain,
+// account states, passwords, app provisioning and publishers, and session
+// limits. Without a cloud block, the cloud side is one account with no ID,
+// and Derive gives only its network and storage counts and its members and
+// admins. A roster with either block describes that side fully, so an
+// account with no state is in none of the states the schemas count, an app
+// with no publisher is the organization's own, and a cloud account with no
+// audit log has none.
+//
+// An account's state, password_strength and logins are vendor terms, mapped
+// in account_states (locked_out, archived, or other), password_strengths
+// (weak or strong) and login_methods (sso, or local for a password, a social
+// login or any other way in that skips SSO). password_length is the length
+// of its password, left out when it has none in the directory. An app's
+// publisher is mapped in app_publishers (organization, provider for the
+// identity provider's own apps, or third_party), and each of its
+// provisioning features in provisioning_features (create, deactivate, or
+// other). A policy's session_lifetime_minutes and idle_timeout_minutes are
+// the session limits it sets, left out when it sets none. A storage
+// resource's network_access is mapped in the cloud block's terms, and its
+// allowed_sources, the networks a limited one lets in, in network_sources.
+//
+// providers gives the provider value of each normalized schema, by the
+// schema's short name, such as idp-posture. endpoint, scanning, vcs, tls and
+// email_dns each describe one more part of a tenant, in the format the
+// matching type documents: Endpoint, Scanning, VCS, Hosts and MailDomains.
+// Their terms are in the terms block with the others.
 package roster
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -81,8 +145,36 @@ import (
 
 // Normalized terms.
 const (
-	KindMember = "member"
-	KindGuest  = "guest"
+	KindMember  = "member"
+	KindGuest   = "guest"
+	KindService = "service"
+	KindRoot    = "root"
+
+	// AccountOther is any account state the schemas don't count apart, such
+	// as active or suspended.
+	AccountLockedOut = "locked_out"
+	AccountArchived  = "archived"
+	AccountOther     = "other"
+
+	PasswordWeak   = "weak"
+	PasswordStrong = "strong"
+
+	// LoginLocal is any way to sign in that skips SSO, such as a password or
+	// a social login.
+	LoginSSO   = "sso"
+	LoginLocal = "local"
+
+	// PublisherProvider is the identity provider's vendor, such as Microsoft
+	// for its own apps in Entra.
+	PublisherOrganization = "organization"
+	PublisherProvider     = "provider"
+	PublisherThirdParty   = "third_party"
+
+	// ProvisionCreate creates accounts in the app, and ProvisionDeactivate
+	// removes access when the directory deprovisions a user.
+	ProvisionCreate     = "create"
+	ProvisionDeactivate = "deactivate"
+	ProvisionOther      = "other"
 
 	MFANone              = "none"
 	MFA                  = "mfa"
@@ -104,6 +196,7 @@ const (
 	RequiresOther = "other"
 
 	BlocksLegacyAuth = "legacy_auth"
+	BlocksAll        = "all"
 
 	PartClient     = "client"
 	PartPlatform   = "platform"
@@ -150,7 +243,22 @@ type Roster struct {
 	// storage resources.
 	SecurityGroups []SecurityGroup
 	Storage        []Storage
-	Terms          Terms
+	// Directory and Cloud say more of the identity and cloud sides. Each is
+	// nil when the roster leaves it out.
+	Directory *Directory
+	Cloud     *Cloud
+	// Providers gives each normalized schema's provider value, by the
+	// schema's short name.
+	Providers map[string]string
+	// Endpoint, Scanning, VCS, Hosts and MailDomains are the parts of a
+	// tenant beyond its identity and cloud sides. Each is nil when the roster
+	// leaves it out.
+	Endpoint    *Endpoint
+	Scanning    *Scanning
+	VCS         *VCS
+	Hosts       *Hosts
+	MailDomains *MailDomains
+	Terms       Terms
 	// Unsettled lists, by account key, the attributes a live tenant has not
 	// yet shown, mfa or signed_in. Realizations and Settle take each both
 	// ways.
@@ -177,23 +285,49 @@ type Account struct {
 	// SignedInDaysAgo is the age of the account's last successful sign-in,
 	// or nil when it has never signed in.
 	SignedInDaysAgo *int
-	Extra           Extra
+	// State is the vendor's account state, such as LOCKED_OUT, or empty for
+	// none the schemas count apart.
+	State string
+	// PasswordStrength is the vendor's rating of the account's password, and
+	// PasswordLength its length, nil when it has no password in the
+	// directory.
+	PasswordStrength string
+	PasswordLength   *int
+	// Logins are the ways the account can sign in to the cloud side, or reach
+	// a vcs block's organization.
+	Logins []string
+	// CloudAccount is the cloud account the account is local to, or empty
+	// for an account in the directory.
+	CloudAccount string
+	// CloudAccess gives the cloud roles the account holds in each cloud
+	// account, by its key.
+	CloudAccess map[string]CloudGrant
+	Extra       Extra
+}
+
+// CloudGrant is the cloud roles held in one cloud account: over the whole of
+// it, and on part of it only.
+type CloudGrant struct {
+	Roles        []string
+	PartialRoles []string
 }
 
 // Group is a group whose members hold its roles.
 type Group struct {
-	Key        string
-	Members    []string
-	Roles      []string
-	CloudRoles []string
-	Extra      Extra
+	Key         string
+	Members     []string
+	Roles       []string
+	CloudRoles  []string
+	CloudAccess map[string]CloudGrant
+	Extra       Extra
 }
 
 // SecurityGroup is a set of network rules.
 type SecurityGroup struct {
-	Key   string
-	Rules []NetworkRule
-	Extra Extra
+	Key          string
+	CloudAccount string
+	Rules        []NetworkRule
+	Extra        Extra
 }
 
 // NetworkRule allows or denies connections in or out.
@@ -215,7 +349,15 @@ type Storage struct {
 	Key             string
 	KeySource       string
 	AnonymousAccess bool
-	Extra           Extra
+	CloudAccount    string
+	// NetworkAccess is whether the public internet can connect, in the
+	// vendor's terms, and AllowedSources the networks a limited one lets in.
+	NetworkAccess  string
+	AllowedSources []string
+	// BackupRetentionDays is how long its backups are kept, or nil when it
+	// has none.
+	BackupRetentionDays *int
+	Extra               Extra
 }
 
 // Policy is a sign-in policy.
@@ -234,6 +376,14 @@ type Policy struct {
 	RequireAny bool
 	Blocks     string
 	Conditions []string
+	// SessionLifetimeMinutes and IdleTimeoutMinutes are the session limits
+	// the policy sets, or nil when it sets none.
+	SessionLifetimeMinutes *int
+	IdleTimeoutMinutes     *int
+	// FirstMatch names the ordered set the policy belongs to, if any, and
+	// Priority its place in that set, lowest first.
+	FirstMatch string
+	Priority   int
 	Extra      Extra
 }
 
@@ -247,9 +397,16 @@ type Audience struct {
 
 // App is an app connected to the identity provider.
 type App struct {
-	Key         string
-	Enabled     bool
-	SSOMode     string
+	Key     string
+	Enabled bool
+	SSOMode string
+	// Publisher is who publishes the app, and Provisioning the provisioning
+	// features turned on for it, in the vendor's terms.
+	Publisher    string
+	Provisioning []string
+	// CloudRoles are the cloud roles the app holds anywhere on the cloud
+	// side.
+	CloudRoles  []string
 	Credentials []Credential
 	Extra       Extra
 }
@@ -278,7 +435,18 @@ type Terms struct {
 	KeySources     map[string]string `json:"key_sources"`
 	// Conditions maps a policy condition to the values of each part of a
 	// sign-in it limits the policy to.
-	Conditions map[string]map[string][]string `json:"conditions"`
+	Conditions           map[string]map[string][]string `json:"conditions"`
+	AccountStates        map[string]string              `json:"account_states"`
+	PasswordStrengths    map[string]string              `json:"password_strengths"`
+	LoginMethods         map[string]string              `json:"login_methods"`
+	AppPublishers        map[string]string              `json:"app_publishers"`
+	ProvisioningFeatures map[string]string              `json:"provisioning_features"`
+	CloudTerms
+	EndpointTerms
+	ScanningTerms
+	VCSTerms
+	HostsTerms
+	MailDomainsTerms
 }
 
 // Extra holds an entry's vendor fields by name.
@@ -320,6 +488,9 @@ func Parse(data []byte) (*Roster, error) {
 		Apps      map[string]json.RawMessage `json:"apps"`
 		SecGroups map[string]json.RawMessage `json:"security_groups"`
 		Storage   map[string]json.RawMessage `json:"storage"`
+		Directory json.RawMessage            `json:"directory"`
+		Cloud     json.RawMessage            `json:"cloud"`
+		Providers map[string]string          `json:"providers"`
 		Terms     *Terms                     `json:"terms"`
 		Unsettled map[string][]string        `json:"unsettled"`
 	}
@@ -332,10 +503,32 @@ func Parse(data []byte) (*Roster, error) {
 	if file.Terms == nil {
 		return nil, fmt.Errorf("roster has no terms block")
 	}
-	r := &Roster{Version: file.Version, Vendor: file.Vendor, Terms: *file.Terms, Unsettled: file.Unsettled}
+	r := &Roster{Version: file.Version, Vendor: file.Vendor, Providers: file.Providers, Terms: *file.Terms, Unsettled: file.Unsettled}
+	known := append([]string{"version", "vendor", "accounts", "groups", "sign_in_policies", "apps", "security_groups", "storage", "directory", "cloud", "providers", "terms", "unsettled"}, domainKeys()...)
 	var err error
-	if r.Extra, err = extra(data, "version", "vendor", "accounts", "groups", "sign_in_policies", "apps", "security_groups", "storage", "terms", "unsettled"); err != nil {
+	if r.Extra, err = extra(data, known...); err != nil {
 		return nil, err
+	}
+	if len(file.Directory) > 0 {
+		if r.Directory, err = parseDirectory(file.Directory); err != nil {
+			return nil, fmt.Errorf("directory: %w", err)
+		}
+	}
+	if len(file.Cloud) > 0 {
+		if r.Cloud, err = parseCloud(file.Cloud); err != nil {
+			return nil, fmt.Errorf("cloud: %w", err)
+		}
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, err
+	}
+	for _, d := range domains {
+		if raw, ok := top[d.key]; ok {
+			if err := d.parse(r, raw); err != nil {
+				return nil, fmt.Errorf("%s: %w", d.key, err)
+			}
+		}
 	}
 	for _, key := range sortedKeys(file.Accounts) {
 		a, err := parseAccount(key, file.Accounts[key])
@@ -346,18 +539,23 @@ func Parse(data []byte) (*Roster, error) {
 	}
 	for _, key := range sortedKeys(file.Groups) {
 		var g struct {
-			Members    []string `json:"members"`
-			Roles      []string `json:"roles"`
-			CloudRoles []string `json:"cloud_roles"`
+			Members     []string                   `json:"members"`
+			Roles       []string                   `json:"roles"`
+			CloudRoles  []string                   `json:"cloud_roles"`
+			CloudAccess map[string]json.RawMessage `json:"cloud_access"`
 		}
 		if err := json.Unmarshal(file.Groups[key], &g); err != nil {
 			return nil, fmt.Errorf("group %s: %w", key, err)
 		}
-		e, err := extra(file.Groups[key], "members", "roles", "cloud_roles")
+		e, err := extra(file.Groups[key], "members", "roles", "cloud_roles", "cloud_access")
 		if err != nil {
 			return nil, fmt.Errorf("group %s: %w", key, err)
 		}
-		r.Groups = append(r.Groups, Group{Key: key, Members: g.Members, Roles: g.Roles, CloudRoles: g.CloudRoles, Extra: e})
+		access, err := parseCloudAccess(g.CloudAccess)
+		if err != nil {
+			return nil, fmt.Errorf("group %s: %w", key, err)
+		}
+		r.Groups = append(r.Groups, Group{Key: key, Members: g.Members, Roles: g.Roles, CloudRoles: g.CloudRoles, CloudAccess: access, Extra: e})
 	}
 	for _, key := range sortedKeys(file.Policies) {
 		p, err := parsePolicy(key, file.Policies[key])
@@ -382,17 +580,22 @@ func Parse(data []byte) (*Roster, error) {
 	}
 	for _, key := range sortedKeys(file.Storage) {
 		var st struct {
-			KeySource       string `json:"key_source"`
-			AnonymousAccess bool   `json:"anonymous_access"`
+			KeySource       string   `json:"key_source"`
+			AnonymousAccess bool     `json:"anonymous_access"`
+			CloudAccount    string   `json:"cloud_account"`
+			NetworkAccess   string   `json:"network_access"`
+			AllowedSources  []string `json:"allowed_sources"`
+			BackupRetention *int     `json:"backup_retention_days"`
 		}
 		if err := json.Unmarshal(file.Storage[key], &st); err != nil {
 			return nil, fmt.Errorf("storage %s: %w", key, err)
 		}
-		e, err := extra(file.Storage[key], "key_source", "anonymous_access")
+		e, err := extra(file.Storage[key], "key_source", "anonymous_access", "cloud_account", "network_access", "allowed_sources", "backup_retention_days")
 		if err != nil {
 			return nil, fmt.Errorf("storage %s: %w", key, err)
 		}
-		r.Storage = append(r.Storage, Storage{Key: key, KeySource: st.KeySource, AnonymousAccess: st.AnonymousAccess, Extra: e})
+		r.Storage = append(r.Storage, Storage{Key: key, KeySource: st.KeySource, AnonymousAccess: st.AnonymousAccess, CloudAccount: st.CloudAccount,
+			NetworkAccess: st.NetworkAccess, AllowedSources: st.AllowedSources, BackupRetentionDays: st.BackupRetention, Extra: e})
 	}
 	if err := r.Validate(); err != nil {
 		return nil, err
@@ -402,14 +605,15 @@ func Parse(data []byte) (*Roster, error) {
 
 func parseSecurityGroup(key string, raw json.RawMessage) (SecurityGroup, error) {
 	var g struct {
-		Rules map[string]json.RawMessage `json:"rules"`
+		CloudAccount string                     `json:"cloud_account"`
+		Rules        map[string]json.RawMessage `json:"rules"`
 	}
 	if err := json.Unmarshal(raw, &g); err != nil {
 		return SecurityGroup{}, fmt.Errorf("security group %s: %w", key, err)
 	}
-	out := SecurityGroup{Key: key}
+	out := SecurityGroup{Key: key, CloudAccount: g.CloudAccount}
 	var err error
-	if out.Extra, err = extra(raw, "rules"); err != nil {
+	if out.Extra, err = extra(raw, "cloud_account", "rules"); err != nil {
 		return SecurityGroup{}, fmt.Errorf("security group %s: %w", key, err)
 	}
 	for _, rk := range sortedKeys(g.Rules) {
@@ -436,14 +640,20 @@ func parseSecurityGroup(key string, raw json.RawMessage) (SecurityGroup, error) 
 
 func parseAccount(key string, raw json.RawMessage) (Account, error) {
 	var a struct {
-		Kind            string    `json:"kind"`
-		Enabled         *bool     `json:"enabled"`
-		Roles           []string  `json:"roles"`
-		EligibleRoles   []string  `json:"eligible_roles"`
-		CloudRoles      []string  `json:"cloud_roles"`
-		PartialRoles    []string  `json:"partial_cloud_roles"`
-		MFA             oneOrMore `json:"mfa"`
-		SignedInDaysAgo *int      `json:"signed_in_days_ago"`
+		Kind            string                     `json:"kind"`
+		Enabled         *bool                      `json:"enabled"`
+		Roles           []string                   `json:"roles"`
+		EligibleRoles   []string                   `json:"eligible_roles"`
+		CloudRoles      []string                   `json:"cloud_roles"`
+		PartialRoles    []string                   `json:"partial_cloud_roles"`
+		MFA             oneOrMore                  `json:"mfa"`
+		SignedInDaysAgo *int                       `json:"signed_in_days_ago"`
+		State           string                     `json:"state"`
+		PasswordRating  string                     `json:"password_strength"`
+		PasswordLength  *int                       `json:"password_length"`
+		Logins          oneOrMore                  `json:"logins"`
+		CloudAccount    string                     `json:"cloud_account"`
+		CloudAccess     map[string]json.RawMessage `json:"cloud_access"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return Account{}, fmt.Errorf("account %s: %w", key, err)
@@ -451,14 +661,42 @@ func parseAccount(key string, raw json.RawMessage) (Account, error) {
 	if a.Enabled == nil {
 		return Account{}, fmt.Errorf("account %s has no enabled", key)
 	}
-	e, err := extra(raw, "kind", "enabled", "roles", "eligible_roles", "cloud_roles", "partial_cloud_roles", "mfa", "signed_in_days_ago")
+	e, err := extra(raw, "kind", "enabled", "roles", "eligible_roles", "cloud_roles", "partial_cloud_roles", "mfa", "signed_in_days_ago",
+		"state", "password_strength", "password_length", "logins", "cloud_account", "cloud_access")
+	if err != nil {
+		return Account{}, fmt.Errorf("account %s: %w", key, err)
+	}
+	access, err := parseCloudAccess(a.CloudAccess)
 	if err != nil {
 		return Account{}, fmt.Errorf("account %s: %w", key, err)
 	}
 	return Account{
 		Key: key, Kind: a.Kind, Enabled: *a.Enabled, Roles: a.Roles, EligibleRoles: a.EligibleRoles,
-		CloudRoles: a.CloudRoles, PartialCloudRoles: a.PartialRoles, Methods: a.MFA, SignedInDaysAgo: a.SignedInDaysAgo, Extra: e,
+		CloudRoles: a.CloudRoles, PartialCloudRoles: a.PartialRoles, Methods: a.MFA, SignedInDaysAgo: a.SignedInDaysAgo,
+		State: a.State, PasswordStrength: a.PasswordRating, PasswordLength: a.PasswordLength, Logins: a.Logins,
+		CloudAccount: a.CloudAccount, CloudAccess: access, Extra: e,
 	}, nil
+}
+
+// parseCloudAccess reads cloud_access, the roles held in each cloud account.
+func parseCloudAccess(raw map[string]json.RawMessage) (map[string]CloudGrant, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	out := map[string]CloudGrant{}
+	for _, key := range sortedKeys(raw) {
+		var g struct {
+			Roles        []string `json:"roles"`
+			PartialRoles []string `json:"partial_roles"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw[key]))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&g); err != nil {
+			return nil, fmt.Errorf("cloud_access %s: want an object of roles and partial_roles: %w", key, err)
+		}
+		out[key] = CloudGrant{Roles: g.Roles, PartialRoles: g.PartialRoles}
+	}
+	return out, nil
 }
 
 func parsePolicy(key string, raw json.RawMessage) (Policy, error) {
@@ -471,6 +709,10 @@ func parsePolicy(key string, raw json.RawMessage) (Policy, error) {
 		Requires    json.RawMessage `json:"requires"`
 		Blocks      string          `json:"blocks"`
 		Conditions  []string        `json:"conditions"`
+		Lifetime    *int            `json:"session_lifetime_minutes"`
+		Idle        *int            `json:"idle_timeout_minutes"`
+		FirstMatch  string          `json:"first_match"`
+		Priority    int             `json:"priority"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return Policy{}, fmt.Errorf("policy %s: %w", key, err)
@@ -493,13 +735,15 @@ func parsePolicy(key string, raw json.RawMessage) (Policy, error) {
 	if err != nil {
 		return Policy{}, fmt.Errorf("policy %s: %w", key, err)
 	}
-	e, err := extra(raw, "state", "include", "exclude", "apps", "exclude_apps", "requires", "blocks", "conditions")
+	e, err := extra(raw, "state", "include", "exclude", "apps", "exclude_apps", "requires", "blocks", "conditions", "session_lifetime_minutes", "idle_timeout_minutes", "first_match", "priority")
 	if err != nil {
 		return Policy{}, fmt.Errorf("policy %s: %w", key, err)
 	}
 	return Policy{
 		Key: key, State: p.State, Include: include, Exclude: exclude, Apps: apps, ExcludeApps: p.ExcludeApps,
-		Requires: requires, RequireAny: requireAny, Blocks: p.Blocks, Conditions: p.Conditions, Extra: e,
+		Requires: requires, RequireAny: requireAny, Blocks: p.Blocks, Conditions: p.Conditions,
+		SessionLifetimeMinutes: p.Lifetime, IdleTimeoutMinutes: p.Idle,
+		FirstMatch: p.FirstMatch, Priority: p.Priority, Extra: e,
 	}, nil
 }
 
@@ -547,16 +791,19 @@ func parseAudience(raw json.RawMessage) (Audience, error) {
 
 func parseApp(key string, raw json.RawMessage) (App, error) {
 	var a struct {
-		Enabled     *bool                      `json:"enabled"`
-		SSOMode     string                     `json:"sso_mode"`
-		Credentials map[string]json.RawMessage `json:"credentials"`
+		Enabled      *bool                      `json:"enabled"`
+		SSOMode      string                     `json:"sso_mode"`
+		Publisher    string                     `json:"publisher"`
+		Provisioning oneOrMore                  `json:"provisioning"`
+		CloudRoles   []string                   `json:"cloud_roles"`
+		Credentials  map[string]json.RawMessage `json:"credentials"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return App{}, fmt.Errorf("app %s: %w", key, err)
 	}
-	out := App{Key: key, Enabled: a.Enabled == nil || *a.Enabled, SSOMode: a.SSOMode}
+	out := App{Key: key, Enabled: a.Enabled == nil || *a.Enabled, SSOMode: a.SSOMode, Publisher: a.Publisher, Provisioning: a.Provisioning, CloudRoles: a.CloudRoles}
 	var err error
-	if out.Extra, err = extra(raw, "enabled", "sso_mode", "credentials"); err != nil {
+	if out.Extra, err = extra(raw, "enabled", "sso_mode", "publisher", "provisioning", "cloud_roles", "credentials"); err != nil {
 		return App{}, fmt.Errorf("app %s: %w", key, err)
 	}
 	for _, ck := range sortedKeys(a.Credentials) {
@@ -586,17 +833,22 @@ func (r *Roster) Validate() error {
 		terms map[string]string
 		allow []string
 	}{
-		"account_kinds":   {t.AccountKinds, []string{KindMember, KindGuest}},
-		"mfa_methods":     {t.MFAMethods, []string{MFANone, MFA, MFAPhishingResistant}},
-		"roles":           {t.Roles, []string{RoleSuperAdmin, RoleAdmin, RoleNone}},
-		"cloud_roles":     {t.CloudRoles, []string{RoleAdmin, RoleNone}},
-		"policy_states":   {t.PolicyStates, []string{StateEnforced, StateReportOnly, StateOff}},
-		"requirements":    {t.Requirements, []string{RequiresMFA, RequiresPhishingResistantMFA, RequiresManagedDevice, RequiresOther}},
-		"blocks":          {t.Blocks, []string{BlocksLegacyAuth}},
-		"sso_modes":       {t.SSOModes, []string{SSO, NoSSO}},
-		"protocols":       {t.Protocols, []string{ProtocolTCP, ProtocolUDP, ProtocolAny}},
-		"network_sources": {t.NetworkSources, []string{SourceAny, SourceLimited}},
-		"key_sources":     {t.KeySources, []string{ProviderKey, CustomerKey, NoKey}},
+		"account_kinds":         {t.AccountKinds, []string{KindMember, KindGuest, KindService, KindRoot}},
+		"account_states":        {t.AccountStates, []string{AccountLockedOut, AccountArchived, AccountOther}},
+		"password_strengths":    {t.PasswordStrengths, []string{PasswordWeak, PasswordStrong}},
+		"login_methods":         {t.LoginMethods, []string{LoginSSO, LoginLocal}},
+		"app_publishers":        {t.AppPublishers, []string{PublisherOrganization, PublisherProvider, PublisherThirdParty}},
+		"provisioning_features": {t.ProvisioningFeatures, []string{ProvisionCreate, ProvisionDeactivate, ProvisionOther}},
+		"mfa_methods":           {t.MFAMethods, []string{MFANone, MFA, MFAPhishingResistant}},
+		"roles":                 {t.Roles, []string{RoleSuperAdmin, RoleAdmin, RoleNone}},
+		"cloud_roles":           {t.CloudRoles, []string{RoleAdmin, RoleNone}},
+		"policy_states":         {t.PolicyStates, []string{StateEnforced, StateReportOnly, StateOff}},
+		"requirements":          {t.Requirements, []string{RequiresMFA, RequiresPhishingResistantMFA, RequiresManagedDevice, RequiresOther}},
+		"blocks":                {t.Blocks, []string{BlocksLegacyAuth, BlocksAll}},
+		"sso_modes":             {t.SSOModes, []string{SSO, NoSSO}},
+		"protocols":             {t.Protocols, []string{ProtocolTCP, ProtocolUDP, ProtocolAny}},
+		"network_sources":       {t.NetworkSources, []string{SourceAny, SourceLimited}},
+		"key_sources":           {t.KeySources, []string{ProviderKey, CustomerKey, NoKey}},
 	} {
 		for _, vendor := range sortedKeys(m.terms) {
 			if !slices.Contains(m.allow, m.terms[vendor]) {
@@ -639,6 +891,9 @@ func (r *Roster) Validate() error {
 		if a.SignedInDaysAgo != nil && *a.SignedInDaysAgo < 0 {
 			return fmt.Errorf("account %s signed in %d days from now", a.Key, *a.SignedInDaysAgo)
 		}
+		if err := r.validateAccountFacts(a); err != nil {
+			return err
+		}
 	}
 	groups := map[string]bool{}
 	for _, g := range r.Groups {
@@ -652,8 +907,19 @@ func (r *Roster) Validate() error {
 		if err := mapped(t.CloudRoles, "cloud_roles", "group "+g.Key+" cloud role", g.CloudRoles...); err != nil {
 			return err
 		}
+		if len(g.CloudRoles) > 0 {
+			if err := r.placed("group "+g.Key+" cloud_roles", ""); err != nil {
+				return err
+			}
+		}
+		if err := r.validateCloudAccess("group "+g.Key, g.CloudAccess); err != nil {
+			return err
+		}
 	}
 	for _, g := range r.SecurityGroups {
+		if err := r.placed("security group "+g.Key, g.CloudAccount); err != nil {
+			return err
+		}
 		for _, rule := range g.Rules {
 			what := "security group " + g.Key + " rule " + rule.Key
 			if (rule.Direction != Inbound && rule.Direction != Outbound) || (rule.Access != Allow && rule.Access != Deny) {
@@ -676,6 +942,15 @@ func (r *Roster) Validate() error {
 		if err := mapped(t.KeySources, "key_sources", "storage "+st.Key+" key source", st.KeySource); err != nil {
 			return err
 		}
+		if err := r.placed("storage "+st.Key, st.CloudAccount); err != nil {
+			return err
+		}
+		if err := r.validateNetworkAccess("storage "+st.Key, st.NetworkAccess, st.AllowedSources); err != nil {
+			return err
+		}
+		if st.BackupRetentionDays != nil && *st.BackupRetentionDays <= 0 {
+			return fmt.Errorf("storage %s keeps backups %d days; leave backup_retention_days out for none", st.Key, *st.BackupRetentionDays)
+		}
 	}
 	for _, p := range r.Policies {
 		if err := mapped(t.PolicyStates, "policy_states", "policy "+p.Key+" state", p.State); err != nil {
@@ -687,6 +962,11 @@ func (r *Roster) Validate() error {
 		if p.Blocks != "" {
 			if err := mapped(t.Blocks, "blocks", "policy "+p.Key+" blocks", p.Blocks); err != nil {
 				return err
+			}
+		}
+		for name, minutes := range map[string]*int{"session_lifetime_minutes": p.SessionLifetimeMinutes, "idle_timeout_minutes": p.IdleTimeoutMinutes} {
+			if minutes != nil && *minutes <= 0 {
+				return fmt.Errorf("policy %s %s is %d; leave it out when the policy sets no limit", p.Key, name, *minutes)
 			}
 		}
 		for _, aud := range []Audience{p.Include, p.Exclude} {
@@ -701,12 +981,45 @@ func (r *Roster) Validate() error {
 			}
 		}
 	}
+	if err := r.validateSets(); err != nil {
+		return err
+	}
 	for _, a := range r.Apps {
+		if err := mapped(t.ProvisioningFeatures, "provisioning_features", "app "+a.Key+" provisioning", a.Provisioning...); err != nil {
+			return err
+		}
+		if err := mapped(t.CloudRoles, "cloud_roles", "app "+a.Key+" cloud role", a.CloudRoles...); err != nil {
+			return err
+		}
+		if a.Publisher != "" {
+			if err := mapped(t.AppPublishers, "app_publishers", "app "+a.Key+" publisher", a.Publisher); err != nil {
+				return err
+			}
+		}
 		if a.SSOMode == "" {
 			continue
 		}
 		if err := mapped(t.SSOModes, "sso_modes", "app "+a.Key+" sso_mode", a.SSOMode); err != nil {
 			return err
+		}
+	}
+	if err := r.validateDirectory(); err != nil {
+		return fmt.Errorf("directory: %w", err)
+	}
+	if err := r.validateCloud(accounts); err != nil {
+		return fmt.Errorf("cloud: %w", err)
+	}
+	if r.VCS != nil && r.hasCloud() {
+		return fmt.Errorf("the roster has a cloud side and a vcs block, and access-posture describes one system; give each its own roster")
+	}
+	for _, short := range sortedKeys(r.Providers) {
+		if _, ok := schemaIDs[short]; !ok {
+			return fmt.Errorf("providers names %s, which is none of the normalized schemas %v", short, sortedKeys(schemaIDs))
+		}
+	}
+	for _, d := range domains {
+		if err := d.validate(r); err != nil {
+			return fmt.Errorf("%s: %w", d.key, err)
 		}
 	}
 	for _, key := range sortedKeys(r.Unsettled) {
@@ -720,6 +1033,36 @@ func (r *Roster) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateSets checks that the policies of each first_match set cover the
+// same apps and hold distinct priorities.
+func (r *Roster) validateSets() error {
+	first := map[string]Policy{}
+	priorities := map[string]map[int]string{}
+	for _, p := range r.Policies {
+		if p.FirstMatch == "" {
+			continue
+		}
+		f, seen := first[p.FirstMatch]
+		if !seen {
+			first[p.FirstMatch], priorities[p.FirstMatch] = p, map[int]string{}
+		} else if !sameSet(f.Apps, p.Apps) || !sameSet(f.ExcludeApps, p.ExcludeApps) {
+			return fmt.Errorf("policies %s and %s are both in first_match set %s, and cover different apps", f.Key, p.Key, p.FirstMatch)
+		}
+		if other, taken := priorities[p.FirstMatch][p.Priority]; taken {
+			return fmt.Errorf("policies %s and %s in first_match set %s both have priority %d", other, p.Key, p.FirstMatch, p.Priority)
+		}
+		priorities[p.FirstMatch][p.Priority] = p.Key
+	}
+	return nil
+}
+
+func sameSet(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(slices.Compact(a), slices.Compact(b))
 }
 
 func mapped(terms map[string]string, block, what string, vendor ...string) error {
@@ -789,8 +1132,7 @@ func (r *Roster) Account(key string) (Account, bool) {
 	return r.Accounts[i], true
 }
 
-// Clone returns a copy of r whose accounts, groups, policies and apps can be
-// changed without changing r.
+// Clone returns a copy of r whose entries can be changed without changing r.
 func (r *Roster) Clone() *Roster {
 	c := *r
 	c.Accounts = slices.Clone(r.Accounts)
@@ -802,18 +1144,25 @@ func (r *Roster) Clone() *Roster {
 			days := *a.SignedInDaysAgo
 			a.SignedInDaysAgo = &days
 		}
+		a.PasswordLength, a.Logins, a.CloudAccess = cloneInt(a.PasswordLength), slices.Clone(a.Logins), cloneCloudAccess(a.CloudAccess)
 	}
 	c.Groups = slices.Clone(r.Groups)
 	for i := range c.Groups {
 		c.Groups[i].Members, c.Groups[i].Roles, c.Groups[i].CloudRoles = slices.Clone(c.Groups[i].Members), slices.Clone(c.Groups[i].Roles), slices.Clone(c.Groups[i].CloudRoles)
+		c.Groups[i].CloudAccess = cloneCloudAccess(c.Groups[i].CloudAccess)
 	}
 	c.Policies = slices.Clone(r.Policies)
 	for i := range c.Policies {
 		p := &c.Policies[i]
 		p.Include, p.Exclude = p.Include.clone(), p.Exclude.clone()
 		p.Apps, p.ExcludeApps, p.Requires, p.Conditions = slices.Clone(p.Apps), slices.Clone(p.ExcludeApps), slices.Clone(p.Requires), slices.Clone(p.Conditions)
+		p.SessionLifetimeMinutes, p.IdleTimeoutMinutes = cloneInt(p.SessionLifetimeMinutes), cloneInt(p.IdleTimeoutMinutes)
 	}
 	c.Apps = slices.Clone(r.Apps)
+	for i := range c.Apps {
+		c.Apps[i].Provisioning, c.Apps[i].CloudRoles = slices.Clone(c.Apps[i].Provisioning), slices.Clone(c.Apps[i].CloudRoles)
+	}
+	c.Directory, c.Cloud = r.Directory.clone(), r.Cloud.clone()
 	c.SecurityGroups = slices.Clone(r.SecurityGroups)
 	for i := range c.SecurityGroups {
 		g := &c.SecurityGroups[i]
@@ -823,6 +1172,13 @@ func (r *Roster) Clone() *Roster {
 		}
 	}
 	c.Storage = slices.Clone(r.Storage)
+	for i := range c.Storage {
+		c.Storage[i].AllowedSources, c.Storage[i].BackupRetentionDays = slices.Clone(c.Storage[i].AllowedSources), cloneInt(c.Storage[i].BackupRetentionDays)
+	}
+	c.Providers = maps.Clone(r.Providers)
+	for _, d := range domains {
+		d.clone(&c, r)
+	}
 	c.Unsettled = map[string][]string{}
 	for k, v := range r.Unsettled {
 		c.Unsettled[k] = slices.Clone(v)
@@ -833,6 +1189,25 @@ func (r *Roster) Clone() *Roster {
 func (a Audience) clone() Audience {
 	a.Accounts, a.Groups, a.Roles = slices.Clone(a.Accounts), slices.Clone(a.Groups), slices.Clone(a.Roles)
 	return a
+}
+
+func cloneCloudAccess(access map[string]CloudGrant) map[string]CloudGrant {
+	if access == nil {
+		return nil
+	}
+	out := make(map[string]CloudGrant, len(access))
+	for k, g := range access {
+		out[k] = CloudGrant{Roles: slices.Clone(g.Roles), PartialRoles: slices.Clone(g.PartialRoles)}
+	}
+	return out
+}
+
+func cloneInt(n *int) *int {
+	if n == nil {
+		return nil
+	}
+	v := *n
+	return &v
 }
 
 // portRange reads a port, a range of ports, or * for every port.
