@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ENHANCEMENTS
+
+- Every field of the eight normalized schemas has a written definition.
+  The endpoint-posture device rows, the tls certificate details and the
+  schema_version and collected_at fields of every schema now say what they
+  hold, and the access-posture and vuln-scanning counts that only repeated
+  their label now say what they count. The definitions also state which
+  roles make a user privileged or an admin, which accounts are members or
+  credentials, that network ACLs don't change the SSH and RDP values, that
+  a remembered device doesn't make a sign-in uncovered, and how an unknown
+  device reading affects an endpoint percentage
+
 ## [0.11.0] - 2026-11-12
 
 ### ENHANCEMENTS

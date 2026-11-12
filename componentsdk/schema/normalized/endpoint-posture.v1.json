@@ -1,19 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Normalized device management and endpoint security evidence. Every metric is optional. An absent metric has no usable reading, and availability records why. Below the audit level, counts that grow with the fleet are left out, and devices_present is written instead.",
+  "description": "Normalized device management and endpoint security evidence. Every metric is optional. An absent metric has no usable reading, and availability records why. Below the audit level, counts that grow with the fleet are left out, and devices_present is written instead. When a device's reading is unknown because a field the collector reads was missing, the percentage still counts the other devices, and it carries a partial gap.",
   "type": "object",
   "required": ["schema_version", "collected_at", "provider", "scope", "availability"],
   "properties": {
     "schema_version": {
+      "description": "Version of this schema, always 1.0.0.",
       "type": "string",
       "pattern": "^1\\.\\d+\\.\\d+$",
       "x-epack-label": "Schema version"
     },
     "collected_at": {
+      "description": "When the collector read the provider, as an ISO 8601 timestamp.",
       "$ref": "#/$defs/timestamp",
       "x-epack-label": "Collected at"
     },
     "provider": {
+      "description": "The device management or endpoint security product the readings come from.",
       "type": "string",
       "minLength": 1,
       "x-epack-label": "Provider"
@@ -71,7 +74,7 @@
         "device_count": {
           "$ref": "#/$defs/count",
           "x-epack-level": "audit",
-          "description": "Devices in scope",
+          "description": "Devices in scope, as scope describes them. The fleet percentages count these, and each device row's in_scope says whether it is one of them.",
           "x-epack-label": "Devices in scope",
           "x-epack-summary": "Devices in scope."
         },
@@ -131,14 +134,17 @@
           "x-epack-summary": "Share of evaluated devices that pass the provider's compliance check or a named baseline."
         },
         "basis": {
+          "description": "Where the compliance verdict comes from: provider_reported when the provider decides it, or baseline_evaluation when the collector checks each device against the named baseline.",
           "enum": ["provider_reported", "baseline_evaluation"],
           "x-epack-label": "Compliance basis"
         },
         "baseline_id": {
+          "description": "The baseline the collector checks devices against when the basis is baseline_evaluation.",
           "type": "string",
           "x-epack-label": "Compliance baseline"
         },
         "baseline_version": {
+          "description": "The version of that compliance baseline.",
           "type": "string",
           "x-epack-label": "Compliance baseline version"
         }
@@ -210,10 +216,12 @@
           "x-epack-goal": "lower"
         },
         "baseline_id": {
+          "description": "The named OS baseline that os_baseline_compliant_pct checks devices against.",
           "type": "string",
           "x-epack-label": "OS baseline"
         },
         "baseline_version": {
+          "description": "The version of that OS baseline.",
           "type": "string",
           "x-epack-label": "OS baseline version"
         }
@@ -286,6 +294,7 @@
         "required": ["path", "reason"],
         "properties": {
           "path": {
+            "description": "The metric this entry explains, named as in metric_coverage, such as hardening.screen_lock_compliant_pct.",
             "type": "string",
             "minLength": 1,
             "x-epack-label": "Metric"
@@ -296,6 +305,7 @@
             "description": "unsupported when the vendor never reports the metric, and not_read when the vendor reports it but the collector does not read it"
           },
           "message": {
+            "description": "A sentence that explains the reason, such as which vendor API reports the metric.",
             "type": "string",
             "maxLength": 200,
             "x-epack-label": "Details"
@@ -585,10 +595,12 @@
       "required": ["state"],
       "properties": {
         "state": {
+          "description": "The device's result for this control: pass, fail, unknown when there is no usable reading, or not_applicable when the control does not apply to the device.",
           "enum": ["pass", "fail", "unknown", "not_applicable"],
           "x-epack-label": "Result"
         },
         "observed_at": {
+          "description": "When the reading behind this result was taken.",
           "$ref": "#/$defs/timestamp",
           "x-epack-label": "Observed at"
         }
@@ -600,23 +612,28 @@
       "required": ["device_id", "os_family", "in_scope"],
       "properties": {
         "device_id": {
+          "description": "The provider's identifier for the device.",
           "type": "string",
           "minLength": 1,
           "x-epack-label": "Device ID"
         },
         "hostname": {
+          "description": "The device's hostname, as the provider reports it.",
           "type": "string",
           "x-epack-label": "Hostname"
         },
         "os_family": {
+          "description": "The device's operating system family.",
           "$ref": "#/$defs/os_family",
           "x-epack-label": "OS family"
         },
         "os_name": {
+          "description": "The operating system's name, as the provider reports it.",
           "type": "string",
           "x-epack-label": "OS name"
         },
         "os_version": {
+          "description": "The operating system's version, as the provider reports it.",
           "type": "string",
           "x-epack-label": "OS version"
         },
@@ -625,10 +642,12 @@
           "required": ["user_id"],
           "properties": {
             "user_id": {
+              "description": "The provider's identifier for the device's primary user.",
               "type": "string",
               "x-epack-label": "Primary user ID"
             },
             "login": {
+              "description": "The primary user's sign-in name.",
               "type": "string",
               "x-epack-label": "Primary user login"
             }
@@ -637,6 +656,7 @@
           "x-epack-label": "Primary user"
         },
         "management_state": {
+          "description": "Whether the provider manages the device: managed, unmanaged, retired, or unknown when the provider does not say.",
           "enum": ["managed", "unmanaged", "retired", "unknown"],
           "x-epack-label": "Management state"
         },
@@ -646,10 +666,12 @@
           "x-epack-summary": "Whether the device counts toward the fleet readings."
         },
         "created_at": {
+          "description": "When the provider first recorded the device.",
           "$ref": "#/$defs/timestamp",
           "x-epack-label": "Record created"
         },
         "last_seen_at": {
+          "description": "When the device last reported to the provider.",
           "$ref": "#/$defs/timestamp",
           "x-epack-label": "Last seen"
         },
@@ -671,10 +693,12 @@
             "type": "object",
             "properties": {
               "account_id": {
+                "description": "The provider's identifier for the local account.",
                 "type": "string",
                 "x-epack-label": "Account ID"
               },
               "username": {
+                "description": "The local account's username on the device.",
                 "type": "string",
                 "x-epack-label": "Username"
               }
@@ -692,30 +716,37 @@
             "required": ["control", "status"],
             "properties": {
               "finding_id": {
+                "description": "The provider's identifier for this finding.",
                 "type": "string",
                 "x-epack-label": "Finding ID"
               },
               "control": {
+                "description": "The control the finding is about.",
                 "$ref": "#/$defs/control_key",
                 "x-epack-label": "Control"
               },
               "status": {
+                "description": "Whether the issue is still open or has been resolved, or unknown when the provider does not say.",
                 "enum": ["open", "resolved", "unknown"],
                 "x-epack-label": "Finding status"
               },
               "first_seen_at": {
+                "description": "When the issue was first recorded.",
                 "$ref": "#/$defs/timestamp",
                 "x-epack-label": "First seen"
               },
               "last_seen_at": {
+                "description": "When the issue was last seen.",
                 "$ref": "#/$defs/timestamp",
                 "x-epack-label": "Last seen"
               },
               "resolved_at": {
+                "description": "When the issue was resolved. Absent while it is open.",
                 "$ref": "#/$defs/timestamp",
                 "x-epack-label": "Resolved"
               },
               "reason_code": {
+                "description": "The provider's code for why the control failed on this device.",
                 "type": "string",
                 "x-epack-label": "Reason code"
               }
@@ -732,6 +763,7 @@
             "required": ["kind"],
             "properties": {
               "kind": {
+                "description": "The kind of protection the module provides.",
                 "enum": ["antimalware", "edr", "firewall", "device_control"],
                 "x-epack-label": "Module type"
               },
@@ -754,6 +786,7 @@
                 "x-epack-goal": true
               },
               "observed_at": {
+                "description": "When the module's state was last reported.",
                 "$ref": "#/$defs/timestamp",
                 "x-epack-label": "Observed at"
               }
