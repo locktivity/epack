@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### BUG FIXES
+
+- The release workflow `epack sdk new` writes for a tool, remote or utility
+  creates the GitHub release once, in its release job. Each platform's SLSA
+  build created it too, so builds that finished together failed with
+  `already_exists` or left two releases for one tag. The release still
+  carries each `.intoto.jsonl` next to its `.sigstore.json` copy. Collector
+  scaffolds already worked this way
+
 ## [0.11.1] - 2026-11-12
 
 ### ENHANCEMENTS

@@ -78,6 +78,10 @@ jobs:
       go-version-file: go.mod
       config-file: .slsa-goreleaser/{{.BinaryName}}-${{"{{"}} matrix.os {{"}}"}}-${{"{{"}} matrix.arch {{"}}"}}.yml
       evaluated-envs: "VERSION:${{"{{"}} needs.args.outputs.version {{"}}"}},COMMIT:${{"{{"}} needs.args.outputs.commit {{"}}"}}"
+      # Each platform's build would otherwise create the release itself, and
+      # builds that finish together fail with already_exists or leave two
+      # releases for one tag. The release job creates it once with every file.
+      upload-assets: false
 
   # Create GitHub Release with all artifacts
   release:
@@ -98,13 +102,13 @@ jobs:
           mkdir -p release
           # Find and move all binaries and attestations
           find artifacts -type f \( -name "{{.BinaryName}}-*" -o -name "*.intoto.jsonl" \) -exec mv {} release/ \;
-          # Rename .intoto.jsonl to .sigstore.json (epack expects this extension)
+          # Copy .intoto.jsonl to .sigstore.json (epack expects this extension)
           cd release
           for f in *.intoto.jsonl; do
-            [ -f "$f" ] && mv "$f" "${f%.intoto.jsonl}.sigstore.json"
+            [ -f "$f" ] && cp "$f" "${f%.intoto.jsonl}.sigstore.json"
           done
           # Create checksums
-          sha256sum * > checksums.txt
+          sha256sum -- * > checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
