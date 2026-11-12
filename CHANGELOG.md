@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-11-12
+
 ### BUG FIXES
 
 - The release workflow `epack sdk new` writes for a tool, remote or utility
@@ -15,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `already_exists` or left two releases for one tag. The release still
   carries each `.intoto.jsonl` next to its `.sigstore.json` copy. Collector
   scaffolds already worked this way
+- A recording keeps OData's control information keys, such as
+  `inheritsPermissionsFrom@odata.context` or `members@odata.nextLink`. The
+  scrubber read them as email addresses and replaced them with fakes, which
+  broke the structure of Microsoft Graph recordings. An address at a domain
+  such as `odata.org` is still replaced
 - `roster.Derive` sets idp-posture's `privileged_users_present` from the
   admin count. It used to come only with the admin MFA percentages, which
   0.11.1 leaves out when an admin has `signs_in_through`, so a roster with
