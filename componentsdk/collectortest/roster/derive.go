@@ -176,6 +176,7 @@ func deriveIdentity(r *Roster) map[string]any {
 	// Eligible roles grant nothing until activated, and the roster's roles
 	// are held at all times, so every admin is a standing admin.
 	v["/privileged_access/privileged_users_count"] = len(admins)
+	v["/privileged_access/privileged_users_present"] = len(admins) > 0
 	v["/privileged_access/super_admin_count"] = count(admins, r.superAdmin)
 	if !adminsElsewhere {
 		v["/privileged_access/privileged_mfa_user_count"] = count(admins, hasMFA)

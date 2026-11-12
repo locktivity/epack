@@ -251,6 +251,7 @@ func TestDeriveLeavesMFAOutForAccountsAnotherProviderSignsIn(t *testing.T) {
 			checkUnset(t, v, userMFA...)
 			if tc.adminsUnset {
 				checkUnset(t, v, adminMFA...)
+				checkPointers(t, v, map[string]any{"/privileged_access/privileged_users_present": true})
 			} else if _, ok := v["/privileged_access/privileged_mfa_user_count"]; !ok {
 				t.Error("/privileged_access/privileged_mfa_user_count is unset, want it given")
 			}

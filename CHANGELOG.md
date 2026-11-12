@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-11-12
+
 ### BUG FIXES
 
 - The release workflow `epack sdk new` writes for a tool, remote or utility
@@ -20,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scrubber read them as email addresses and replaced them with fakes, which
   broke the structure of Microsoft Graph recordings. An address at a domain
   such as `odata.org` is still replaced
+- `roster.Derive` sets idp-posture's `privileged_users_present` from the
+  admin count. It used to come only with the admin MFA percentages, which
+  0.11.1 leaves out when an admin has `signs_in_through`, so a roster with
+  such an admin gave no value for it
 
 ## [0.11.1] - 2026-11-12
 
