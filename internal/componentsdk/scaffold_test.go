@@ -56,6 +56,9 @@ func TestScaffold_EveryKindRendersValidFiles(t *testing.T) {
 					t.Errorf("%s has an unrendered template action", file)
 				}
 			}
+			if release := readFile(t, dir, ".github/workflows/release.yaml"); !strings.Contains(release, "      upload-assets: false\n") {
+				t.Error("release.yaml should leave creating the release to its release job, not each platform's build")
+			}
 		})
 	}
 }

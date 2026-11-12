@@ -60,8 +60,10 @@ jobs:
       go-version-file: go.mod
       config-file: .slsa-goreleaser/{{.BinaryName}}-${{"{{"}} matrix.os {{"}}"}}-${{"{{"}} matrix.arch {{"}}"}}.yml
       evaluated-envs: "VERSION:${{"{{"}} needs.args.outputs.version {{"}}"}},COMMIT:${{"{{"}} needs.args.outputs.commit {{"}}"}}"
-      # The release job attaches the binaries and provenance itself, so the
-      # release can start as a draft.
+      # Each platform's build would otherwise create the release itself, and
+      # builds that finish together fail with already_exists or leave two
+      # releases for one tag. The release job creates it once with every
+      # file, which also lets it start as a draft.
       upload-assets: false
 
   # Create GitHub Release with all artifacts, as a draft while the sandbox
