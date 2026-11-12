@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credentials, that network ACLs don't change the SSH and RDP values, that
   a remembered device doesn't make a sign-in uncovered, and how an unknown
   device reading affects an endpoint percentage
+- roster.Derive follows two of those definitions. An account with
+  signs_in_through signs in through another identity provider, so the MFA
+  values over users, and over admins when one of them does, are left out.
+  A vcs block's base_permission is the permission every member gets, and
+  when it maps to admin in terms.roles, every member but no outside
+  collaborator is an admin
 
 ## [0.11.0] - 2026-11-12
 

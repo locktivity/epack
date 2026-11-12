@@ -148,9 +148,16 @@ func deriveIdentity(r *Roster) map[string]any {
 	strong := func(a Account) bool { return r.MFAClass(a) == MFAPhishingResistant }
 	inactive := func(a Account) bool { return a.SignedInDaysAgo == nil || *a.SignedInDaysAgo > inactiveDays }
 
+	// Another identity provider decides MFA for the accounts it signs in, so
+	// the MFA values over a population that includes one are left out.
+	elsewhere := func(a Account) bool { return a.SignsInThrough != "" }
+	usersElsewhere, adminsElsewhere := slices.ContainsFunc(users, elsewhere), slices.ContainsFunc(admins, elsewhere)
+
 	v["/user_security/user_count"] = len(users)
-	v["/user_security/mfa_user_count"] = count(users, hasMFA)
-	v["/user_security/phishing_resistant_user_count"] = count(users, strong)
+	if !usersElsewhere {
+		v["/user_security/mfa_user_count"] = count(users, hasMFA)
+		v["/user_security/phishing_resistant_user_count"] = count(users, strong)
+	}
 	v["/user_security/inactive_user_count"] = count(users, inactive)
 
 	enabledApps := 0
@@ -170,8 +177,10 @@ func deriveIdentity(r *Roster) map[string]any {
 	// are held at all times, so every admin is a standing admin.
 	v["/privileged_access/privileged_users_count"] = len(admins)
 	v["/privileged_access/super_admin_count"] = count(admins, r.superAdmin)
-	v["/privileged_access/privileged_mfa_user_count"] = count(admins, hasMFA)
-	v["/privileged_access/privileged_phishing_resistant_user_count"] = count(admins, strong)
+	if !adminsElsewhere {
+		v["/privileged_access/privileged_mfa_user_count"] = count(admins, hasMFA)
+		v["/privileged_access/privileged_phishing_resistant_user_count"] = count(admins, strong)
+	}
 	v["/privileged_access/standing_privileged_users_count"] = len(admins)
 	v["/privileged_access/standing_privileged_users_present"] = len(admins) > 0
 
@@ -188,10 +197,12 @@ func deriveIdentity(r *Roster) map[string]any {
 	// account, still make mfa_required true.
 	protects := func(p Policy) bool { return r.requiresMFA(p) || p.Blocks != "" }
 	blocksLegacy := func(p Policy) bool { return p.Blocks != "" }
-	v["/policy/mfa_required"] = r.everyoneCovered(users, protects, clientKinds)
-	v["/policy/mfa_required_user_count"] = count(users, func(a Account) bool {
-		return r.coversSignIns(r.policiesThat(func(p Policy) bool { return r.covers(p, a) }), clientKinds, protects)
-	})
+	if !usersElsewhere {
+		v["/policy/mfa_required"] = r.everyoneCovered(users, protects, clientKinds)
+		v["/policy/mfa_required_user_count"] = count(users, func(a Account) bool {
+			return r.coversSignIns(r.policiesThat(func(p Policy) bool { return r.covers(p, a) }), clientKinds, protects)
+		})
+	}
 	v["/policy/legacy_auth_blocked"] = r.everyoneCovered(users, blocksLegacy, legacyClientKinds)
 	if len(admins) > 0 {
 		v["/policy/phishing_resistant_required_for_privileged"] = slices.ContainsFunc(r.Policies, func(p Policy) bool {
