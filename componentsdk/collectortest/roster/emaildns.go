@@ -1,6 +1,7 @@
 package roster
 
 import (
+	"cmp"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -233,10 +234,12 @@ type mailAssessment struct {
 }
 
 // deriveMail gives the email-dns schema's domains, in roster order, and its
-// summary over them. A domain's SPF record is the one TXT record at the
-// domain that RFC 7208 section 4.5 selects. Its DMARC record is the one RFC
-// 9989 section 4.10.1 discovers: the domain's own, or the one a DNS tree
-// walk finds above it. Its DKIM records are those at the common selectors.
+// summary over them. A domain's MX records are listed by priority, as a
+// resolver answers them, and those of equal priority in roster order. Its
+// SPF record is the one TXT record at the domain that RFC 7208 section 4.5
+// selects. Its DMARC record is the one RFC 9989 section 4.10.1 discovers:
+// the domain's own, or the one a DNS tree walk finds above it. Its DKIM
+// records are those at the common selectors.
 func deriveMail(r *Roster, out Values) error {
 	m := r.MailDomains
 	if m == nil {
@@ -254,7 +257,9 @@ func deriveMail(r *Roster, out Values) error {
 		var a mailAssessment
 		v[at+"/domain"] = d
 
-		for j, mx := range m.Names[name].MX {
+		mxs := slices.Clone(m.Names[name].MX)
+		slices.SortStableFunc(mxs, func(a, b MailExchanger) int { return cmp.Compare(a.Priority, b.Priority) })
+		for j, mx := range mxs {
 			v[fmt.Sprintf("%s/mx/%d/host", at, j)] = mx.Host
 			v[fmt.Sprintf("%s/mx/%d/priority", at, j)] = mx.Priority
 		}

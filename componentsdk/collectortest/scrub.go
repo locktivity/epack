@@ -3,6 +3,7 @@ package collectortest
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -42,9 +43,12 @@ type ScrubRules struct {
 	// its organization's login, or its account ID, to the stable fakes that
 	// replace them. Each is replaced as a literal is, except that a value of
 	// digits is replaced only where no digit adjoins it, and the built-in
-	// rules leave the fakes as they are. The scrub check fails the recording
-	// if one remains, in any case and in any encoding it looks for secrets
-	// in. EnvIdentifiers makes them from environment variables.
+	// rules leave the fakes as they are. A value of 12 digits, such as an
+	// AWS account ID, with a fake of 12 digits is also replaced in the IAM
+	// unique IDs that encode it, such as a role's AROA ID. The scrub check
+	// fails the recording if one remains, in any case and in any encoding it
+	// looks for secrets in, or in a unique ID. EnvIdentifiers makes them from
+	// environment variables.
 	Identifiers map[string]string
 }
 
@@ -74,16 +78,20 @@ var (
 	githubToken      = regexp.MustCompile(`\b(?:gh[oprsu]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,})`)
 	slackToken       = regexp.MustCompile(`\bxox[a-z]*(?:\.xox[a-z])?-[A-Za-z0-9-]{10,}`)
 	awsKeyID         = regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`)
+	iamUniqueID      = regexp.MustCompile(`\bA(?:ROA|IDA|GPA|NPA|NVA|IPA|PKA|BIA|CCA)[A-Z2-7]{16,17}\b`)
 
-	jsonField = regexp.MustCompile(`"([^"\\]{1,80})"(\s*:\s*)"((?:[^"\\]|\\.)*)"`)
-	xmlField  = regexp.MustCompile(`<([A-Za-z_][\w.:-]{0,80})(\s[^<>]*)?>([^<]+)</([A-Za-z_][\w.:-]{0,80})>`)
-	formField = regexp.MustCompile(`(^|[?&;\s"'])([A-Za-z0-9_.%-]{1,80})=([^&;#\s"'<>]+)`)
+	jsonField  = regexp.MustCompile(`"([^"\\]{1,80})"(\s*:\s*)"((?:[^"\\]|\\.)*)"`)
+	xmlField   = regexp.MustCompile(`<([A-Za-z_][\w.:-]{0,80})(\s[^<>]*)?>([^<]+)</([A-Za-z_][\w.:-]{0,80})>`)
+	formField  = regexp.MustCompile(`(^|[?&;\s"'])([A-Za-z0-9_.%-]{1,80})=([^&;#\s"'<>]+)`)
+	jsonMember = regexp.MustCompile(`"([^"\\]{1,80})"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|\[)`)
+	jsonString = regexp.MustCompile(`^"(?:[^"\\]|\\.)*"`)
 
 	emailAddress = regexp.MustCompile(`[A-Za-z0-9._+-]+(?:@|%40)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
 	fakeEmail    = regexp.MustCompile(`^user[0-9]+@example\.com$`)
 	guidPattern  = regexp.MustCompile(`\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b`)
 	guidHead     = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-$`)
 	fakeGUID     = regexp.MustCompile(`^00000000-0000-(?:0000-0000-0{12}|4000-8000-[0-9]{12})$`)
+	fakePhone    = regexp.MustCompile(`^555-[0-9]{4,}$`)
 	digitRun     = regexp.MustCompile(`[0-9]+`)
 	ipv4Run      = regexp.MustCompile(`[0-9]{1,3}(?:\.[0-9]{1,3}){3}`)
 	ipv6Run      = regexp.MustCompile(`[0-9A-Fa-f:]{3,}`)
@@ -137,6 +145,7 @@ type scrubber struct {
 	literalTo   map[string]string
 	literalKind map[string]string
 	numbers     []identifier
+	idAccounts  map[uint64]uint64
 	patterns    []ScrubPattern
 	keep        map[string]bool
 	fakes       map[string]map[string]string
@@ -145,10 +154,11 @@ type scrubber struct {
 
 func newScrubber(secrets map[string]string, rules ScrubRules) *scrubber {
 	s := &scrubber{
-		patterns: rules.Patterns,
-		keep:     map[string]bool{},
-		fakes:    map[string]map[string]string{},
-		replaced: map[string]map[string]bool{},
+		patterns:   rules.Patterns,
+		idAccounts: map[uint64]uint64{},
+		keep:       map[string]bool{},
+		fakes:      map[string]map[string]string{},
+		replaced:   map[string]map[string]bool{},
 	}
 	for _, v := range rules.Keep {
 		s.keep[v] = true
@@ -185,6 +195,11 @@ func newScrubber(secrets map[string]string, rules ScrubRules) *scrubber {
 		case id == "":
 		case isDigits(id):
 			s.numbers = append(s.numbers, identifier{value: id, fake: fake})
+			if account, ok := accountNumber(id); ok {
+				if to, ok := accountNumber(fake); ok {
+					s.idAccounts[account] = to
+				}
+			}
 		default:
 			literal(id, fake, "identifier")
 		}
@@ -238,6 +253,49 @@ func isDigits(s string) bool {
 		}
 	}
 	return s != ""
+}
+
+// uniqueIDAccountBits masks the 40 bits of an IAM unique ID that hold its
+// account number.
+const uniqueIDAccountBits = 1<<40 - 1
+
+// accountNumber returns 12 digits as the account number an IAM unique ID
+// encodes.
+func accountNumber(digits string) (uint64, bool) {
+	if len(digits) != 12 || !isDigits(digits) {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(digits, 10, 64)
+	return n, err == nil
+}
+
+// uniqueIDAccount returns the account number an IAM unique ID, such as a
+// role's AROA ID, encodes, and the bytes its first 16 characters after the
+// prefix decode from base32 to. Read as a 48-bit number, the first six of
+// those bytes hold the account number in bits 7 to 46.
+func uniqueIDAccount(id string) (uint64, []byte) {
+	b, _ := base32.StdEncoding.DecodeString(id[4:20])
+	return binary.BigEndian.Uint64(b) >> 23 & uniqueIDAccountBits, b
+}
+
+// uniqueIDs encodes each IAM unique ID of an account ScrubRules.Identifiers
+// replaces again, with the fake's account number in place of the real one.
+// The rest of the ID stays, so distinct IDs stay distinct. A unique ID of
+// any other account stays as it is.
+func (s *scrubber) uniqueIDs(in string) string {
+	if len(s.idAccounts) == 0 {
+		return in
+	}
+	return iamUniqueID.ReplaceAllStringFunc(in, func(id string) string {
+		account, b := uniqueIDAccount(id)
+		fake, ok := s.idAccounts[account]
+		if !ok || s.keep[id] {
+			return id
+		}
+		s.note("aws_unique_id", id)
+		binary.BigEndian.PutUint64(b, binary.BigEndian.Uint64(b)&^(uniqueIDAccountBits<<23)|fake<<23)
+		return id[:4] + base32.StdEncoding.EncodeToString(b) + id[20:]
+	})
 }
 
 // EnvIdentifiers returns ScrubRules.Identifiers for the environment
@@ -390,11 +448,13 @@ func (s *scrubber) textAt(in string, depth int) string {
 		})
 	}
 	out = s.replaceNumbers(out)
+	out = s.uniqueIDs(out)
 	for _, p := range s.patterns {
 		out = s.pattern(p, out)
 	}
 	out = s.tokens(out)
 	out = s.fields(out)
+	out = s.phones(out)
 	out = s.emails(out)
 	out = guidPattern.ReplaceAllStringFunc(out, s.guid)
 	out = s.accounts(out)
@@ -480,6 +540,129 @@ func (s *scrubber) fields(in string) string {
 	})
 }
 
+// phones replaces the phone numbers phoneNumbers finds with fakes, such as
+// 555-0100. Values with the same digits get the same fake, and a value
+// without a digit, such as "none", stays.
+func (s *scrubber) phones(in string) string {
+	return phoneNumbers(in, func(value string) string {
+		if !hasDigit(value) || fakePhone.MatchString(value) || s.keep[value] {
+			return value
+		}
+		return s.fake("phone", strings.Join(digitRun.FindAllString(value, -1), ""), nthFakePhone)
+	})
+}
+
+// phoneNumbers returns in with each phone number in its JSON replaced by
+// what fn returns for it. A phone number is the string value of a member
+// named like mobilePhone, primaryPhone, faxNumber, phone, or phoneNumber,
+// and in a list named like businessPhones, phones, or phoneNumbers, each
+// string and each object's value or number member. A null stays null, and a
+// list keeps its length.
+func phoneNumbers(in string, fn func(string) string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range jsonMember.FindAllStringSubmatchIndex(in, -1) {
+		if m[0] < last {
+			continue
+		}
+		name := in[m[2]:m[3]]
+		switch {
+		case m[4] >= 0 && phoneField(name):
+			value := in[m[4]:m[5]]
+			if v := fn(value); v != value {
+				b.WriteString(in[last:m[4]])
+				b.WriteString(v)
+				last = m[5]
+			}
+		case m[4] < 0 && phoneList(name):
+			list, end := phoneListAt(in, m[1]-1, fn)
+			b.WriteString(in[last : m[1]-1])
+			b.WriteString(list)
+			last = end
+		}
+	}
+	if last == 0 {
+		return in
+	}
+	b.WriteString(in[last:])
+	return b.String()
+}
+
+// phoneListAt returns the JSON list that opens at in[open] with fn applied
+// to each string in it and to the phone number members of each object in
+// it, and the index past the list's end.
+func phoneListAt(in string, open int, fn func(string) string) (string, int) {
+	var b strings.Builder
+	var stack []byte
+	key, last := "", open
+	for i := open; i < len(in); i++ {
+		switch c := in[i]; c {
+		case '[', '{':
+			stack = append(stack, c)
+		case ']', '}':
+			if stack = stack[:len(stack)-1]; len(stack) == 0 {
+				b.WriteString(in[last : i+1])
+				return b.String(), i + 1
+			}
+		case '"':
+			n := len(jsonString.FindString(in[i:]))
+			if n == 0 {
+				i = len(in)
+				continue
+			}
+			end := i + n
+			value := in[i+1 : end-1]
+			isKey := strings.HasPrefix(strings.TrimLeft(in[end:], " \t\r\n"), ":")
+			inObject := len(stack) == 2 && stack[1] == '{'
+			if inObject && isKey {
+				key = value
+			} else if len(stack) == 1 || inObject && (phoneMember(key) || phoneField(key)) {
+				if v := fn(value); v != value {
+					b.WriteString(in[last : i+1])
+					b.WriteString(v)
+					last = end - 1
+				}
+			}
+			i = end - 1
+		}
+	}
+	b.WriteString(in[last:])
+	return b.String(), len(in)
+}
+
+// phoneField reports whether a JSON member of this name holds a phone
+// number as a string: Microsoft Graph's mobilePhone and faxNumber, Okta's
+// mobilePhone and primaryPhone, or a phone or phoneNumber.
+func phoneField(name string) bool {
+	switch normalizedName(name) {
+	case "mobilephone", "primaryphone", "faxnumber", "phone", "phonenumber":
+		return true
+	}
+	return false
+}
+
+// phoneList reports whether a JSON list of this name holds phone numbers:
+// strings, as Microsoft Graph's businessPhones does, or objects with a value
+// or number member, as Google Workspace's phones and JumpCloud's
+// phoneNumbers do.
+func phoneList(name string) bool {
+	switch normalizedName(name) {
+	case "businessphones", "phones", "phonenumbers":
+		return true
+	}
+	return false
+}
+
+// phoneMember reports whether a member of this name holds the phone number
+// of an object in a phoneList.
+func phoneMember(name string) bool {
+	switch normalizedName(name) {
+	case "value", "number":
+		return true
+	}
+	return false
+}
+
 func (s *scrubber) emails(in string) string {
 	return emailAddress.ReplaceAllStringFunc(in, func(m string) string {
 		sep := "@"
@@ -546,6 +729,7 @@ const (
 func nthFakeEmail(n int) string   { return fmt.Sprintf("user%d@example.com", n) }
 func nthFakeGUID(n int) string    { return fmt.Sprintf(fakeGUIDPrefix+"%012d", n) }
 func nthFakeAccount(n int) string { return strconv.Itoa(fakeAccountBase + n) }
+func nthFakePhone(n int) string   { return fmt.Sprintf("555-%04d", 99+n) }
 
 // scrubbedFakes returns the fakes in s that the scrubber writes for a
 // tenant's email addresses, GUIDs, and AWS account numbers. In a recording,
@@ -1305,11 +1489,12 @@ type secretForm struct{ key, form string }
 // case and encoding, and anything that looks like a credential, as the
 // scrubber would have removed it.
 type scanner struct {
-	forms []secretForm
-	ids   []identifierForm
-	where string
-	leaks []leak
-	seen  map[leak]bool
+	forms    []secretForm
+	ids      []identifierForm
+	accounts map[uint64]string
+	where    string
+	leaks    []leak
+	seen     map[leak]bool
 }
 
 // identifierForm is an encoding of a tenant identifier in lowercase, or its
@@ -1320,7 +1505,7 @@ type identifierForm struct {
 }
 
 func newScanner(secrets []canary, identifiers map[string]string) *scanner {
-	c := &scanner{seen: map[leak]bool{}}
+	c := &scanner{accounts: map[uint64]string{}, seen: map[leak]bool{}}
 	for _, s := range secrets {
 		if len(s.value) >= minSecretLength {
 			for _, form := range encodings(s.value) {
@@ -1334,6 +1519,9 @@ func newScanner(secrets []canary, identifiers map[string]string) *scanner {
 		case id == "":
 		case isDigits(id):
 			c.ids = append(c.ids, identifierForm{fake: fake, form: id, digits: true})
+			if account, ok := accountNumber(id); ok {
+				c.accounts[account] = fake
+			}
 		default:
 			seen := map[string]bool{}
 			for _, form := range encodings(id) {
@@ -1407,6 +1595,18 @@ func (c *scanner) marks(s string) {
 			c.add("an AWS access key ID")
 		}
 	}
+	for _, id := range iamUniqueID.FindAllString(s, -1) {
+		account, _ := uniqueIDAccount(id)
+		if fake, ok := c.accounts[account]; ok {
+			c.add("an IAM unique ID that encodes the account ScrubRules.Identifiers replaces with " + fake)
+		}
+	}
+	phoneNumbers(s, func(value string) string {
+		if hasDigit(value) && !fakePhone.MatchString(value) {
+			c.add("a phone number")
+		}
+		return value
+	})
 }
 
 func (c *scanner) token(run string) string {

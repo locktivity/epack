@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-11-12
+
+### BUG FIXES
+
+- The scrubber replaces phone numbers in a recording with fakes such as
+  `555-0100`. It reads JSON members named like `mobilePhone`,
+  `primaryPhone`, `faxNumber`, `phone` or `phoneNumber`, and lists named
+  like `businessPhones`, `phones` or `phoneNumbers`. Values with the same
+  digits get the same fake, and a null, an empty string and a list's length
+  stay as they are. The scrub check flags a phone number left in those
+  places, so a recording made before this release that holds one fails
+  `Check` until it is recorded again
+- An IAM unique ID, such as a role's `AROA` ID, encodes its account ID, so
+  a recording whose account ID was scrubbed still held it in its role IDs.
+  When `ScrubRules.Identifiers` replaces a 12-digit account ID with a
+  12-digit fake, the scrubber encodes each unique ID of that account again
+  with the fake account and keeps the rest of the ID. The scrub check flags
+  a unique ID that still encodes the account. Unique IDs of other accounts
+  stay as they are
+- `roster.Derive` lists a domain's MX records by priority, as a resolver
+  answers them and the email-dns collector lists them. Records of equal
+  priority keep the roster's order. They used to come in the roster's
+  order
+
 ## [0.11.3] - 2026-11-12
 
 ### ENHANCEMENTS
