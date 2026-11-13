@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-11-12
+
 ### BUG FIXES
 
 - The scrubber replaces phone numbers in a recording with fakes such as
