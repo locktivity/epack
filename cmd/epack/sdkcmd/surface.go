@@ -276,7 +276,7 @@ func descriptionDigest(path string) (string, error) {
 			return "", err
 		}
 		sum := sha256.Sum256(data)
-		fmt.Fprintf(h, "%s\n", hex.EncodeToString(sum[:]))
+		_, _ = fmt.Fprintf(h, "%s\n", hex.EncodeToString(sum[:]))
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
