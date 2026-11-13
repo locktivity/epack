@@ -3,14 +3,13 @@
 package sdkcmd
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/locktivity/epack/internal/catalog"
 	"github.com/locktivity/epack/internal/limits"
 	"github.com/locktivity/epack/internal/safefile"
 	"github.com/locktivity/epack/internal/surface"
@@ -43,6 +42,10 @@ documentation shows, or irrelevant, with the reason. Only GET operations
 are in scope unless surface.yaml says otherwise. Recorded requests the
 description does not describe, such as a token endpoint or a GraphQL
 query, are acknowledged under unmatched.
+
+A description is read from --spec, from the file an entry of surface.yaml
+names, or fetched from the url it names, pinned to a revision and checked
+against its sha256, into epack's cache, so CI needs no local copy.
 
 Two documents are rendered from the verdicts. The Not Collected section
 of docs/overview.md shows the overview headlines in surface.yaml, each
@@ -99,14 +102,29 @@ func runSurface(cmd *cobra.Command, args []string) error {
 	refs := cfg.Descriptions()
 	specPaths := surfaceSpecs
 	if len(specPaths) == 0 {
+		var cacheDir string
 		for _, ref := range refs {
-			if ref.File == "" {
-				return fmt.Errorf("pass --spec for %s, or set its file in %s", ref.Label(), surfaceConfig)
+			switch {
+			case ref.File != "":
+				specPaths = append(specPaths, filepath.Join(root, filepath.FromSlash(ref.File)))
+			case ref.URL != "":
+				if cacheDir == "" {
+					if cacheDir, err = catalog.Dir(); err != nil {
+						return err
+					}
+				}
+				fetched, err := surface.Fetch(cmd.Context(), ref, cacheDir, nil)
+				if err != nil {
+					return err
+				}
+				out.Verbose("Fetched %s to %s", ref.Label(), fetched)
+				specPaths = append(specPaths, fetched)
+			default:
+				return fmt.Errorf("pass --spec for %s, or give it a file or url in %s", ref.Label(), surfaceConfig)
 			}
-			specPaths = append(specPaths, filepath.Join(root, filepath.FromSlash(ref.File)))
 		}
 		if len(specPaths) == 0 {
-			return fmt.Errorf("pass --spec, or set spec.file in %s", surfaceConfig)
+			return fmt.Errorf("pass --spec, or set spec.file or spec.url in %s", surfaceConfig)
 		}
 	}
 	if len(refs) > 1 && len(specPaths) != len(refs) {
@@ -116,7 +134,7 @@ func runSurface(cmd *cobra.Command, args []string) error {
 		if i >= len(refs) || refs[i].SHA256 == "" {
 			continue
 		}
-		got, err := descriptionDigest(specPath)
+		got, err := surface.Digest(specPath)
 		if err != nil {
 			return err
 		}
@@ -251,34 +269,6 @@ func printVerdicts(out interface{ Print(string, ...interface{}) }, verdicts []su
 	for _, v := range verdicts {
 		out.Print("  %-48s %s %s  %s\n", v.Op.Key(), v.Op.Method, v.Op.Path, v.Item.Label())
 	}
-}
-
-// descriptionDigest is the SHA-256 of a description file, or, for a
-// directory, of the digests of its description files in name order, each
-// followed by a newline.
-func descriptionDigest(path string) (string, error) {
-	files, err := surface.DescriptionFiles(path)
-	if err != nil {
-		return "", err
-	}
-	if len(files) == 1 && files[0] == path {
-		data, err := safefile.ReadFile(path, limits.Artifact)
-		if err != nil {
-			return "", err
-		}
-		sum := sha256.Sum256(data)
-		return hex.EncodeToString(sum[:]), nil
-	}
-	h := sha256.New()
-	for _, file := range files {
-		data, err := safefile.ReadFile(file, limits.Artifact)
-		if err != nil {
-			return "", err
-		}
-		sum := sha256.Sum256(data)
-		_, _ = fmt.Fprintf(h, "%s\n", hex.EncodeToString(sum[:]))
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // modulePath reads the module line of the module's go.mod.

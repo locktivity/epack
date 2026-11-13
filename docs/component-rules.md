@@ -691,6 +691,8 @@ Pin it to the commit of the epack release in `go.mod`, or a later commit on `mai
 
 The `trace-map` job runs `epack sdk map --check` at the epack version in `go.mod`, which rebuilds the trace map from the collectortest suites and the source and fails when the committed one differs, naming the command that rewrites it (see [Trace map](collect-protocol.md#trace-map)). The release workflow runs CI before the SLSA build, so a tag cannot ship a stale map. `trace-map` names the committed map, `docs/schema/trace-map.json` by default. A collector without one passes the job.
 
+The `surface` job runs `epack sdk surface --check` for a collector with a `docs/surface.yaml`, through `make surface` when the Makefile has that target, so the collector can pin an epack version newer than its go.mod does, and at the go.mod version otherwise (see [Surface check](collect-protocol.md#surface-check)). The check fetches each vendor API description the verdict file names by URL, pinned to a revision and a digest, so it needs no committed copy. It fails when a read operation of the description has no verdict, when a verdict is stale, or when the rendered Not Collected section or coverage reference differs from the verdicts. A collector without a `docs/surface.yaml` passes the job.
+
 To add conformance to another pipeline, run the same steps yourself:
 
 ```yaml
