@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-11-12
+
+### ENHANCEMENTS
+
+- A roster can describe a hosted service's workspace, such as an
+  organization on a compute platform or a database service, in a
+  workspace block: its name and system type, whether SSO and its own MFA
+  requirement are on, its SCIM provisioning, its IP allow list and its
+  machine credentials. roster.Derive gives access-posture values for it.
+  Its members are the roster's enabled people, its admins those whose
+  roles map to admin in terms.roles, and
+  terms.workspace_credential_permissions maps each credential's
+  permissions to full, write or read
+
 ## [0.11.2] - 2026-11-12
 
 ### BUG FIXES

@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "vendor": "test",
+  "source": "A platform workspace: an Owner and a Manager who sign in with social logins, two Members, one through SAML, and a guest. A service account holds the deploy token.",
+  "providers": {"access-posture": "acme-platform"},
+  "accounts": {
+    "owner": {"kind": "member", "enabled": true, "logins": "github", "mfa": "totp", "roles": ["Owner"], "signed_in_days_ago": 1},
+    "manager": {"kind": "member", "enabled": true, "logins": "google", "roles": ["Manager"], "signed_in_days_ago": 10},
+    "dev": {"kind": "member", "enabled": true, "logins": "google", "roles": ["Member"], "signed_in_days_ago": 200},
+    "sso_dev": {"kind": "member", "enabled": true, "logins": "saml", "roles": ["Member"], "signed_in_days_ago": 5},
+    "contractor": {"kind": "guest", "enabled": true, "logins": "google", "mfa": "totp", "roles": ["Member"], "signed_in_days_ago": 3},
+    "ci": {"kind": "service", "enabled": true, "roles": ["Manager"]},
+    "former": {"kind": "member", "enabled": false, "logins": "google", "roles": ["Owner"]}
+  },
+  "apps": {
+    "tracker": {"publisher": "partner"},
+    "paused": {"enabled": false, "publisher": "partner"},
+    "own": {"publisher": "us"}
+  },
+  "workspace": {
+    "name": "acme",
+    "system_type": "platform",
+    "single_sign_on": true,
+    "provisioning": ["create", "delete"],
+    "credentials": {
+      "deploy": {"owner": "ci", "created_days_ago": 400, "last_used_days_ago": 2, "permissions": "workspace"},
+      "proxy": {"created_days_ago": 10, "expires_in_days": 30, "permissions": "invoke"},
+      "office": {"owner": "manager", "created_days_ago": 20, "last_used_days_ago": 1, "allowed_sources": ["10.0.0.0/8"], "permissions": "workspace"},
+      "revoked": {"owner": "dev", "active": false, "created_days_ago": 900, "permissions": "workspace"}
+    }
+  },
+  "terms": {
+    "account_kinds": {"member": "member", "guest": "guest", "service": "service"},
+    "mfa_methods": {"totp": "mfa"},
+    "login_methods": {"github": "local", "google": "local", "saml": "sso"},
+    "roles": {"Owner": "super_admin", "Manager": "admin", "Member": "none"},
+    "app_publishers": {"partner": "third_party", "us": "organization"},
+    "provisioning_features": {"create": "create", "delete": "deactivate"},
+    "network_sources": {"10.0.0.0/8": "limited"},
+    "workspace_credential_permissions": {"workspace": "full", "invoke": "read"}
+  }
+}
