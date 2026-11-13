@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-11-13
+
 ### NEW FEATURES
 
 - Every rule a collector follows now names the check that enforces it.
