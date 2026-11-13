@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### NEW FEATURES
+
+- `epack sdk surface` compares the vendor API calls in a collector's
+  recordings with the vendor's OpenAPI description, so what the collector
+  reads and leaves out comes from the vendor rather than from memory. Every
+  in-scope operation the recordings never call needs a verdict in
+  `docs/surface.yaml`: not collected, with the sentence the documentation
+  shows, or irrelevant, with the reason. `--write` renders two documents
+  from the verdicts: the Not Collected section of `docs/overview.md`, kept
+  to the headlines a buyer needs, and a coverage reference at
+  `docs/coverage.md` that leads with what the collector reads and holds
+  every verdict. `--check` fails when either document, a verdict or the
+  recordings disagree. The description file is
+  pinned by digest, so a refreshed description fails the check until the
+  verdicts are reviewed. `safeyaml.UnmarshalDocument` parses such a
+  description, which has more aliases than the alias bomb guard's absolute
+  cap allows, while still enforcing the alias-to-anchor ratio
+
 ## [0.11.4] - 2026-11-12
 
 ### BUG FIXES
