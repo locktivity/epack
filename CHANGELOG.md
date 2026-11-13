@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-13
+
+### ENHANCEMENTS
+
+- `epack sdk surface` takes several descriptions at once, `--spec` once
+  per entry of `specs` in `docs/surface.yaml`, each pinned by its own
+  digest, and a description may be a directory of files, as Azure
+  publishes a resource provider's API version. A Swagger 2 description's
+  `host` and `basePath` are read like an OpenAPI 3 server. A request on a
+  host the description does not name, or outside its base paths, matches
+  nothing, where a Graph path matched an Azure Resource Manager call
+  before. A spanning parameter such as Azure's `{resourceUri}` or `{scope}`
+  may sit anywhere in a template, not only at its end. A verdict item may
+  select by `path_contains`, be limited to named descriptions with `in`,
+  and carry a `priority` that wins over more specific items; a longer path
+  prefix wins over a shorter one, and two items covering an operation
+  equally is a problem. The coverage reference lists each description and
+  groups Azure operations by resource provider
+
 ## [0.12.0] - 2026-11-13
 
 ### NEW FEATURES

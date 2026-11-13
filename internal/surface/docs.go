@@ -67,7 +67,11 @@ func RenderSection(cfg *Config, docs Docs) string {
 		}
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "The coverage reference lists what the collector reads of the %s API, and everything else the API offers with why it is left out, checked against %s's published API description: %s\n", cfg.Vendor, cfg.Vendor, docs.ReferenceURL(cfg))
+	description := "description"
+	if len(cfg.Descriptions()) > 1 {
+		description = "descriptions"
+	}
+	fmt.Fprintf(&b, "The coverage reference lists what the collector reads of the %s API, and everything else the API offers with why it is left out, checked against %s's published API %s: %s\n", cfg.Vendor, cfg.Vendor, description, docs.ReferenceURL(cfg))
 	return b.String()
 }
 
@@ -79,19 +83,42 @@ func RenderReference(cfg *Config, r *Report, docs Docs) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s API coverage\n\n", cfg.Vendor)
 	fmt.Fprintf(&b, "What the collector reads of the %s API, and what it leaves out", cfg.Vendor)
-	if cfg.Spec.Source != "" {
+	refs := cfg.Descriptions()
+	switch len(refs) {
+	case 0:
+	case 1:
 		fmt.Fprintf(&b, ", checked against the %s API description", cfg.Vendor)
-		if cfg.Spec.Revision != "" {
-			fmt.Fprintf(&b, " at revision %s", cfg.Spec.Revision)
+		if refs[0].Revision != "" {
+			fmt.Fprintf(&b, " at revision %s", refs[0].Revision)
 		}
-		fmt.Fprintf(&b, ": %s", cfg.Spec.Source)
-		if cfg.Spec.Path != "" {
-			fmt.Fprintf(&b, ", %s", cfg.Spec.Path)
+		if refs[0].Source != "" {
+			fmt.Fprintf(&b, ": %s", refs[0].Source)
 		}
+		if refs[0].Path != "" {
+			fmt.Fprintf(&b, ", %s", refs[0].Path)
+		}
+	default:
+		fmt.Fprintf(&b, ", checked against %d of %s's published API descriptions", len(refs), cfg.Vendor)
 	}
 	b.WriteString(".\n\n")
+	if len(refs) > 1 {
+		for _, ref := range refs {
+			fmt.Fprintf(&b, "- **%s**", ref.Label())
+			if ref.Revision != "" {
+				fmt.Fprintf(&b, " at revision %s", ref.Revision)
+			}
+			if ref.Source != "" {
+				fmt.Fprintf(&b, ": %s", ref.Source)
+			}
+			if ref.Path != "" && ref.Name != "" {
+				fmt.Fprintf(&b, ", %s", ref.Path)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
 	b.WriteString("| | Operations |\n|---|---|\n")
-	fmt.Fprintf(&b, "| In the description | %d |\n", r.SpecOperations)
+	fmt.Fprintf(&b, "| In the %s | %d |\n", plural(len(refs), "description"), r.SpecOperations)
 	fmt.Fprintf(&b, "| Read operations in scope | %d |\n", r.InScope)
 	fmt.Fprintf(&b, "| Called by the collector | %d |\n", len(r.Exercised))
 	fmt.Fprintf(&b, "| Not collected | %d, in %d items |\n", len(r.NotCollected), len(cfg.NotCollected))
@@ -201,12 +228,18 @@ func RenderReference(cfg *Config, r *Report, docs Docs) string {
 	return b.String()
 }
 
+var providerSegment = regexp.MustCompile(`/providers/([A-Za-z][A-Za-z0-9]*\.[A-Za-z0-9.]+)`)
+
 // Area groups operations for the reference: the description's category
-// when it has one, else the first path segment after any api or version
-// segments. Tags are not used, since vendors name them for their SDKs.
+// when it has one, else the resource provider namespace of an Azure path,
+// else the first path segment after any api or version segments. Tags are
+// not used, since vendors name them for their SDKs.
 func Area(op *Operation) string {
 	if op.Category != "" {
 		return op.Category
+	}
+	if m := providerSegment.FindStringSubmatch(op.Path); m != nil {
+		return m[1]
 	}
 	for _, seg := range splitPath(op.Path) {
 		if seg == "api" || versionSegment.MatchString(seg) || isParam(seg) {
@@ -215,6 +248,13 @@ func Area(op *Operation) string {
 		return strings.TrimPrefix(seg, ".")
 	}
 	return "other"
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return word
+	}
+	return word + "s"
 }
 
 func sortedKeys[V any](m map[string]V) []string {

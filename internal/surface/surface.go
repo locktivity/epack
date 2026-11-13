@@ -118,8 +118,16 @@ func Analyze(spec *Spec, cfg *Config, calls []Call) *Report {
 			r.Reads = append(r.Reads, ReadGap{Op: op, Read: read})
 			continue
 		}
-		notCollected, ncLevel := best(cfg.NotCollected, op)
-		irrelevant, irLevel := best(cfg.Irrelevant, op)
+		notCollected, ncLevel, ncTie := best(cfg.NotCollected, op)
+		irrelevant, irLevel, irTie := best(cfg.Irrelevant, op)
+		if ncTie != nil && (irrelevant == nil || ncLevel >= irLevel) {
+			r.Problems = append(r.Problems, fmt.Sprintf("%s is covered equally by two not_collected items, %s and %s", op.Key(), notCollected.Label(), ncTie.Label()))
+			continue
+		}
+		if irTie != nil && (notCollected == nil || irLevel >= ncLevel) {
+			r.Problems = append(r.Problems, fmt.Sprintf("%s is covered equally by two irrelevant items, %s and %s", op.Key(), irrelevant.Label(), irTie.Label()))
+			continue
+		}
 		switch {
 		case notCollected != nil && irrelevant != nil && ncLevel == irLevel:
 			r.Problems = append(r.Problems, fmt.Sprintf("%s is both not collected (%s) and irrelevant (%s)", op.Key(), notCollected.Label(), irrelevant.Label()))
@@ -172,16 +180,26 @@ func readFor(cfg *Config, op *Operation) *Read {
 	return nil
 }
 
-// best finds the item that covers op most specifically.
-func best(items []Item, op *Operation) (*Item, int) {
-	var found *Item
+// best finds the item that covers op most specifically, and a second item
+// that covers it equally when there is one. An item's priority counts
+// before its specificity.
+func best(items []Item, op *Operation) (*Item, int, *Item) {
+	var found, tie *Item
 	level := 0
 	for i := range items {
-		if l := items[i].Specificity(op); l > level {
-			found, level = &items[i], l
+		l := items[i].Specificity(op)
+		if l == 0 {
+			continue
+		}
+		l += items[i].Priority << 24
+		switch {
+		case l > level:
+			found, level, tie = &items[i], l, nil
+		case l == level:
+			tie = &items[i]
 		}
 	}
-	return found, level
+	return found, level, tie
 }
 
 func pathOf(rawURL string) string {

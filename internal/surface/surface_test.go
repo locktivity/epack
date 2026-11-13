@@ -75,13 +75,23 @@ func TestMatchPrefersLiteralsAndAbsorbsTrailingPath(t *testing.T) {
 	}
 }
 
-func TestMatchStripsServerBasePath(t *testing.T) {
+func TestMatchStripsServerBasePathAndChecksTheHost(t *testing.T) {
 	spec, err := ParseSpec([]byte("openapi: 3.0.0\nservers: [{url: https://api.example.com/v2}]\npaths:\n  /things: {get: {operationId: listThings}}\n"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if op, ok := spec.Match("GET", "https://api.example.com/v2/things"); !ok || op.ID != "listThings" {
+	if op, ok := spec.Match("GET", "https://API.example.com/v2/things"); !ok || op.ID != "listThings" {
 		t.Errorf("Match with base path = %v, %v", op, ok)
+	}
+	if op, ok := spec.Match("GET", "https://management.example.net/v2/things"); ok {
+		t.Errorf("a request on another host matched %s", op.ID)
+	}
+	templated := loadTestSpec(t)
+	if len(templated.Hosts) != 0 {
+		t.Errorf("a templated host should not be a fixed host: %v", templated.Hosts)
+	}
+	if _, ok := templated.Match("GET", "https://anything.okta.com/api/v1/users"); !ok {
+		t.Error("a description with only a templated host matches any host")
 	}
 }
 
@@ -300,5 +310,166 @@ func TestRenderAndReplaceSection(t *testing.T) {
 	tail := "# Okta\n\n## Output\n\nstuff\n"
 	if got = string(ReplaceSection([]byte(tail), section)); got != tail+"\n"+section {
 		t.Errorf("ReplaceSection at the end =\n%s", got)
+	}
+}
+
+const armSpec = `{
+  "swagger": "2.0",
+  "host": "management.azure.com",
+  "paths": {
+    "/subscriptions/{subscriptionId}/providers/Microsoft.Storage/storageAccounts": {"get": {"operationId": "StorageAccounts_List"}},
+    "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Storage/storageAccounts/{accountName}/blobServices": {"get": {"operationId": "BlobServices_List"}},
+    "/subscriptions/{subscriptionId}": {"get": {"operationId": "Subscriptions_Get"}}
+  }
+}`
+
+const graphSpec = `{
+  "openapi": "3.0.1",
+  "servers": [{"url": "https://graph.microsoft.com/v1.0"}],
+  "paths": {
+    "/subscriptions/{subscription-id}": {"get": {"operationId": "subscriptions.subscription.GetSubscription"}},
+    "/users": {"get": {"operationId": "users.user.ListUser"}},
+    "/groups/{group-id}/members": {"get": {"operationId": "groups.ListMembers"}},
+    "/groups/{group-id}/calendar": {"get": {"operationId": "groups.GetCalendar"}}
+  }
+}`
+
+func TestCombineMatchesByHostAndBasePath(t *testing.T) {
+	arm, err := ParseSpec([]byte(armSpec), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := ParseSpec([]byte(graphSpec), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arm.Name, graph.Name = "arm", "graph"
+	spec := Combine(arm, graph)
+	if len(spec.Parts) != 2 || len(spec.Operations) != 7 {
+		t.Fatalf("Combine: %d parts, %d operations", len(spec.Parts), len(spec.Operations))
+	}
+	cases := map[string]string{
+		"GET https://management.azure.com/subscriptions/abc?api-version=2020-01-01":                      "Subscriptions_Get",
+		"GET https://graph.microsoft.com/v1.0/subscriptions/abc":                                         "subscriptions.subscription.GetSubscription",
+		"GET https://graph.microsoft.com/v1.0/users?$select=id":                                          "users.user.ListUser",
+		"GET https://management.azure.com/subscriptions/abc/providers/Microsoft.Storage/storageAccounts": "StorageAccounts_List",
+	}
+	for req, want := range cases {
+		method, url, _ := strings.Cut(req, " ")
+		op, ok := spec.Match(method, url)
+		if !ok || op.Key() != want {
+			t.Errorf("Match(%s) = %v, %v, want %s", req, op, ok, want)
+		} else if (want == "Subscriptions_Get" && op.Description() != "arm") || (want == "users.user.ListUser" && op.Description() != "graph") {
+			t.Errorf("Match(%s) came from %q", req, op.Description())
+		}
+	}
+	if op, ok := spec.Match("GET", "https://graph.microsoft.com/users"); ok {
+		t.Errorf("a Graph request without the base path matched %s", op.Key())
+	}
+	blob, _ := spec.Lookup("BlobServices_List")
+	if Area(blob) != "Microsoft.Storage" {
+		t.Errorf("Area of an Azure path = %s, want the provider namespace", Area(blob))
+	}
+}
+
+func TestLongerPathPrefixesAndContainsWin(t *testing.T) {
+	graph, err := ParseSpec([]byte(graphSpec), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, _ := graph.Lookup("groups.ListMembers")
+	calendar, _ := graph.Lookup("groups.GetCalendar")
+	broad := Item{Reason: "Group content", Paths: []string{"/groups/{group-id}/*"}}
+	narrow := Item{Title: "Group membership", Says: "x", Paths: []string{"/groups/{group-id}/members*"}}
+	if narrow.Specificity(members) <= broad.Specificity(members) {
+		t.Error("the longer prefix should win for members")
+	}
+	if narrow.Specificity(calendar) != 0 || broad.Specificity(calendar) == 0 {
+		t.Error("only the broad prefix covers the calendar")
+	}
+	arm, _ := ParseSpec([]byte(armSpec), true)
+	blob, _ := arm.Lookup("BlobServices_List")
+	provider := Item{Reason: "Storage", PathContains: []string{"/providers/Microsoft.Storage/"}}
+	if provider.Specificity(blob) == 0 {
+		t.Error("path_contains should cover an Azure provider path")
+	}
+	sub, _ := arm.Lookup("Subscriptions_Get")
+	if provider.Specificity(sub) != 0 {
+		t.Error("path_contains should not cover a path without the string")
+	}
+	cfg := &Config{Vendor: "Microsoft", NotCollected: []Item{narrow}, Irrelevant: []Item{broad, provider}}
+	r := Analyze(Combine(arm, graph), cfg, nil)
+	tied := &Config{Vendor: "Microsoft", NotCollected: []Item{narrow, {Title: "Also members", Says: "y", Paths: []string{"/groups/{group-id}/members*"}}}, Irrelevant: []Item{broad, provider}}
+	if tr := Analyze(Combine(arm, graph), tied, nil); !containsProblem(tr.Problems, "groups.ListMembers is covered equally by two not_collected items") {
+		t.Errorf("two items covering an operation equally should be a problem:\n%s", strings.Join(tr.Problems, "\n"))
+	}
+	if len(r.NotCollected) != 1 || r.NotCollected[0].Op.Key() != "groups.ListMembers" {
+		t.Errorf("NotCollected = %v", r.NotCollected)
+	}
+	for _, p := range r.Problems {
+		if strings.Contains(p, "both not collected") {
+			t.Errorf("unexpected conflict: %s", p)
+		}
+	}
+}
+
+func TestLoadSpecReadsADirectoryAsOneDescription(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.json"), []byte(armSpec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.json"), []byte(`{"swagger":"2.0","host":"management.azure.com","paths":{"/subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/vaults":{"get":{"operationId":"Vaults_ListBySubscription"}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "readme.md"), []byte("not a description"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := LoadSpec(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Name != filepath.Base(dir) || len(spec.Operations) != 4 || len(spec.Parts) != 0 {
+		t.Errorf("directory description: name %q, %d operations, %d parts", spec.Name, len(spec.Operations), len(spec.Parts))
+	}
+	if op, ok := spec.Match("GET", "https://management.azure.com/subscriptions/abc/providers/Microsoft.KeyVault/vaults?api-version=2024-11-01"); !ok || op.ID != "Vaults_ListBySubscription" {
+		t.Errorf("Match in a directory description = %v, %v", op, ok)
+	}
+	if op, ok := spec.Match("GET", "https://graph.microsoft.com/subscriptions/abc"); ok {
+		t.Errorf("a request on another host matched %s", op.ID)
+	}
+}
+
+func TestSpanningParametersAnywhereAndInSelector(t *testing.T) {
+	arm, err := ParseSpec([]byte(`{"swagger":"2.0","host":"management.azure.com","paths":{
+	  "/{resourceUri}/providers/Microsoft.Insights/diagnosticSettings": {"get": {"operationId": "DiagnosticSettings_List"}},
+	  "/{scope}/providers/Microsoft.Security/assessments": {"get": {"operationId": "Assessments_List"}},
+	  "/subscriptions/{subscriptionId}/providers/Microsoft.Insights/diagnosticSettings": {"get": {"operationId": "SubscriptionDiagnosticSettings_List"}}}}`), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arm.Rename("Azure")
+	graph, _ := ParseSpec([]byte(graphSpec), true)
+	graph.Rename("Graph")
+	spec := Combine(arm, graph)
+	cases := map[string]string{
+		"GET https://management.azure.com/subscriptions/s/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/acc/providers/Microsoft.Insights/diagnosticSettings?api-version=2021-05-01-preview": "DiagnosticSettings_List",
+		"GET https://management.azure.com/subscriptions/s/providers/Microsoft.Insights/diagnosticSettings":                                                                                                  "SubscriptionDiagnosticSettings_List",
+		"GET https://management.azure.com/subscriptions/s/providers/Microsoft.Security/assessments":                                                                                                         "Assessments_List",
+	}
+	for req, want := range cases {
+		method, url, _ := strings.Cut(req, " ")
+		op, ok := spec.Match(method, url)
+		if !ok || op.Key() != want {
+			t.Errorf("Match(%s) = %v, %v, want %s", req, op, ok, want)
+		}
+	}
+	webhooks, _ := spec.Lookup("subscriptions.subscription.GetSubscription")
+	sub, _ := spec.Lookup("SubscriptionDiagnosticSettings_List")
+	if webhooks.Description() != "Graph" || sub.Description() != "Azure" {
+		t.Errorf("descriptions: %q and %q", webhooks.Description(), sub.Description())
+	}
+	graphOnly := Item{Reason: "Webhooks", Paths: []string{"/subscriptions*"}, In: []string{"Graph"}}
+	if graphOnly.Specificity(webhooks) == 0 || graphOnly.Specificity(sub) != 0 {
+		t.Error("an item limited to a description should not cover another description's paths")
 	}
 }
