@@ -270,15 +270,15 @@ func TestAFaultNeedNotLeaveAGapWhereExempt(t *testing.T) {
 	})
 	t.Run("an insensitive operation", func(t *testing.T) {
 		s := mixedSuite(demo{})
-		s.Insensitive = []string{"demo.me.get"}
+		s.Waivers = []Waiver{waive(WaiveInsensitive, "demo.me.get")}
 		expectCase(t, checkSuite(t, s), "a.lookup/servfail/all", "the fault reached a.lookup but left no new gap with code vendor_error")
 		for _, v := range checkSuite(t, mixedSuite(demo{})).Violations {
-			t.Errorf("an operation listed in Suite.Insensitive need not leave a gap: %s/%s: %s", v.Check, v.Case, v.Message)
+			t.Errorf("an operation waived as insensitive need not leave a gap: %s/%s: %s", v.Check, v.Case, v.Message)
 		}
 	})
 	t.Run("a required operation fails the run", func(t *testing.T) {
 		s := demoSuite(demo{})
-		s.Insensitive = nil
+		s.Waivers = waiving("field_faults")
 		for _, v := range checkSuite(t, s).Violations {
 			t.Errorf("a required operation that fails the run need not leave a gap: %s/%s: %s", v.Check, v.Case, v.Message)
 		}
@@ -303,7 +303,7 @@ func mixedSuite(d demo) Suite {
 		return d.run(ctx)
 	}
 	s.Operations = append(s.Operations, "a.lookup")
-	s.Insensitive = append(s.Insensitive, "a.lookup")
+	s.Waivers = append(s.Waivers, waive(WaiveInsensitive, "a.lookup"))
 	return s
 }
 

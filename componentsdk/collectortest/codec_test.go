@@ -462,6 +462,9 @@ func rosterSuite(r roster, codec BodyCodec, scenarios ...Scenario) Suite {
 		Required:   []string{"roster.org.get"},
 		Operations: []string{"roster.org.get", "roster.members.list"},
 		Codec:      codec,
+		// The roster collector predates the field_faults check, as the demo
+		// does.
+		Waivers: waiving("field_faults"),
 	}
 }
 
@@ -700,7 +703,7 @@ func TestACodecRecordingReplaysOnlyWithSuiteCodec(t *testing.T) {
 	}
 	loaded.Expect = map[string]map[string]any{rosterPath: {"/org": "example-org", "/members": map[string]any{"dev": 2, "ops": 1}}}
 	s := rosterSuite(roster{api: "https://roster.test"}, rosterCodec{}, loaded)
-	s.SkipChecks = []string{"faults", "credentials", "determinism", "levels", "sensitivity"}
+	s.Waivers = waiving("faults", "credentials", "determinism", "levels", "sensitivity", "field_faults")
 	for _, v := range checkSuite(t, s).Violations {
 		t.Errorf("%s/%s: %s", v.Check, v.Case, v.Message)
 	}

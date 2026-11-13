@@ -20,7 +20,7 @@ import (
 // works. A state in an object the collector does not read at all, such as an
 // app's logout settings, is not reported. The sensitivity check cannot catch
 // these fields, since it changes an operation's whole answer at once. A
-// field the collector may ignore goes in Suite.IgnoredFields, with the
+// field the collector may ignore is waived with WaiveIgnoredField, with the
 // reason. The check cannot tell objects apart in an XML answer, so it
 // reports every XML state element that moves no value.
 
@@ -109,12 +109,12 @@ func (k *kit) checkFields() {
 			continue
 		}
 		k.violate("fields", f.label(), "changing %s in %s's answers changed no value. A state field like this usually affects whether a thing works. "+
-			"Read it, or list it in Suite.IgnoredFields with the reason it does not matter", f.pattern, f.op)
+			"Read it, or waive it as an ignored field with the reason it does not matter", f.pattern, f.op)
 	}
 }
 
 func (k *kit) ignoredField(f fieldKey) bool {
-	for _, pattern := range k.suite.IgnoredFields[f.op] {
+	for _, pattern := range k.waived.ignoredFields[f.op] {
 		if pattern == f.pattern {
 			return true
 		}

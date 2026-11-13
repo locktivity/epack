@@ -22,6 +22,10 @@ var Requirements = []Requirement{
 	{ID: "C-033", Level: LevelMust, Description: "Component validates all input before use", Types: []componenttypes.ComponentKind{componenttypes.KindCollector, componenttypes.KindTool, componenttypes.KindRemote}},
 
 	// Collector requirements
+	{ID: "COL-060", Level: LevelMust, Description: "Implement --capabilities flag returning JSON metadata", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-061", Level: LevelMust, Description: "Implement --version flag returning version string", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-062", Level: LevelMust, Description: "Capabilities include kind, name, version, protocol_version fields", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-063", Level: LevelShould, Description: "Capabilities include description field", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-001", Level: LevelMust, Description: "Output valid JSON to stdout", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-002", Level: LevelShould, Description: "Output uses protocol envelope format with protocol_version and data fields", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-003", Level: LevelMay, Description: "Output plain JSON without envelope", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
@@ -49,6 +53,9 @@ var Requirements = []Requirement{
 	{ID: "COL-078", Level: LevelShould, Description: "A gap's operation is one the result counts, its call has rows, and a missing permission is only on a permission_denied gap", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-079", Level: LevelMust, Description: "A build file matches evidencepack/collector-build@v1 and names the collector result's version and commit", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 	{ID: "COL-080", Level: LevelMust, Description: "At the trust level, the collector result holds no value its schema marks for a higher level, such as request rows, the principal's ID, or a gap's error text", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-110", Level: LevelMust, Description: "The capabilities list each test kit suite, from the trace map, and each lists the operations it declares and runs at least one scenario", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-113", Level: LevelMust, Description: "At least one test kit suite replays a recording of the test account", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
+	{ID: "COL-114", Level: LevelMust, Description: "Every waiver a test kit suite declares carries a reason and an expiry, and none has expired", Types: []componenttypes.ComponentKind{componenttypes.KindCollector}},
 
 	// Tool requirements
 	{ID: "TOOL-001", Level: LevelMust, Description: "Implement --capabilities flag returning JSON metadata", Types: []componenttypes.ComponentKind{componenttypes.KindTool}},

@@ -53,7 +53,7 @@ func tokenSuite(body string) Suite {
 		Run:             tokenProbe,
 		Scenarios:       []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/api-tokens", Body: body}}}},
 		ResponseSchemas: map[string][]byte{"demo.tokens.list": []byte(apiTokenSchema)},
-		SkipChecks:      []string{"faults", "levels", "determinism", "credentials", "sensitivity", "order"},
+		Waivers:         waiving("faults", "levels", "determinism", "credentials", "sensitivity", "order"),
 	}
 }
 

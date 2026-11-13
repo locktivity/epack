@@ -99,28 +99,43 @@ func (c *Client) GetOrganization(ctx context.Context) (*Organization, error) {
 	return &org, nil
 }
 
-// ListUsers lists the organization's users.
+// ListUsers lists the organization's users. An empty list means the
+// organization has none.
 func (c *Client) ListUsers(ctx context.Context) ([]User, error) {
-	return list[User](ctx, c, OpListUsers, "/organizations/"+url.PathEscape(c.organization)+"/users")
+	users, _, err := list[User](ctx, c, OpListUsers, "/organizations/"+url.PathEscape(c.organization)+"/users")
+	return users, err
 }
 
-// ListFactors lists the MFA factors a user enrolled.
+// ListFactors lists the MFA factors a user enrolled. An empty list means the
+// user enrolled none. A factor with no status is a malformed response: the
+// collector cannot tell whether the factor is active, so the user's MFA
+// value is left out with a gap rather than read as off.
 func (c *Client) ListFactors(ctx context.Context, userID string) ([]Factor, error) {
-	return list[Factor](ctx, c, OpListFactors, "/users/"+url.PathEscape(userID)+"/factors")
-}
-
-// list reads a JSON array. A null in its place is a malformed response, so
-// it never reads as an empty list.
-func list[T any](ctx context.Context, c *Client, op, path string) ([]T, error) {
-	var items []T
-	resp, err := c.get(ctx, op, path, &items)
+	factors, resp, err := list[Factor](ctx, c, OpListFactors, "/users/"+url.PathEscape(userID)+"/factors")
 	if err != nil {
 		return nil, err
 	}
-	if items == nil {
-		return nil, componentsdk.ResponseError(resp, invalidResponse(op, "is null, not a list"))
+	for _, f := range factors {
+		if f.Status == "" {
+			return nil, componentsdk.ResponseError(resp, invalidResponse(OpListFactors, "lists a factor with no status"))
+		}
 	}
-	return items, nil
+	return factors, nil
+}
+
+// list reads a JSON array and returns it with the response it came from. A
+// null in its place is a malformed response, so it never reads as an empty
+// list.
+func list[T any](ctx context.Context, c *Client, op, path string) ([]T, *http.Response, error) {
+	var items []T
+	resp, err := c.get(ctx, op, path, &items)
+	if err != nil {
+		return nil, resp, err
+	}
+	if items == nil {
+		return nil, resp, componentsdk.ResponseError(resp, invalidResponse(op, "is null, not a list"))
+	}
+	return items, resp, nil
 }
 
 // get sends a GET named op and decodes the JSON response into out. It

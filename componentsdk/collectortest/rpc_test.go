@@ -111,6 +111,8 @@ func rpcDemoSuite(d rpcDemo, byBody bool) Suite {
 			rpcAnswer("a", "alpha", byBody), rpcAnswer("b", "bravo", byBody), rpcAnswer("c", "charlie", byBody),
 		}}},
 		Operations: []string{"rpc.items.get"},
+		// The demo reads a null active flag as false, as the kit's demo does.
+		Waivers: waiving("field_faults"),
 	}
 }
 

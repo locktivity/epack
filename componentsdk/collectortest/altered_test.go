@@ -11,7 +11,7 @@ func TestPickOpsKeepsWhatEachCheckAlters(t *testing.T) {
 	dns := &dnsServer{}
 	dns.ops = map[string]bool{"lookup": true}
 	k := &kit{
-		suite: Suite{Insensitive: []string{"quiet"}},
+		waived: waived{insensitive: map[string]bool{"quiet": true}},
 		baseline: &componentsdk.InProcessResult{
 			Operations: []componentsdk.OperationCalls{
 				{Name: componentsdk.UnnamedOperation, Calls: 1},

@@ -53,7 +53,7 @@ func flowLogSuite(p flowLogProbe) Suite {
 		Scenarios: []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/flow-logs",
 			Body: `{"flowLogs":[{"vpcId":"vpc-1","deliverLogsStatus":"SUCCESS","flowLogStatus":"ACTIVE"},{"vpcId":"vpc-2","deliverLogsStatus":"SUCCESS","flowLogStatus":"ACTIVE"}]}`}}}},
 		FieldSensitivity: true,
-		SkipChecks:       []string{"faults", "levels", "determinism", "credentials", "sensitivity", "order"},
+		Waivers:          waiving("faults", "levels", "determinism", "credentials", "sensitivity", "order"),
 	}
 }
 
@@ -68,10 +68,10 @@ func TestTheFieldsCheckCatchesAStateTheCollectorIgnores(t *testing.T) {
 	}
 
 	exempt := flowLogSuite(flowLogProbe{ignoreStatus: true})
-	exempt.IgnoredFields = map[string][]string{"demo.flowlogs.list": {"/flowLogs/*/deliverLogsStatus"}}
+	exempt.Waivers = append(exempt.Waivers, waive(WaiveIgnoredField, "demo.flowlogs.list /flowLogs/*/deliverLogsStatus"))
 	report = checkSuite(t, exempt)
 	if got := violationsOf(report, "fields"); len(got) != 0 {
-		t.Errorf("Suite.IgnoredFields exempts a field: %+v", got)
+		t.Errorf("a waiver on an ignored field exempts it: %+v", got)
 	}
 	if len(report.IgnoredFields) != 1 || report.IgnoredFields[0] != "demo.flowlogs.list /flowLogs/*/deliverLogsStatus" {
 		t.Errorf("the report still lists the exempt field: %q", report.IgnoredFields)

@@ -60,8 +60,8 @@ func trustSuite(p trustProbe) Suite {
 		Scenarios: []Scenario{{Name: "clean", Responses: []Response{
 			{URL: "https://iam.us-east-1.cloud.test/role", Body: `{"arn":"arn:aws:iam::111122223333:role/audit","principal":"arn:aws:iam::444455556666:root"}`},
 		}}},
-		Variants:   []Variant{{Name: "aws-us-gov", Replace: []string{"arn:aws:", "arn:aws-us-gov:", "us-east-1", "us-gov-west-1"}}},
-		SkipChecks: []string{"faults", "levels", "determinism", "credentials", "sensitivity"},
+		Variants: []Variant{{Name: "aws-us-gov", Replace: []string{"arn:aws:", "arn:aws-us-gov:", "us-east-1", "us-gov-west-1"}}},
+		Waivers:  waiving("faults", "levels", "determinism", "credentials", "sensitivity"),
 	}
 }
 

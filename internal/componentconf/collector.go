@@ -23,6 +23,7 @@ func (r *Runner) runCollectorTests(ctx context.Context) {
 	r.testBinaryNaming()
 
 	// Collector-specific tests
+	r.testCollectorCapabilities(ctx)
 	r.testCollectorOutput(ctx)
 	r.testCollectorConfig(ctx)
 	r.testCollectorExitCodes(ctx)
@@ -39,6 +40,70 @@ func (r *Runner) runCollectorTests(ctx context.Context) {
 
 	// C-031, C-032: no run above printed a --secret canary
 	r.checkSecretHandling()
+}
+
+// testCollectorCapabilities checks --version (COL-061) and --capabilities
+// (COL-060, COL-062, COL-063), and reads the test kit suites the
+// capabilities list (COL-110, COL-113, COL-114).
+func (r *Runner) testCollectorCapabilities(ctx context.Context) {
+	version := r.exec(ctx, []string{"--version"}, nil, nil)
+	switch {
+	case version.ExitCode != 0:
+		r.fail("COL-061", fmt.Sprintf("--version exited %d", version.ExitCode))
+	case len(bytes.TrimSpace(version.Stdout)) == 0:
+		r.fail("COL-061", "--version printed nothing")
+	default:
+		r.pass("COL-061")
+	}
+
+	result := r.exec(ctx, []string{"--capabilities"}, nil, nil)
+	dependents := func(reason string) {
+		for _, id := range append([]string{"COL-062", "COL-063"}, suiteIDs...) {
+			r.skip(id, reason)
+		}
+	}
+	// A collector that ignores the flag prints its progress and result
+	// instead, which is JSON too, so the answer must be one object that
+	// says what kind of component it describes.
+	var caps map[string]json.RawMessage
+	switch {
+	case result.ExitCode != 0:
+		r.fail("COL-060", fmt.Sprintf("--capabilities exited %d", result.ExitCode))
+		dependents("depends on COL-060")
+		return
+	case json.Unmarshal(result.Stdout, &caps) != nil || len(caps["kind"]) == 0:
+		r.fail("COL-060", "--capabilities did not print one JSON object with a kind")
+		dependents("depends on COL-060")
+		return
+	}
+	r.pass("COL-060")
+	r.caps = make(map[string]interface{}, len(caps))
+	for k, v := range caps {
+		var value interface{}
+		_ = json.Unmarshal(v, &value)
+		r.caps[k] = value
+	}
+
+	var missing []string
+	for _, field := range []string{"kind", "name", "version", "protocol_version"} {
+		if raw, ok := caps[field]; !ok || string(raw) == "null" || string(raw) == `""` {
+			missing = append(missing, field)
+		}
+	}
+	switch {
+	case len(missing) > 0:
+		r.fail("COL-062", "capabilities lack "+strings.Join(missing, ", "))
+	case string(caps["kind"]) != `"collector"`:
+		r.fail("COL-062", "capabilities give kind "+string(caps["kind"])+`, want "collector"`)
+	default:
+		r.pass("COL-062")
+	}
+	if raw, ok := caps["description"]; ok && string(raw) != "null" && string(raw) != `""` {
+		r.pass("COL-063")
+	} else {
+		r.fail("COL-063", "capabilities have no description")
+	}
+	r.testSuiteRecord(caps["suites"], time.Now())
 }
 
 // collectorEnv is the environment for a run that should collect: the

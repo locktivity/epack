@@ -96,9 +96,8 @@ func adminSuite(p adminProbe) Suite {
 			{URL: demoHost + "/roles", Body: `{"value":[{"id":"global-admin","isPrivileged":true},{"id":"reader","isPrivileged":false}]}`},
 			{URL: demoHost + "/assignments", Body: `{"value":[{"principalId":"u1","roleId":"global-admin"},{"principalId":"u2","roleId":"reader"}]}`},
 		}}},
-		FieldFaults: true,
 		Populations: []Population{{Operation: "demo.assignments.list", List: "/value", Reason: "a tenant with no role assignments has no Global Administrators"}},
-		SkipChecks:  fieldProbeChecks,
+		Waivers:     waiving(fieldProbeChecks...),
 	}
 }
 
@@ -114,9 +113,9 @@ func TestTheFieldFaultsCheckCatchesANullClassificationReadAsNoAdmins(t *testing.
 	}
 
 	off := adminSuite(adminProbe{})
-	off.FieldFaults = false
+	off.Waivers = append(off.Waivers, waive("field_faults"))
 	if got := violationsOf(checkSuite(t, off), "field_faults"); len(got) != 0 {
-		t.Errorf("the check is off unless FieldFaults turns it on: %+v", got)
+		t.Errorf("the check is on in every suite and off only under a waiver: %+v", got)
 	}
 }
 
@@ -186,9 +185,8 @@ func vaultSuite(p vaultProbe) Suite {
 		Scenarios: []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/vaults", Body: `{"value":[` +
 			`{"name":"a","properties":{"securitySettings":{"softDeleteSettings":{"softDeleteState":"Enabled"}}}},` +
 			`{"name":"b","properties":{"securitySettings":{"softDeleteSettings":{"softDeleteState":"Disabled"}}}}]}`}}}},
-		FieldFaults: true,
 		Populations: []Population{{Operation: "demo.vaults.list", List: "/value", Reason: "a subscription with no vaults has none to share"}},
-		SkipChecks:  fieldProbeChecks,
+		Waivers:     waiving(fieldProbeChecks...),
 	}
 }
 
@@ -261,8 +259,7 @@ func userSuite() Suite {
 		Run:  userProbe{}.run,
 		Scenarios: []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/users",
 			Body: `{"users":[{"name":"ann","mfa":true},{"name":"bo","mfa":false}],"next":""}`}}}},
-		FieldFaults: true,
-		SkipChecks:  fieldProbeChecks,
+		Waivers: waiving(fieldProbeChecks...),
 	}
 }
 
@@ -291,12 +288,12 @@ func TestPopulationsAndOmissionsDeclareRealAnswers(t *testing.T) {
 	}
 
 	stale := userSuite()
-	stale.SkipChecks = append(slices.Clone(stale.SkipChecks), "field_faults")
+	stale.Waivers = append(slices.Clone(stale.Waivers), waive("field_faults"))
 	stale.Populations = []Population{{Operation: "demo.users.list", List: "/groups", Reason: "no groups"}}
 	if got := violationsOf(checkSuite(t, stale), "field_faults"); len(got) != 0 {
 		t.Errorf("a skipped check reports nothing: %+v", got)
 	}
-	stale.SkipChecks = fieldProbeChecks
+	stale.Waivers = waiving(fieldProbeChecks...)
 	stale.Populations = append(stale.Populations, Population{Operation: "demo.users.list", List: "/users", Reason: "no users"})
 	stale.Omissions = []Omission{{Operation: "demo.users.list", Field: "/users/*/name", Reason: "names are optional"}}
 	report = checkSuite(t, stale)
@@ -355,11 +352,10 @@ func (strictProbe) run(ctx componentsdk.CollectorContext) error {
 
 func TestAFieldFaultMayFailTheRunOnlyOnARequiredOperation(t *testing.T) {
 	s := Suite{
-		Spec:        componentsdk.CollectorSpec{Name: "probe"},
-		Run:         strictProbe{}.run,
-		Scenarios:   []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/score", Body: `{"score":80}`}}}},
-		FieldFaults: true,
-		SkipChecks:  fieldProbeChecks,
+		Spec:      componentsdk.CollectorSpec{Name: "probe"},
+		Run:       strictProbe{}.run,
+		Scenarios: []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/score", Body: `{"score":80}`}}}},
+		Waivers:   waiving(fieldProbeChecks...),
 	}
 	expectViolation(t, checkSuite(t, s), "field_faults", "the run failed with exit")
 	s.Required = []string{"demo.score.get"}
@@ -409,8 +405,7 @@ func TestTheFieldFaultsCheckChangesXMLElements(t *testing.T) {
 			Body: `<ListUsersResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/"><ListUsersResult><Users>` +
 				`<member><UserName>ann</UserName><MFA>true</MFA></member><member><UserName>bo</UserName><MFA>false</MFA></member>` +
 				`</Users><IsTruncated>false</IsTruncated></ListUsersResult></ListUsersResponse>`}}}},
-		FieldFaults: true,
-		SkipChecks:  fieldProbeChecks,
+		Waivers: waiving(fieldProbeChecks...),
 	}
 	report := checkSuite(t, s)
 	expectViolation(t, report, "field_faults", "demo.iam.ListUsers /ListUsersResponse/ListUsersResult/Users/member/MFA dropped")

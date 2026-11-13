@@ -10,6 +10,6 @@ import "github.com/locktivity/epack/componentsdk"
 func (k *kit) checkRedaction(check, name string, res componentsdk.InProcessResult) {
 	for _, h := range res.Redacted {
 		k.violate("redaction", name, "%s has %q hidden as a possible secret. Runs of 40 or more letters, digits, + and / are hidden unless they read as words. "+
-			"Reword the text so the run reads as words or is broken up. If a scenario's text holds a secret on purpose, list redaction in Suite.SkipChecks", h.Where, h.Text)
+			"Reword the text so the run reads as words or is broken up. If a scenario's text holds a secret on purpose, waive the redaction check", h.Where, h.Text)
 	}
 }

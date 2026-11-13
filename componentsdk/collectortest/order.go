@@ -19,7 +19,7 @@ import (
 // operation's answers reversed. A list is a JSON array or a run of sibling
 // XML elements with the same name. The check then compares each artifact
 // with its lists sorted. Rows may come out in another order, but no value
-// may change. An operation in Suite.Ordered is exempt. Its answers come in
+// may change. An operation waived as ordered is exempt. Its answers come in
 // an order the vendor documents, such as a list sorted by a parameter the
 // collector sends.
 
@@ -29,7 +29,7 @@ const maxOrderChanges = 3
 
 func (k *kit) checkOrder() {
 	p := perturber{k: k, check: "order"}
-	for _, op := range k.pickOps(opPick{skipInsensitive: true, exempt: k.suite.Ordered}) {
+	for _, op := range k.pickOps(opPick{skipInsensitive: true, exempt: sorted(k.waived.ordered)}) {
 		run, ok := p.run(perturbation{label: op.Name, op: op.Name, text: reverseText})
 		switch {
 		case !ok, run.unanswered:
@@ -48,7 +48,7 @@ func (k *kit) checkOrder() {
 			more = fmt.Sprintf(", and %d more", len(moved)-len(shown))
 		}
 		k.violate("order", op.Name, "reversing the lists in %s's answers changed %s%s. A value must not depend on the order a vendor lists things in. "+
-			"Read the field that sets the order, such as a priority or a date, or list %s in Suite.Ordered if the vendor documents its order",
+			"Read the field that sets the order, such as a priority or a date, or waive %s as ordered if the vendor documents its order",
 			op.Name, strings.Join(shown, "; "), more, op.Name)
 	}
 }
@@ -230,7 +230,7 @@ func sortLists(v any) any {
 }
 
 // diffSorted lists each value that differs between two sorted runs, by
-// artifact path and pointer. It skips what Suite.Ignore lists.
+// artifact path and pointer. It skips what the suite waives with WaiveIgnore.
 func diffSorted(clean, got map[string]map[string]any, ignore ignoreSet) []string {
 	var out []string
 	for _, path := range sortedKeys(clean) {

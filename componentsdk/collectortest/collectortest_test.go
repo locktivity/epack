@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/locktivity/epack/componentsdk"
+	"github.com/locktivity/epack/internal/tracemap"
 )
 
 // demoSchema is the demo's schema, which it embeds as a collector embeds its
@@ -31,36 +32,36 @@ var demoSchema []byte
 // demo is a small collector with the bugs the kit exists to catch, each
 // behind a switch. With every switch off it handles faults correctly.
 type demo struct {
-	zeroOnError  bool // writes 0 when the score call fails
-	failRun      bool // returns an error when the score call fails
-	skipBadPage  bool // keeps counting when a users page fails
-	wrongCode    bool // records every gap as vendor_error
-	unnamed      bool // sends the score call without an operation name
-	leakToken    bool // writes the token into the artifact
-	noHostList   bool // leaves CredentialHosts empty
-	ignoreScore  bool // never reads the score body
-	signInFails  bool // fails the run when the sign-in call fails
-	treat404Zero bool // reads a 404 on the score call as "no score configured"
-	pctOverNone  bool // writes 100 for the MFA percentage when there are no users
-	nullFlag     bool // reads mfa_enforced from a field the vendor renamed, so it is always null
-	laggedCount  bool // takes the user count from the vendor's lagged total instead of the rows
-	rowsAtTrust  bool // emits the audit-only user rows at every level
-	scoreAtTrust bool // emits the score at trust only
-	noClassify   bool // leaves out its ClassifyResponse hook, so a throttle sent as a 400 reads as a bad request
-	hookNames    bool // names its calls only through HTTPOptions.NameOperation, as vendor SDK clients do
-	orgMissing   bool // fails the run with config_invalid when the sign-in answers 404, as for an organization that does not exist
-	partialRows  bool // emits the user rows it read before a users page failed, with a partial gap
-	bearer       bool // sends its token in Authorization rather than X-Demo-Token
-	gitlabHeader bool // sends its token in PRIVATE-TOKEN rather than X-Demo-Token
-	linkPages    bool // follows the next page in the Link header rather than the body
-	firstPage    bool // reads only the first users page
-	sdkLinks     bool // follows the next page that componentsdk.NextLink finds in every Link line
-	firstRow     bool // reports the first user's MFA as mfa_enforced, which depends on the order users are listed in
-	declares     bool // declares that the score call needs scores.read
-	wrongHint    bool // tells the customer to grant scores.write when the score call is denied
-	broadHosts   bool // lists "*.com" among its CredentialHosts
-	callErrors   bool // builds its errors from responses with componentsdk.ResponseError, so their gaps name the call
-	normalized   bool // emits a normalized artifact whose score is copied from the detailed one with Mirror
+	zeroOnError  bool   // writes 0 when the score call fails
+	failRun      bool   // returns an error when the score call fails
+	skipBadPage  bool   // keeps counting when a users page fails
+	wrongCode    bool   // records every gap as vendor_error
+	unnamed      bool   // sends the score call without an operation name
+	leakToken    bool   // writes the token into the artifact
+	noHostList   bool   // leaves CredentialHosts empty
+	ignoreScore  bool   // never reads the score body
+	signInFails  bool   // fails the run when the sign-in call fails
+	treat404Zero bool   // reads a 404 on the score call as "no score configured"
+	pctOverNone  bool   // writes 100 for the MFA percentage when there are no users
+	nullFlag     bool   // reads mfa_enforced from a field the vendor renamed, so it is always null
+	laggedCount  bool   // takes the user count from the vendor's lagged total instead of the rows
+	rowsAtTrust  bool   // emits the audit-only user rows at every level
+	scoreAtTrust bool   // emits the score at trust only
+	noClassify   bool   // leaves out its ClassifyResponse hook, so a throttle sent as a 400 reads as a bad request
+	hookNames    bool   // names its calls only through HTTPOptions.NameOperation, as vendor SDK clients do
+	orgMissing   bool   // fails the run with config_invalid when the sign-in answers 404, as for an organization that does not exist
+	partialRows  bool   // emits the user rows it read before a users page failed, with a partial gap
+	bearer       bool   // sends its token in Authorization rather than X-Demo-Token
+	gitlabHeader bool   // sends its token in PRIVATE-TOKEN rather than X-Demo-Token
+	linkPages    bool   // follows the next page in the Link header rather than the body
+	firstPage    bool   // reads only the first users page
+	sdkLinks     bool   // follows the next page that componentsdk.NextLink finds in every Link line
+	firstRow     bool   // reports the first user's MFA as mfa_enforced, which depends on the order users are listed in
+	declares     bool   // declares that the score call needs scores.read
+	wrongHint    bool   // tells the customer to grant scores.write when the score call is denied
+	broadHosts   bool   // lists "*.com" among its CredentialHosts
+	callErrors   bool   // builds its errors from responses with componentsdk.ResponseError, so their gaps name the call
+	normalized   bool   // emits a normalized artifact whose score is copied from the detailed one with Mirror
 	longCode     string // names the score call's failure with this vendor error code
 
 	// base is the transport the demo's real runs would send through.
@@ -402,10 +403,31 @@ func demoSuite(d demo) Suite {
 		},
 		Required:   []string{"demo.me.get"},
 		Operations: []string{"demo.me.get", "demo.users.list", "demo.score.get"},
-		Insensitive: []string{
-			"demo.me.get",
-		},
+		// The demo predates the field_faults check and reads a null mfa as
+		// false, so the demo suites waive the check, as a suite from before
+		// it does until its collector is fixed. The field-faults tests use
+		// probes of their own.
+		Waivers: []Waiver{waive(WaiveInsensitive, "demo.me.get"), waive("field_faults")},
 	}
+}
+
+// waive returns a waiver on check, and on subject when given, that runs for
+// six months, for the kit's own suites.
+func waive(check string, subject ...string) Waiver {
+	w := Waiver{Check: check, Reason: "the kit's own test", Expires: time.Now().AddDate(0, 6, 0).Format(tracemap.WaiverDate)}
+	if len(subject) > 0 {
+		w.Subject = subject[0]
+	}
+	return w
+}
+
+// waiving returns a waiver on each check.
+func waiving(checks ...string) []Waiver {
+	out := make([]Waiver, 0, len(checks))
+	for _, c := range checks {
+		out = append(out, waive(c))
+	}
+	return out
 }
 
 // kitOnly gives the demo's schema to the kit alone, so the kit runs the
@@ -421,7 +443,7 @@ func kitOnly(s Suite) Suite {
 // check. TestThePathsCheck runs it.
 func checkSuite(t *testing.T, s Suite) *Report {
 	t.Helper()
-	s.SkipChecks = append(slices.Clone(s.SkipChecks), "paths")
+	s.Waivers = append(slices.Clone(s.Waivers), waive("paths"))
 	report, err := Check(s)
 	if err != nil {
 		t.Fatal(err)
@@ -539,13 +561,13 @@ func TestOutputChecksReportWhereTheyFound(t *testing.T) {
 	}
 }
 
-func TestSkipChecksTurnsOffTheOutputChecks(t *testing.T) {
+func TestAWaiverTurnsOffTheOutputChecks(t *testing.T) {
 	for _, tc := range outputBugs {
 		t.Run(tc.check+"/"+tc.name, func(t *testing.T) {
 			s := demoSuite(tc.demo)
-			s.SkipChecks = []string{tc.check}
+			s.Waivers = waiving(tc.check)
 			if got := violationsOf(checkSuite(t, s), tc.check); len(got) > 0 {
-				t.Errorf("skipped check %s still reported %+v", tc.check, got)
+				t.Errorf("waived check %s still reported %+v", tc.check, got)
 			}
 		})
 	}
@@ -1174,7 +1196,8 @@ func TestAFaultThatChangesNothingNeedNotLeaveAGap(t *testing.T) {
 			Scenarios: []Scenario{{Name: "clean", Responses: []Response{
 				{URL: demoHost + "/users?per_page=1", Header: http.Header{"X-Total-Count": {"7"}}, Body: `[{"id":1}]`},
 			}}},
-			SkipChecks: []string{"sensitivity"},
+			Operations: []string{"count.users.get"},
+			Waivers:    waiving("sensitivity"),
 		})
 		for _, v := range report.Violations {
 			t.Errorf("%s/%s: %s", v.Check, v.Case, v.Message)
@@ -1255,7 +1278,10 @@ func TestSensitivityCountsTheSignInIdentity(t *testing.T) {
 				{URL: demoHost + "/me", Body: `{"scopes":["users.read","groups.read"],"admin":true}`},
 				{URL: demoHost + "/users/count", Body: `{"count":3}`},
 			}}},
-			SkipChecks: []string{"faults", "levels", "determinism", "credentials"},
+			Operations: []string{"probe.me.get", "probe.users.count"},
+			// The probe reads a null count as 0, which is not what the test
+			// is about.
+			Waivers: waiving("faults", "levels", "determinism", "credentials", "field_faults"),
 		}
 	}
 	for _, v := range checkSuite(t, suite(probe{})).Violations {
@@ -1434,9 +1460,10 @@ func (s stager) run(ctx componentsdk.CollectorContext) error {
 
 func stagerSuite(s stager) Suite {
 	return Suite{
-		Spec:    componentsdk.CollectorSpec{Name: "stager"},
-		Run:     s.run,
-		Secrets: map[string]string{"FILES_TOKEN": "files-token-0123456789"},
+		Spec:       componentsdk.CollectorSpec{Name: "stager"},
+		Run:        s.run,
+		Secrets:    map[string]string{"FILES_TOKEN": "files-token-0123456789"},
+		Operations: []string{"files.policy.get"},
 		Scenarios: []Scenario{{
 			Name:      "clean",
 			Responses: []Response{{URL: "https://files.demo.test/policy", Body: `{"text":"Passwords rotate yearly."}`}},
@@ -1502,10 +1529,10 @@ func TestTheKitListsOperationsItCouldNotMutate(t *testing.T) {
 		return ctx.Emit([]componentsdk.CollectedArtifact{{Data: map[string]any{"status": string(body)}, Path: "artifacts/plain.json"}})
 	}
 	report, err := Check(Suite{
-		Spec:       componentsdk.CollectorSpec{Name: "plain", Version: "0.0.1"},
-		Run:        run,
-		Scenarios:  []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/status", Body: "all systems normal", Header: http.Header{"Content-Type": []string{"text/plain"}}}}}},
-		SkipChecks: []string{"faults", "credentials", "determinism", "levels"},
+		Spec:      componentsdk.CollectorSpec{Name: "plain", Version: "0.0.1"},
+		Run:       run,
+		Scenarios: []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/status", Body: "all systems normal", Header: http.Header{"Content-Type": []string{"text/plain"}}}}}},
+		Waivers:   waiving("faults", "credentials", "determinism", "levels"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1560,11 +1587,11 @@ func TestTheCredentialsCheckFindsASecretInARedirectedBody(t *testing.T) {
 	}
 	suite := func(hosts []string) Suite {
 		return Suite{
-			Spec:       componentsdk.CollectorSpec{Name: "token", Version: "0.0.1"},
-			Run:        signIn(hosts),
-			Secrets:    map[string]string{"DEMO_CLIENT_SECRET": "client-secret-0123456789"},
-			Scenarios:  []Scenario{{Name: "clean", Responses: []Response{{Method: http.MethodPost, URL: demoHost + "/token", Body: `{"access_token":"x"}`}}}},
-			SkipChecks: []string{"faults", "determinism", "levels", "sensitivity"},
+			Spec:      componentsdk.CollectorSpec{Name: "token", Version: "0.0.1"},
+			Run:       signIn(hosts),
+			Secrets:   map[string]string{"DEMO_CLIENT_SECRET": "client-secret-0123456789"},
+			Scenarios: []Scenario{{Name: "clean", Responses: []Response{{Method: http.MethodPost, URL: demoHost + "/token", Body: `{"access_token":"x"}`}}}},
+			Waivers:   waiving("faults", "determinism", "levels", "sensitivity"),
 		}
 	}
 	report, err := Check(suite(nil))

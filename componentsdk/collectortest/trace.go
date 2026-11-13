@@ -219,9 +219,12 @@ func (t *tracer) addGap(op string, g componentsdk.Gap, doc any) {
 	}
 }
 
-// suiteTrace is the tracer's findings as `epack sdk map` reads them.
-func (t *tracer) suiteTrace(s Suite, called []componentsdk.OperationCalls) tracemap.SuiteTrace {
-	ops := slices.Sorted(slices.Values(s.Operations))
+// suiteTrace is the tracer's findings as `epack sdk map` reads them, with
+// the summary of the suite the map keeps.
+func (k *kit) suiteTrace(called []componentsdk.OperationCalls) tracemap.SuiteTrace {
+	s := k.suite
+	declared := slices.Sorted(slices.Values(s.Operations))
+	ops := declared
 	if len(ops) == 0 {
 		for _, op := range called {
 			if op.Name != componentsdk.UnnamedOperation {
@@ -233,10 +236,17 @@ func (t *tracer) suiteTrace(s Suite, called []componentsdk.OperationCalls) trace
 	return tracemap.SuiteTrace{
 		Suite:       cmp.Or(s.Name, s.Spec.Name),
 		Operations:  ops,
-		Insensitive: slices.Sorted(slices.Values(s.Insensitive)),
+		Insensitive: sorted(k.waived.insensitive),
 		Required:    slices.Sorted(slices.Values(s.Required)),
-		Artifacts:   t.fields,
-		Schemas:     t.schemas,
+		Artifacts:   k.trace.fields,
+		Schemas:     k.trace.schemas,
+		Summary: &tracemap.Suite{
+			Name:       cmp.Or(s.Name, s.Spec.Name),
+			Operations: slices.Clone(declared),
+			Scenarios:  len(s.Scenarios),
+			Recordings: k.recordings(),
+			Waivers:    sortedWaivers(s.Waivers),
+		},
 	}
 }
 
@@ -244,7 +254,7 @@ func (t *tracer) suiteTrace(s Suite, called []componentsdk.OperationCalls) trace
 // suites in other packages may share a name and run at the same time.
 func (k *kit) writeTrace(dir string) error {
 	called := k.baseline.Result.Calls.Operations
-	raw, err := json.MarshalIndent(k.trace.suiteTrace(k.suite, called), "", "  ")
+	raw, err := json.MarshalIndent(k.suiteTrace(called), "", "  ")
 	if err != nil {
 		return err
 	}

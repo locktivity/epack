@@ -61,7 +61,44 @@
           "propertyNames": { "$ref": "#/$defs/line" },
           "additionalProperties": { "type": "string" },
           "description": "The text of each source line the fields name, by its file, relative to the collector's module root, and its line number."
+        },
+        "suites": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/suite" },
+          "description": "The test kit suites the map was built from, sorted by name: how the collector was tested. Absent from a map built before suites were kept."
         }
+      }
+    },
+    "suite": {
+      "type": "object",
+      "required": ["name", "operations", "scenarios", "recordings"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "The suite's name, which is the collector's unless the suite sets one." },
+        "operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" },
+          "description": "The operations the suite declares, sorted. Empty for a suite that declares none, which the kit reports."
+        },
+        "scenarios": { "type": "integer", "minimum": 0, "description": "How many scenarios the suite runs." },
+        "recordings": { "type": "integer", "minimum": 0, "description": "How many of the scenarios are recordings of the test account." },
+        "waivers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/waiver" },
+          "description": "The checks the suite turns off or softens, sorted by check and subject. Absent when the suite waives nothing."
+        }
+      }
+    },
+    "waiver": {
+      "type": "object",
+      "required": ["check", "reason", "expires"],
+      "additionalProperties": false,
+      "properties": {
+        "check": { "type": "string", "minLength": 1, "description": "The kit check the waiver turns off, or the softening: fault, insensitive, capped, ordered, ignore, or ignored_field." },
+        "subject": { "type": "string", "description": "What the softening applies to: a fault, an operation, an artifact path and pointer prefix, or an operation and field pattern." },
+        "reason": { "type": "string", "minLength": 1, "description": "Why the check does not apply." },
+        "expires": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The date the waiver lapses, as YYYY-MM-DD. From that day the kit runs the check again." }
       }
     },
     "field": {

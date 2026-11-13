@@ -16,6 +16,8 @@ func fixtureTraces() []SuiteTrace {
 			Operations:  []string{"fixture.org.get", "fixture.people.list"},
 			Insensitive: []string{"fixture.org.get"},
 			Schemas:     map[string]string{"fixture.normalized.json": "evidencepack/fixture@v1"},
+			Summary: &Suite{Name: "fixture", Operations: []string{"fixture.org.get", "fixture.people.list"}, Scenarios: 2, Recordings: 1,
+				Waivers: []Waiver{{Check: "insensitive", Subject: "fixture.org.get", Reason: "The org read feeds no value.", Expires: "2027-01-01"}}},
 			Artifacts: map[string]map[string]*FieldTrace{
 				"artifacts/fixture.json": {
 					"/org":                {},
@@ -29,6 +31,7 @@ func fixtureTraces() []SuiteTrace {
 		{
 			Suite:      "fixture-oauth",
 			Operations: []string{"fixture.people.list", "fixture.token.create"},
+			Summary:    &Suite{Name: "fixture-oauth", Operations: []string{"fixture.people.list", "fixture.token.create"}, Scenarios: 1},
 			Artifacts: map[string]map[string]*FieldTrace{
 				"artifacts/fixture.json": {
 					"/users/mfa_coverage": {Operations: []string{"fixture.token.create"}},

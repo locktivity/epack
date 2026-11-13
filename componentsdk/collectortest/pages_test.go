@@ -19,14 +19,14 @@ func TestThePagesCheckCatchesAListReadInPart(t *testing.T) {
 	}
 
 	capped := demoSuite(demo{firstPage: true})
-	capped.Capped = []string{"demo.users.list"}
+	capped.Waivers = append(capped.Waivers, waive(WaiveCapped, "demo.users.list"))
 	if got := violationsOf(checkSuite(t, capped), "pages"); len(got) != 0 {
-		t.Errorf("an operation in Suite.Capped may leave pages unread: %+v", got)
+		t.Errorf("an operation waived as capped may leave pages unread: %+v", got)
 	}
 	skipped := demoSuite(demo{firstPage: true})
-	skipped.SkipChecks = []string{"pages"}
+	skipped.Waivers = waiving("pages")
 	if got := violationsOf(checkSuite(t, skipped), "pages"); len(got) != 0 {
-		t.Errorf("SkipChecks turns the pages check off: %+v", got)
+		t.Errorf("a waiver turns the pages check off: %+v", got)
 	}
 }
 

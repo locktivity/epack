@@ -129,6 +129,11 @@ func FromTraces(ctx context.Context, root string, traces []SuiteTrace) (*Map, er
 	a := newAnalysis(prog)
 	src := newSource(prog.root)
 	m := &Map{Artifacts: map[string]map[string]*Field{}, Lines: Lines{}}
+	for _, st := range traces {
+		if st.Summary != nil {
+			m.Suites = append(m.Suites, *st.Summary)
+		}
+	}
 	for path, patterns := range merged(traces) {
 		schema := schemaOf(traces, path)
 		fields := map[string]*Field{}
@@ -246,8 +251,14 @@ func Canonical(raw []byte) ([]byte, error) {
 	return Encode(&m)
 }
 
-// sort puts each field's lists in the order Build gives them.
+// sort puts each field's lists, and the suites, in the order Build gives
+// them.
 func (m *Map) sort() {
+	slices.SortFunc(m.Suites, compareSuites)
+	for i := range m.Suites {
+		sort.Strings(m.Suites[i].Operations)
+		slices.SortFunc(m.Suites[i].Waivers, CompareWaivers)
+	}
 	for _, fields := range m.Artifacts {
 		for _, f := range fields {
 			if f == nil {
@@ -284,7 +295,8 @@ func Diff(old, current *Map) string {
 		}
 	}
 	linesChanged := !maps.Equal(old.Lines, current.Lines)
-	if added+removed+changed == 0 && !linesChanged {
+	suitesChanged := !sameSuites(old.Suites, current.Suites)
+	if added+removed+changed == 0 && !linesChanged && !suitesChanged {
 		return ""
 	}
 	var parts []string
@@ -299,18 +311,32 @@ func Diff(old, current *Map) string {
 	if linesChanged {
 		parts = append(parts, "source lines changed")
 	}
+	if suitesChanged {
+		parts = append(parts, "suites changed")
+	}
 	return strings.Join(parts, ", ")
 }
 
-// Summary counts the map's fields, artifacts, and source lines, such as
-// "12 fields in 1 artifact, 30 source lines".
+// sameSuites reports whether two maps keep the same suites.
+func sameSuites(a, b []Suite) bool {
+	ra, _ := json.Marshal(a)
+	rb, _ := json.Marshal(b)
+	return bytes.Equal(ra, rb)
+}
+
+// Summary counts the map's fields, artifacts, source lines, and suites, such
+// as "12 fields in 1 artifact, 30 source lines, 2 suites".
 func (m *Map) Summary() string {
 	fields := 0
 	for _, f := range m.Artifacts {
 		fields += len(f)
 	}
 	count := func(n int, one, many string) string { return strconv.Itoa(n) + " " + plural(n, one, many) }
-	return count(fields, "field", "fields") + " in " + count(len(m.Artifacts), "artifact", "artifacts") + ", " + count(len(m.Lines), "source line", "source lines")
+	out := count(fields, "field", "fields") + " in " + count(len(m.Artifacts), "artifact", "artifacts") + ", " + count(len(m.Lines), "source line", "source lines")
+	if len(m.Suites) > 0 {
+		out += ", " + count(len(m.Suites), "suite", "suites")
+	}
+	return out
 }
 
 // Uncoded lists each field that operations feed but that has no code, as its

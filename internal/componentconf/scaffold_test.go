@@ -69,14 +69,19 @@ func TestScaffoldedCollectorConforms(t *testing.T) {
 	results := make(map[string]TestResult, len(report.Results))
 	for _, r := range report.Results {
 		results[r.ID] = r
-		if r.Status == StatusFail {
+		// A fresh scaffold has no recording of a sandbox yet, which COL-113
+		// says until the developer records one.
+		if r.Status == StatusFail && r.ID != "COL-113" {
 			t.Errorf("%s failed: %s", r.ID, r.Message)
 		}
 	}
-	for _, id := range []string{"COL-024", "COL-042"} {
+	for _, id := range []string{"COL-024", "COL-042", "COL-060", "COL-061", "COL-062", "COL-063", "COL-110", "COL-114"} {
 		if got := results[id]; got.Status != StatusPass {
-			t.Errorf("%s = %s (%s), want pass", id, got.Status, got.Reason)
+			t.Errorf("%s = %s (%s%s), want pass", id, got.Status, got.Message, got.Reason)
 		}
+	}
+	if got := results["COL-113"]; got.Status != StatusFail || !strings.Contains(got.Message, "no test kit suite replays a recording") {
+		t.Errorf("COL-113 = %s (%s), want the failure that says to record the sandbox", got.Status, got.Message)
 	}
 }
 

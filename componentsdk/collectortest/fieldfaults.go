@@ -15,8 +15,8 @@ import (
 	"github.com/locktivity/epack/internal/jsonpointer"
 )
 
-// The field-faults check, which Suite.FieldFaults turns on, holds the rule
-// that a missing or unreadable field never lowers a count. For each
+// The field-faults check holds the rule that a missing or unreadable field
+// never lowers a count. It runs in every suite. For each
 // operation the clean run called, it runs the clean scenario again with one
 // field of the operation's answers changed: set to null, dropped, and, for a
 // list, emptied. Each change applies to the field wherever its pattern

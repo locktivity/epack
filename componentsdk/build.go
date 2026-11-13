@@ -29,7 +29,9 @@ type CollectorBuild struct {
 	// the SDK's own, which NormalizedSchemaJSON returns.
 	Schemas map[string]json.RawMessage `json:"schemas"`
 	// TraceMap is CollectorSpec.TraceMap. It is absent for a collector
-	// without one.
+	// without one. Its suites say how the collector was tested: the
+	// operations each test kit suite declares, its scenario and recording
+	// counts, and the checks it waives, with the reason and the expiry.
 	TraceMap json.RawMessage `json:"trace_map,omitempty"`
 	// Writes is CollectorSpec.Writes, sorted. It is absent for a collector
 	// that lists none.
@@ -77,7 +79,7 @@ func newBuild(spec CollectorSpec, rename func(string) string, stderr io.Writer) 
 var buildSchemaJSON []byte
 
 // BuildSchemaJSON returns the JSON Schema of the build file, which holds the
-// trace map's schema under $defs.
+// trace map's schema under $defs, with the suites and waivers it keeps.
 func BuildSchemaJSON() []byte {
 	return append([]byte(nil), buildSchemaJSON...)
 }

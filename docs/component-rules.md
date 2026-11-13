@@ -11,6 +11,23 @@ This document specifies normative requirements for implementing epack components
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
 
+## Enforcement
+
+Each common and collector rule names what enforces it in an Enforced by column, so a rule is a check with a sentence, not a sentence hoping for a check. The column holds these tokens, each in backticks, with prose around them where it helps:
+
+| Token | Meaning |
+|-------|---------|
+| `kit:<check>` | A check of the test kit, `componentsdk/collectortest`, by the name `collectortest.CheckNames()` lists it under, or one the kit runs on every suite: `scenario`, `secrets`, `schema`, and `recording`. |
+| `conformance` | The `epack-conformance` harness, which reports the rule under its own ID. `conformance:<ID>` means the harness reports it under that other ID. |
+| `sdk:<name>` | A behaviour of the Component SDK that a collector gets by using the named function, type, or field, such as `sdk:Emit`. A collector built without the SDK is not checked. |
+| `cli:<command>` | An epack command that collector CI runs. |
+| `backlog` | Nothing checks the rule yet. The line after it says what the check would be. |
+| `none` | The rule needs no check. |
+
+`TestRulesNameTheirChecks` in `componentsdk/collectortest` reads this file. It fails when a MUST rule names no check and carries no `backlog`, when a kit check is named against no rule, when a token names a check, requirement, or SDK identifier the code does not have, and when Appendix A disagrees with the tables.
+
+A bug found in one collector is fixed in that collector. A bug class found across the fleet is fixed in the kit first: it gets a rule ID in this document and a named check that fails every collector that has it, in the same epack change. The per-repository fixes then land as "make the check pass" in the next epack bump wave, each citing the rule. Nothing is fixed by hand across the fleet before the check exists, because a hand fix leaves the next collector free to make the same mistake.
+
 ---
 
 ## 1. Common Requirements
@@ -19,39 +36,39 @@ These requirements apply to all component types.
 
 ### 1.1 Binary Naming
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| C-001 | MUST | Binary name follow pattern `epack-{type}-{name}` where type is `collector`, `tool`, `remote`, or `util` |
-| C-002 | MUST | Name segment match `^[a-z0-9][a-z0-9._-]{0,63}$` (lowercase alphanumeric, dash, underscore, dot; 1-64 chars) |
-| C-003 | MUST NOT | Name contain path separators (`/` or `\`) or traversal sequences (`..`) |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| C-001 | MUST | Binary name follow pattern `epack-{type}-{name}` where type is `collector`, `tool`, `remote`, or `util` | `conformance` |
+| C-002 | MUST | Name segment match `^[a-z0-9][a-z0-9._-]{0,63}$` (lowercase alphanumeric, dash, underscore, dot; 1-64 chars) | `conformance` |
+| C-003 | MUST NOT | Name contain path separators (`/` or `\`) or traversal sequences (`..`) | `conformance` |
 
 ### 1.2 Environment Contract
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| C-010 | MUST | Component accept protocol variables via environment (see type-specific sections) |
-| C-011 | MUST NOT | Component depend on environment variables other than explicitly allowed ones |
-| C-012 | MUST NOT | Component use reserved prefixes (`EPACK_`, `LD_`, `DYLD_`, `_`) except those provided by epack |
-| C-013 | SHOULD | Component honor `NO_COLOR` for terminal output |
-| C-014 | SHOULD | Component respect proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| C-010 | MUST | Component accept protocol variables via environment (see type-specific sections) | `conformance`, `sdk:RunCollector` |
+| C-011 | MUST NOT | Component depend on environment variables other than explicitly allowed ones | `backlog` a harness run that hands the collector only the protocol variables and the `--secret` names, so a collector that needs another variable fails |
+| C-012 | MUST NOT | Component use reserved prefixes (`EPACK_`, `LD_`, `DYLD_`, `_`) except those provided by epack | `backlog` a kit check on the names a collector reads with `Secret`, and a harness run that sets a reserved variable to a canary and fails a collector that uses it |
+| C-013 | SHOULD | Component honor `NO_COLOR` for terminal output | `conformance` |
+| C-014 | SHOULD | Component respect proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) | `sdk:NewTransport`, which builds on Go's default transport and its proxy settings |
 
 ### 1.3 Exit Codes
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| C-020 | MUST | Exit code 0 indicate success |
-| C-021 | MUST | Exit code 1 indicate general error |
-| C-022 | SHOULD | Exit codes 2-9 be used for component-specific errors |
-| C-023 | MUST NOT | Exit codes 10-19 be used (reserved for epack wrapper) |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| C-020 | MUST | Exit code 0 indicate success | `conformance`, `kit:scenario` |
+| C-021 | MUST | Exit code 1 indicate general error | `conformance`, `sdk:RunCollector` |
+| C-022 | SHOULD | Exit codes 2-9 be used for component-specific errors | `conformance`, `sdk:RunCollector` |
+| C-023 | MUST NOT | Exit codes 10-19 be used (reserved for epack wrapper) | `sdk:RunCollector`, which exits only with codes 0 to 4 |
 
 ### 1.4 Security
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| C-030 | MUST NOT | Component write to locations outside designated output area |
-| C-031 | MUST NOT | Component log credentials, tokens, or secrets |
-| C-032 | SHOULD | Component redact sensitive values from error messages |
-| C-033 | MUST | Component validate all input before use |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| C-030 | MUST NOT | Component write to locations outside designated output area | `conformance`, `sdk:Emit`, which refuses a staged file outside the staging directory |
+| C-031 | MUST NOT | Component log credentials, tokens, or secrets | `conformance`, `kit:secrets`, `kit:credentials` |
+| C-032 | SHOULD | Component redact sensitive values from error messages | `conformance`, `kit:redaction`, `kit:secrets` |
+| C-033 | MUST | Component validate all input before use | `kit:faults`, with malformed, truncated, and empty bodies; `sdk:ConfigSchema`. The harness skips it |
 
 ---
 
@@ -61,12 +78,12 @@ Collectors gather evidence from external systems and output structured JSON.
 
 ### 2.1 Capabilities
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| COL-060 | MUST | Implement `--capabilities` flag returning JSON metadata |
-| COL-061 | MUST | Implement `--version` flag returning version string |
-| COL-062 | MUST | Capabilities include `kind`, `name`, `version`, `protocol_version` fields |
-| COL-063 | SHOULD | Capabilities include `description` field |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-060 | MUST | Implement `--capabilities` flag returning JSON metadata | `conformance`, `sdk:RunCollector` |
+| COL-061 | MUST | Implement `--version` flag returning version string | `conformance`, `sdk:RunCollector` |
+| COL-062 | MUST | Capabilities include `kind`, `name`, `version`, `protocol_version` fields | `conformance`, `sdk:RunCollector` |
+| COL-063 | SHOULD | Capabilities include `description` field | `conformance`, `sdk:RunCollector` |
 
 **Capabilities format:**
 ```json
@@ -81,25 +98,25 @@ Collectors gather evidence from external systems and output structured JSON.
 
 ### 2.2 Output Format
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| COL-001 | MUST | Output valid JSON to stdout |
-| COL-002 | SHOULD | Output use protocol envelope format with `protocol_version` and `data` fields |
-| COL-003 | MAY | Output plain JSON without envelope (treated as protocol version 0) |
-| COL-004 | MAY | Output plain text (quoted as JSON string, protocol version 0) |
-| COL-005 | MUST NOT | Output size exceed 64 MB per collector |
-| COL-006 | MUST | JSON be UTF-8 encoded |
-| COL-070 | MAY | Emit file artifacts by staging files under `EPACK_COLLECTOR_OUTPUT_DIR` and referencing them with the per-artifact `file` field |
-| COL-071 | MUST | File artifact paths be relative and stay within the staging directory (no traversal, no symlinks) |
-| COL-072 | MUST | File artifacts carry an explicit `path` and no `data` field |
-| COL-073 | MUST | Collectors requiring file artifacts exit with config error (exit 2) when `EPACK_COLLECTOR_OUTPUT_DIR` is not set |
-| COL-074 | MAY | Emit a collector result artifact (`evidencepack/collector-result@v1`) recording each value left out and the API calls made |
-| COL-075 | MUST | A collector result artifact match `evidencepack/collector-result@v1` |
-| COL-076 | SHOULD | Request rows that carry call numbers agree: one call's attempts share its operation and step and number up in order, and only a retry waits |
-| COL-077 | SHOULD | Run steps be named once each, listed in start order, end no earlier than they start, and count their calls consistently |
-| COL-078 | SHOULD | A gap's operation be one the result counts, its call have rows when no failed row was dropped, and a missing permission sit only on a `permission_denied` gap |
-| COL-079 | MUST | A build file (`evidencepack/collector-build@v1`) match its schema and name the collector result's version and commit |
-| COL-080 | MUST | At the trust level, the collector result hold no request rows or principal ID, no gap warning, error text, or scope, and no run warning message or scope. When its operations carry `retried`, the result must also hold no tenant, no call or step counts, no step times, and no gap call number or unmeasured count. Fixes, choices, no-action flags, and missing permissions may appear |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-001 | MUST | Output valid JSON to stdout | `conformance`, `sdk:Emit` |
+| COL-002 | SHOULD | Output use protocol envelope format with `protocol_version` and `data` fields | `conformance`, `sdk:Emit` |
+| COL-003 | MAY | Output plain JSON without envelope (treated as protocol version 0) | `conformance` |
+| COL-004 | MAY | Output plain text (quoted as JSON string, protocol version 0) | `none`; the SDK never writes plain text |
+| COL-005 | MUST NOT | Output size exceed 64 MB per collector | `conformance`, `sdk:Emit` |
+| COL-006 | MUST | JSON be UTF-8 encoded | `conformance`, `sdk:Emit` |
+| COL-070 | MAY | Emit file artifacts by staging files under `EPACK_COLLECTOR_OUTPUT_DIR` and referencing them with the per-artifact `file` field | `sdk:Emit` |
+| COL-071 | MUST | File artifact paths be relative and stay within the staging directory (no traversal, no symlinks) | `sdk:Emit` |
+| COL-072 | MUST | File artifacts carry an explicit `path` and no `data` field | `sdk:Emit` |
+| COL-073 | MUST | Collectors requiring file artifacts exit with config error (exit 2) when `EPACK_COLLECTOR_OUTPUT_DIR` is not set | `backlog` the SDK fails such an emit with a plain error, which exits 1; make it a config error, and have the harness run a file-artifact fixture without the variable |
+| COL-074 | MAY | Emit a collector result artifact (`evidencepack/collector-result@v1`) recording each value left out and the API calls made | `sdk:Emit`, which writes one on every run |
+| COL-075 | MUST | A collector result artifact match `evidencepack/collector-result@v1` | `conformance`, `kit:schema` |
+| COL-076 | SHOULD | Request rows that carry call numbers agree: one call's attempts share its operation and step and number up in order, and only a retry waits | `conformance`, `sdk:NewHTTPClient`, which writes the rows |
+| COL-077 | SHOULD | Run steps be named once each, listed in start order, end no earlier than they start, and count their calls consistently | `conformance`, `sdk:StartCollectorStep` |
+| COL-078 | SHOULD | A gap's operation be one the result counts, its call have rows when no failed row was dropped, and a missing permission sit only on a `permission_denied` gap | `conformance`, `kit:permissions` |
+| COL-079 | MUST | A build file (`evidencepack/collector-build@v1`) match its schema and name the collector result's version and commit | `conformance`, `kit:schema` |
+| COL-080 | MUST | At the trust level, the collector result hold no request rows or principal ID, no gap warning, error text, or scope, and no run warning message or scope. When its operations carry `retried`, the result must also hold no tenant, no call or step counts, no step times, and no gap call number or unmeasured count. Fixes, choices, no-action flags, and missing permissions may appear | `conformance`, `kit:levels` |
 
 **Protocol envelope format:**
 ```json
@@ -111,56 +128,112 @@ Collectors gather evidence from external systems and output structured JSON.
 
 ### 2.3 Environment Variables
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| COL-010 | MUST | Read collector name from `EPACK_COLLECTOR_NAME` |
-| COL-011 | MUST | Read protocol version from `EPACK_PROTOCOL_VERSION` |
-| COL-012 | SHOULD | Read config file path from `EPACK_COLLECTOR_CONFIG` if present |
-| COL-013 | MAY | Read identity token from `EPACK_IDENTITY` if present |
-| COL-014 | MAY | Read the file artifact staging directory from `EPACK_COLLECTOR_OUTPUT_DIR` if present |
-| COL-015 | MAY | Read the run's ID from `EPACK_RUN_ID` if present |
-| COL-016 | MAY | Read the time the runner will stop it from `EPACK_DEADLINE` if present, and stop collecting early enough to emit |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-010 | MUST | Read collector name from `EPACK_COLLECTOR_NAME` | `conformance`, `sdk:RunCollector` |
+| COL-011 | MUST | Read protocol version from `EPACK_PROTOCOL_VERSION` | `conformance`, `sdk:RunCollector` |
+| COL-012 | SHOULD | Read config file path from `EPACK_COLLECTOR_CONFIG` if present | `conformance`, `sdk:RunCollector` |
+| COL-013 | MAY | Read identity token from `EPACK_IDENTITY` if present | `none`; the SDK does not read it |
+| COL-014 | MAY | Read the file artifact staging directory from `EPACK_COLLECTOR_OUTPUT_DIR` if present | `sdk:RunCollector` |
+| COL-015 | MAY | Read the run's ID from `EPACK_RUN_ID` if present | `sdk:RunCollector` |
+| COL-016 | MAY | Read the time the runner will stop it from `EPACK_DEADLINE` if present, and stop collecting early enough to emit | `sdk:RunCollector` |
 
 ### 2.4 Configuration
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| COL-020 | MUST | Parse config file as JSON when `EPACK_COLLECTOR_CONFIG` is set |
-| COL-021 | MUST | Not crash or hang when config file is missing |
-| COL-022 | SHOULD | Validate config schema and report clear errors for invalid config |
-| COL-023 | MUST NOT | Read config from hardcoded paths or user home directory |
-| COL-024 | SHOULD | Exit with config error (exit 2) if required configuration is missing |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-020 | MUST | Parse config file as JSON when `EPACK_COLLECTOR_CONFIG` is set | `conformance`, `sdk:RunCollector` |
+| COL-021 | MUST | Not crash or hang when config file is missing | `conformance` |
+| COL-022 | SHOULD | Validate config schema and report clear errors for invalid config | `conformance`, `sdk:ConfigSchema` |
+| COL-023 | MUST NOT | Read config from hardcoded paths or user home directory | `backlog` a harness run with `HOME` pointed at an empty directory and no config, where a collector that still finds configuration read it from a path of its own |
+| COL-024 | SHOULD | Exit with config error (exit 2) if required configuration is missing | `conformance`, `sdk:ConfigSchema` |
 
 ### 2.5 Execution
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| COL-030 | MUST | Complete within timeout (default: 60 seconds) |
-| COL-031 | MUST | Handle SIGTERM gracefully (cleanup and exit) |
-| COL-032 | SHOULD | Output progress to stderr for long-running operations |
-| COL-033 | MUST NOT | Modify filesystem outside temp directories |
-| COL-034 | MUST | Exit with code 0 only when collection succeeds. A collection that leaves out values it could not read, and records each one, succeeds |
-| COL-035 | MUST NOT | Write a default, such as `0`, `false`, or an empty list, in place of a value it could not read |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-030 | MUST | Complete within timeout (default: 60 seconds) | `conformance`, `sdk:RunCollector`, with the deadline from `Timeout` |
+| COL-031 | MUST | Handle SIGTERM gracefully (cleanup and exit) | `conformance`, `sdk:RunCollector` |
+| COL-032 | SHOULD | Output progress to stderr for long-running operations | `none`; progress goes to stdout as `epack_progress` lines, which `sdk:StartCollectorStep` writes |
+| COL-033 | MUST NOT | Modify filesystem outside temp directories | `conformance:C-030` |
+| COL-034 | MUST | Exit with code 0 only when collection succeeds. A collection that leaves out values it could not read, and records each one, succeeds | `conformance`, `kit:scenario`, `kit:faults` |
+| COL-035 | MUST NOT | Write a default, such as `0`, `false`, or an empty list, in place of a value it could not read | `kit:faults`, `kit:field_faults`, `kit:population`, `kit:nulls` |
 
 ### 2.6 Exit Codes
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| COL-040 | MUST | Exit 0 on success |
-| COL-041 | SHOULD | Exit 1 on general error |
-| COL-042 | SHOULD | Exit 2 on configuration error |
-| COL-043 | SHOULD | Exit 3 on authentication error |
-| COL-044 | SHOULD | Exit 4 on network/API error |
-| COL-045 | MAY | Print an `epack_progress` line of kind `failure`, with one of the collection codes, before exiting non-zero |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-040 | MUST | Exit 0 on success | `conformance`, `kit:scenario` |
+| COL-041 | SHOULD | Exit 1 on general error | `sdk:RunCollector`. The harness has no general-error scenario, so it skips |
+| COL-042 | SHOULD | Exit 2 on configuration error | `conformance`, `sdk:RunCollector` |
+| COL-043 | SHOULD | Exit 3 on authentication error | `conformance`, `sdk:RunCollector`, `kit:scenario` |
+| COL-044 | SHOULD | Exit 4 on network/API error | `sdk:RunCollector`, `kit:faults`. The harness has no network-failure scenario, so it skips |
+| COL-045 | MAY | Print an `epack_progress` line of kind `failure`, with one of the collection codes, before exiting non-zero | `sdk:RunCollector` |
 
 ### 2.7 Network
 
-| ID | Level | Requirement |
-|----|-------|-------------|
-| COL-050 | SHOULD | Document network requirements (domains, protocols) |
-| COL-051 | SHOULD | Support proxy configuration via environment |
-| COL-052 | MUST | Use HTTPS for external API calls |
-| COL-053 | SHOULD | Implement timeout and retry logic for API calls |
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-050 | SHOULD | Document network requirements (domains, protocols) | `backlog` a docs check that `docs/configuration.md` names every host in `CredentialHosts` |
+| COL-051 | SHOULD | Support proxy configuration via environment | `sdk:NewTransport` |
+| COL-052 | MUST | Use HTTPS for external API calls | `sdk:CredentialHosts`, which refuses a credential sent over plain HTTP to any host but a loopback one. The harness skips it |
+| COL-053 | SHOULD | Implement timeout and retry logic for API calls | `sdk:NewHTTPClient`, `kit:faults`, with the faults that clear on retry |
+
+### 2.8 Values and Gaps
+
+The test kit's fault matrix fails each operation on its first, a middle, and its last call, with each of its faults, and the field-faults check sets each field the collector reads to null, drops it, and empties each list. These rules are what those runs hold the output to.
+
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-081 | MUST | Under a fault on one operation, keep every value at its clean value or leave it out with a gap whose code matches the fault; only a list a partial gap covers may lose items | `kit:faults`, `kit:field_faults` |
+| COL-082 | MUST | Leave a new gap whenever a fault reaches an operation, even where the clean answer was empty, so a failed read never shows as none | `kit:faults` |
+| COL-083 | MUST | Fail the whole run only on an operation the suite lists as required, such as the sign-in; record every other failed read as a gap | `kit:faults`, `kit:field_faults` |
+| COL-084 | MUST | Change no output and leave no gap under a fault that clears on retry | `kit:faults` |
+| COL-085 | MUST | Never change a number or boolean when a field in an answer is null, missing, or an empty list, except under a gap, or where the suite declares the list a population or the omission a vendor convention, with the reason | `kit:field_faults` |
+| COL-086 | SHOULD | Name the operation that failed in each gap a failed call leaves | `kit:faults`, `kit:field_faults`, when the suite sets `GapOperations` |
+| COL-087 | MUST | Record an empty list that a credential without the operation's permission gets back as a `permission_denied` gap, not as zero | `backlog` a fault that answers an operation with 200 and an empty list while the sign-in reports a credential without that operation's permission; the run must leave a `permission_denied` gap |
+| COL-088 | MUST | Write null for a count or percentage over an empty population, leave out one over an unread population, and write a number or boolean as null only under a gap or an `x-epack-null` | `kit:population`, `kit:nulls` |
+| COL-089 | MUST | Make each count equal what its rows give and each percentage equal its numerator over its denominator, rounded as its `x-epack-rounding` says | `kit:rollups`, `kit:ratios` |
+
+### 2.9 Artifacts and Annotations
+
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-090 | MUST | Emit the same artifacts on two runs of one scenario | `kit:determinism` |
+| COL-091 | MUST | Emit at each level everything a lower level emits, and leave a field marked for a level absent below it, never null | `kit:levels` |
+| COL-092 | MUST | Give every number and boolean a trust run writes, and every one in a normalized artifact, an `x-epack-method` sentence | `kit:methods` |
+| COL-093 | MUST | Give every number and boolean an `x-epack-label` and an `x-epack-summary`, and an `x-epack-goal` that fits its value | `kit:labels` |
+| COL-094 | MUST | Check a normalized artifact against the SDK's schema for its type, with the collector's sentences in `Methods`, never against a copy in `Schemas` | `kit:normalized` |
+| COL-095 | MUST | Write each data artifact at the path `ArtifactPath` gives | `kit:paths`, `sdk:ArtifactPath` |
+| COL-096 | MUST | List in `Writes` every schema ID the collector's artifacts carry | `kit:writes` |
+| COL-097 | MUST | Name in a `permission_denied` gap the permission its operation declares | `kit:permissions` |
+| COL-098 | MUST | Write no gap, advice, warning, or failure message with a run of characters redaction hides as a possible secret | `kit:redaction` |
+| COL-099 | MUST | Name no resource, person, or account from the run in fix or choice advice | `kit:guidance` |
+| COL-100 | MUST | Read no value outside the collector's vocabularies without handling it | `kit:vocabulary` |
+
+### 2.10 Reads
+
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-101 | MUST | Name every call with an operation | `kit:coverage` |
+| COL-102 | MUST | Request every next page an answer offers, unless the operation is waived as capped and leaves a partial gap where it stops | `kit:pages`, `sdk:NextLink` |
+| COL-103 | MUST | Keep every value the same when an operation's lists are reversed, unless the operation is waived as ordered | `kit:order` |
+| COL-104 | MUST | Keep every value the same when the clean scenario is rewritten for another deployment the suite declares, such as another partition or host | `kit:variants` |
+| COL-105 | MUST | Change some value, or the result's `signed_in_as`, when an operation's answers change, unless the operation is waived as insensitive | `kit:sensitivity` |
+| COL-106 | SHOULD | Move some value when a state field in a recorded answer changes, unless the field is waived as ignored | `kit:fields`, when the suite sets `FieldSensitivity` |
+| COL-107 | MUST | Send a credential only to the hosts `CredentialHosts` lists, never on a redirect or a link to another host, and list no public suffix wildcard | `kit:credentials`, `sdk:CredentialHosts` |
+
+### 2.11 Test Suite
+
+A collector's test kit suite is part of the collector. The suite's record travels with the build: the kit exports each suite's operations, scenario and recording counts, and waivers in its trace, `epack sdk map` writes them into the trace map, and the SDK publishes them in the build file and in the `--capabilities` answer, where the harness reads them without credentials.
+
+| ID | Level | Requirement | Enforced by |
+|----|-------|-------------|-------------|
+| COL-110 | MUST | List every operation the collector calls in `Operations`, reach each in a scenario, and keep each suite's operations and scenarios on record in the trace map and the capabilities | `kit:coverage`, `conformance` |
+| COL-111 | MUST | Match each canned answer to the vendor's response schema where the suite gives one | `kit:responses` |
+| COL-112 | MUST | Keep the committed trace map current with the code and the suite's runs | `kit:tracemap`, `cli:epack sdk map --check` |
+| COL-113 | MUST | Replay at least one recording of the test account, scrubbed of secrets and identifying values, or waive the recording with the sandbox it stands for, a reason such as no sandbox yet, and an expiry | `conformance`, `kit:recording`, `kit:waivers` |
+| COL-114 | MUST | Turn a check off or soften it only with a waiver that carries a reason and an expiry at most a year out, and renew or remove the waiver when it expires | `kit:waivers`, `conformance` |
 
 ---
 
@@ -714,6 +787,8 @@ Some tests are skipped by default because they require specific conditions:
 | The run that should collect asks for the audit or internal level | COL-080 |
 | Collector exits before SIGTERM is sent | COL-031 |
 | No general-error scenario | COL-041 |
+| Collector fails COL-060, so its capabilities cannot be read | COL-062, COL-063, COL-110, COL-113, COL-114 |
+| Collector fails COL-110, so its suites are not on record | COL-113, COL-114 |
 
 Every collector run gets its own `EPACK_COLLECTOR_OUTPUT_DIR`, as under `epack collect`. With `--secret`, C-031 fails when a canary value appears in anything a run wrote: its stdout, with the data artifacts and progress lines, its stderr, its staged file artifacts, and any other file it left in its working directory. C-032 fails when one appears in an error message: a failed run's stderr, or the warnings of a run that exited 0. The run that should collect (with `--config`, when the collector needs config) holds canary credentials, which a real API rejects. COL-043 passes when the collector exits 3, and fails when it exits with another code and its error or output says the credentials were rejected (status 401 or 403, "unauthorized", "invalid token", and similar). A collector that exits 0 and emits evidence after the rejection also fails COL-034: every metric the credential gates would read as zero. An error that says nothing about the credentials, such as a DNS failure, skips COL-043.
 
@@ -725,6 +800,8 @@ Name variables that hold a credential, not a path to one: a canary path printed 
 
 COL-031 sends SIGTERM at the collector's first `epack_progress` line, when it is mid-collection, or 5 seconds after start for a collector that reports no progress. It fails when SIGTERM kills the collector, which means it installed no handler, and when the collector is still running 5 seconds after the signal. COL-030 fails when any run is stopped at `--timeout`.
 
+COL-060 to COL-063 run `--version` and `--capabilities`. The capabilities of an SDK collector list the test kit suites its trace map keeps, so COL-110, COL-113, and COL-114 read them there and need no credentials: a CI run with `--secret` canaries checks them too. COL-110 fails a collector whose capabilities list no suite, which means its trace map has none or it predates them, and a suite that declares no operations or runs no scenario. COL-113 fails when no suite replays a recording, as a fresh scaffold does until the developer records the sandbox, unless a suite waives the recording with `WaiveRecording`, the sandbox it stands for, a reason, and an expiry; then it passes and its message reports the waiver, and it fails again when the waiver lapses. The kit reports a recording waiver once the suite does replay a recording. COL-114 fails a waiver with no reason, one whose expiry is not a date, and one that has lapsed. The messages name the fix: `epack sdk map` and a commit of the map, `Suite.Operations`, `collectortest.Record`, or the waiver to renew or remove.
+
 To achieve full conformance, components must pass all testable requirements. Skipped tests do not count as failures.
 
 ---
@@ -733,10 +810,12 @@ To achieve full conformance, components must pass all testable requirements. Ski
 
 ### Collectors
 
+Every rule in sections 1 and 2 applies to collectors, so this table is the sum of those sections. `TestRulesNameTheirChecks` checks it against them.
+
 | Level | Count | IDs |
 |-------|-------|-----|
-| MUST | 33 | C-001, C-002, C-003, C-010, C-020, C-021, C-030, C-031, C-033, COL-001, COL-005, COL-006, COL-010, COL-011, COL-020, COL-021, COL-023, COL-030, COL-031, COL-033, COL-034, COL-035, COL-040, COL-052, COL-060, COL-061, COL-062, COL-071, COL-072, COL-073, COL-075, COL-079, COL-080 |
-| SHOULD | 20 | C-013, C-014, C-022, C-032, COL-002, COL-012, COL-022, COL-024, COL-032, COL-041, COL-042, COL-043, COL-044, COL-050, COL-051, COL-053, COL-063, COL-076, COL-077, COL-078 |
+| MUST | 66 | C-001, C-002, C-003, C-010, C-011, C-012, C-020, C-021, C-023, C-030, C-031, C-033, COL-001, COL-005, COL-006, COL-010, COL-011, COL-020, COL-021, COL-023, COL-030, COL-031, COL-033, COL-034, COL-035, COL-040, COL-052, COL-060, COL-061, COL-062, COL-071, COL-072, COL-073, COL-075, COL-079, COL-080, COL-081, COL-082, COL-083, COL-084, COL-085, COL-087, COL-088, COL-089, COL-090, COL-091, COL-092, COL-093, COL-094, COL-095, COL-096, COL-097, COL-098, COL-099, COL-100, COL-101, COL-102, COL-103, COL-104, COL-105, COL-107, COL-110, COL-111, COL-112, COL-113, COL-114 |
+| SHOULD | 22 | C-013, C-014, C-022, C-032, COL-002, COL-012, COL-022, COL-024, COL-032, COL-041, COL-042, COL-043, COL-044, COL-050, COL-051, COL-053, COL-063, COL-076, COL-077, COL-078, COL-086, COL-106 |
 | MAY | 9 | COL-003, COL-004, COL-013, COL-014, COL-015, COL-016, COL-045, COL-070, COL-074 |
 
 ### Tools
@@ -770,3 +849,4 @@ To achieve full conformance, components must pass all testable requirements. Ski
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-02-22 | Initial release |
+| 1.1 | 2026-11-13 | Enforced by column on the common and collector rules; sections 2.8 to 2.11 give the test kit's checks their rules; COL-060 to COL-063 and COL-110 to COL-114 join the harness |

@@ -3,6 +3,7 @@ package componentsdk
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -226,4 +227,40 @@ func captureStderr(t *testing.T, fn func()) string {
 		t.Fatalf("read pipe: %v", err)
 	}
 	return buf.String()
+}
+
+func TestCollectorCapabilitiesListTheSuitesOfTheTraceMap(t *testing.T) {
+	spec := CollectorSpec{Name: "demo", Version: "v0.4.0", Description: "A demo.", TraceMap: []byte(`{"artifacts": {}, "lines": {}, "suites": [
+		{"name": "demo", "operations": ["demo.me.get"], "scenarios": 2, "recordings": 1,
+		 "waivers": [{"check": "insensitive", "subject": "demo.me.get", "reason": "The sign-in feeds no value.", "expires": "2027-03-01"}]}]}`)}
+	var out bytes.Buffer
+	if code := writeCollectorCapabilities(&out, io.Discard, spec); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var caps struct {
+		Kind   string `json:"kind"`
+		Suites []struct {
+			Name       string `json:"name"`
+			Operations []string
+			Scenarios  int
+			Recordings int
+			Waivers    []map[string]string
+		} `json:"suites"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &caps); err != nil {
+		t.Fatal(err)
+	}
+	if caps.Kind != "collector" || len(caps.Suites) != 1 || caps.Suites[0].Name != "demo" || caps.Suites[0].Recordings != 1 || len(caps.Suites[0].Waivers) != 1 || caps.Suites[0].Waivers[0]["expires"] != "2027-03-01" {
+		t.Errorf("capabilities = %s, want the trace map's suite with its waiver", out.Bytes())
+	}
+
+	for name, traceMap := range map[string][]byte{"none": nil, "without suites": []byte(`{"artifacts": {}, "lines": {}}`), "not a map": []byte(`[1]`)} {
+		out.Reset()
+		if code := writeCollectorCapabilities(&out, io.Discard, CollectorSpec{Name: "demo", TraceMap: traceMap}); code != 0 {
+			t.Fatalf("%s: exit %d", name, code)
+		}
+		if bytes.Contains(out.Bytes(), []byte(`"suites"`)) {
+			t.Errorf("%s: capabilities list suites: %s", name, out.Bytes())
+		}
+	}
 }

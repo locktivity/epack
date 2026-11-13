@@ -19,7 +19,7 @@ import (
 // end. In every scenario's run, the collector must ask for each next page an
 // answer offers. The check also adds a next page to the last answer of each
 // paged operation, and the run must ask for that page too. An operation in
-// Suite.Capped is exempt.
+// waived as capped is exempt.
 
 // pageLog keeps a run's requests and the next pages its answers offered.
 type pageLog struct {
@@ -120,7 +120,7 @@ func (l *pageLog) unread(capped []string) []string {
 		}
 		reported[o.op] = true
 		out = append(out, fmt.Sprintf("the answer to %s for %s offers the next page %s, and the run never asked for it. "+
-			"Read every page, or list %s in Suite.Capped and leave a partial gap where the list stops", opLabel(o.op), o.from, o.describe(), opLabel(o.op)))
+			"Read every page, or waive %s as capped and leave a partial gap where the list stops", opLabel(o.op), o.from, o.describe(), opLabel(o.op)))
 	}
 	return out
 }
@@ -394,7 +394,7 @@ func (p *pager) RoundTrip(req *http.Request) (*http.Response, error) {
 func (k *kit) checkPageFaults() {
 	styles := k.baselineNet.replay.pageStyles()
 	p := perturber{k: k, check: "pages"}
-	for _, op := range k.pickOps(opPick{exempt: k.suite.Capped}) {
+	for _, op := range k.pickOps(opPick{exempt: sorted(k.waived.capped)}) {
 		style := styles[op.Name]
 		if containsString(k.suite.Paged, op.Name) {
 			style.link = true
@@ -411,7 +411,7 @@ func (k *kit) checkPageFaults() {
 			k.violate("pages", label, "adding a next page to %s's last answer failed the run with %s", op.Name, failureLabel(run.res))
 		case !pg.asked:
 			k.violate("pages", label, "the kit added the next page %s to %s's last answer, and the run never asked for it. "+
-				"Read every page, or list %s in Suite.Capped and leave a partial gap where the list stops", describeURL(pg.added), op.Name, op.Name)
+				"Read every page, or waive %s as capped and leave a partial gap where the list stops", describeURL(pg.added), op.Name, op.Name)
 		}
 	}
 }

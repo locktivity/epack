@@ -13,9 +13,9 @@ func TestTheOrderCheckCatchesAValueThatDependsOnListOrder(t *testing.T) {
 		t.Errorf("rows in another order are the same values: %+v", got)
 	}
 	ordered := demoSuite(demo{firstRow: true})
-	ordered.Ordered = []string{"demo.users.list"}
+	ordered.Waivers = append(ordered.Waivers, waive(WaiveOrdered, "demo.users.list"))
 	if got := violationsOf(checkSuite(t, ordered), "order"); len(got) != 0 {
-		t.Errorf("an operation in Suite.Ordered keeps its order: %+v", got)
+		t.Errorf("an operation waived as ordered keeps its order: %+v", got)
 	}
 }
 
