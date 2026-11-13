@@ -30,8 +30,9 @@ const inactiveDays = 90
 // cloud account the collector can read, or for the one account a roster
 // without a cloud block has. Access-posture's totals are then across those
 // accounts. A roster with a vcs block and no cloud side gives access-posture
-// values for the version control organization instead, and no idp-posture
-// values, since its accounts are the organization's and not a directory's.
+// values for the version control organization instead, and one with a
+// workspace block gives them for the workspace. Neither gives idp-posture
+// values, since its accounts are the system's and not a directory's.
 // Each domain the roster has adds its values. A list's entries are
 // in the roster's order, and Align matches them to an artifact's.
 //
@@ -47,6 +48,8 @@ func Derive(r *Roster) (Values, error) {
 		out[AccessPosture] = deriveAccess(r)
 	case r.VCS != nil:
 		out[AccessPosture] = deriveCodeHostAccess(r)
+	case r.Workspace != nil:
+		out[AccessPosture] = deriveWorkspaceAccess(r)
 	default:
 		out[IDPPosture] = deriveIdentity(r)
 	}

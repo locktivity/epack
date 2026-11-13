@@ -220,7 +220,7 @@ func creationKnownIn(v map[string]any, n int) bool {
 }
 
 // addMembers gives a scope's or the totals' members and admins at at. With
-// a cloud or vcs block, it also gives those linked to SSO and those who can
+// a cloud, vcs or workspace block, it also gives those linked to SSO and those who can
 // sign in without SSO, with MFA or without.
 func (r *Roster) addMembers(v map[string]any, at string, sa scopeAccess) {
 	external := count(sa.members, r.Guest)
@@ -231,7 +231,7 @@ func (r *Roster) addMembers(v map[string]any, at string, sa scopeAccess) {
 	v[at+"/members/members_present"] = len(sa.members) > 0
 	v[at+"/admins/admin_count"] = len(sa.admins)
 	v[at+"/admins/admins_present"] = len(sa.admins) > 0
-	if r.Cloud == nil && r.VCS == nil {
+	if r.Cloud == nil && r.VCS == nil && r.Workspace == nil {
 		return
 	}
 	v[at+"/members/sso_member_count"] = len(sa.sso)
@@ -284,9 +284,13 @@ func (r *Roster) addCredentials(v map[string]any, at string, credentials []Machi
 		return len(sources) > 0 && !slices.ContainsFunc(sources, func(s string) bool { return r.Terms.NetworkSources[s] == SourceAny })
 	}
 	ipLimited := func(m MachineCredential) bool { return limits(m.AllowedSources) }
-	if r.VCS != nil {
+	switch {
+	case r.VCS != nil:
 		permissions = func(m MachineCredential) string { return r.Terms.VCSCredentialPermissions[m.Permissions] }
 		ipLimited = func(m MachineCredential) bool { return limits(m.AllowedSources) || limits(r.VCS.AllowedSources) }
+	case r.Workspace != nil:
+		permissions = func(m MachineCredential) string { return r.Terms.WorkspaceCredentialPermissions[m.Permissions] }
+		ipLimited = func(m MachineCredential) bool { return limits(m.AllowedSources) || limits(r.Workspace.AllowedSources) }
 	}
 	v[at+"/credentials/credential_count"] = len(credentials)
 	v[at+"/credentials/never_expiring_credential_count"] = count(credentials, func(m MachineCredential) bool { return m.ExpiresInDays == nil })

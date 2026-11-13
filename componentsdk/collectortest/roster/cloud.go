@@ -485,7 +485,8 @@ func ifSet(s string) []string {
 
 // parseCredentials reads a block's machine credentials. place is the field
 // that says where each one is: cloud_account in a cloud block, repositories
-// in a vcs block.
+// in a vcs block, and none in a workspace block, whose credentials are all
+// the workspace's.
 func parseCredentials(raw map[string]json.RawMessage, place string) ([]MachineCredential, error) {
 	var out []MachineCredential
 	for _, key := range sortedKeys(raw) {
@@ -513,9 +514,10 @@ func parseCredentials(raw map[string]json.RawMessage, place string) ([]MachineCr
 			CreatedDaysAgo: m.CreatedDaysAgo, ExpiresInDays: m.ExpiresInDays, LastUsedDaysAgo: m.LastUsedDaysAgo,
 			AllowedSources: m.AllowedSources, Permissions: m.Permissions, Extra: e,
 		}
-		if place == "cloud_account" {
+		switch place {
+		case "cloud_account":
 			c.CloudAccount = m.CloudAccount
-		} else {
+		case "repositories":
 			c.Repositories = m.Repositories
 		}
 		out = append(out, c)

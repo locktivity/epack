@@ -129,10 +129,11 @@
 // allowed_sources, the networks a limited one lets in, in network_sources.
 //
 // providers gives the provider value of each normalized schema, by the
-// schema's short name, such as idp-posture. endpoint, scanning, vcs, tls and
-// email_dns each describe one more part of a tenant, in the format the
-// matching type documents: Endpoint, Scanning, VCS, Hosts and MailDomains.
-// Their terms are in the terms block with the others.
+// schema's short name, such as idp-posture. endpoint, scanning, vcs,
+// workspace, tls and email_dns each describe one more part of a tenant, in
+// the format the matching type documents: Endpoint, Scanning, VCS,
+// Workspace, Hosts and MailDomains. Their terms are in the terms block with
+// the others.
 package roster
 
 import (
@@ -253,12 +254,13 @@ type Roster struct {
 	// Providers gives each normalized schema's provider value, by the
 	// schema's short name.
 	Providers map[string]string
-	// Endpoint, Scanning, VCS, Hosts and MailDomains are the parts of a
-	// tenant beyond its identity and cloud sides. Each is nil when the roster
-	// leaves it out.
+	// Endpoint, Scanning, VCS, Workspace, Hosts and MailDomains are the
+	// parts of a tenant beyond its identity and cloud sides. Each is nil when
+	// the roster leaves it out.
 	Endpoint    *Endpoint
 	Scanning    *Scanning
 	VCS         *VCS
+	Workspace   *Workspace
 	Hosts       *Hosts
 	MailDomains *MailDomains
 	Terms       Terms
@@ -452,6 +454,7 @@ type Terms struct {
 	EndpointTerms
 	ScanningTerms
 	VCSTerms
+	WorkspaceTerms
 	HostsTerms
 	MailDomainsTerms
 }
@@ -1019,6 +1022,9 @@ func (r *Roster) Validate() error {
 	}
 	if r.VCS != nil && r.hasCloud() {
 		return fmt.Errorf("the roster has a cloud side and a vcs block, and access-posture describes one system; give each its own roster")
+	}
+	if r.Workspace != nil && (r.VCS != nil || r.hasCloud()) {
+		return fmt.Errorf("the roster has a workspace block beside a cloud side or a vcs block, and access-posture describes one system; give each its own roster")
 	}
 	for _, short := range sortedKeys(r.Providers) {
 		if _, ok := schemaIDs[short]; !ok {

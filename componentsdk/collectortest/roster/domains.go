@@ -29,7 +29,7 @@ type domain struct {
 
 // domains are the parts of a tenant beyond its identity side and the cloud
 // side's network and storage, which Parse and Derive handle themselves.
-var domains = []domain{endpointDomain, scanningDomain, vcsDomain, tlsDomain, mailDomain}
+var domains = []domain{endpointDomain, scanningDomain, vcsDomain, workspaceDomain, tlsDomain, mailDomain}
 
 func domainKeys() []string {
 	keys := make([]string, len(domains))
