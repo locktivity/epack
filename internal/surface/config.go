@@ -99,6 +99,12 @@ type SpecRef struct {
 	// File is a local copy of the description, relative to the module root.
 	// The --spec flag overrides it.
 	File string `yaml:"file"`
+	// URL is where the description is fetched from when there is no local
+	// copy: a file, pinned to a revision, such as a raw GitHub URL at a
+	// commit, or, with Files, the directory the files are under, ending
+	// in /. The copy goes to epack's cache and is checked against SHA256.
+	URL   string   `yaml:"url"`
+	Files []string `yaml:"files"`
 }
 
 // Scope decides which operations need a verdict. Only GET operations are
@@ -191,7 +197,7 @@ func LoadConfig(root, rel string) (*Config, error) {
 	if cfg.Reference.File == "" {
 		cfg.Reference.File = DefaultReferenceFile
 	}
-	if len(cfg.Specs) > 0 && cfg.Spec != (SpecRef{}) {
+	if len(cfg.Specs) > 0 && !cfg.Spec.empty() {
 		return nil, fmt.Errorf("%s: give spec or specs, not both", rel)
 	}
 	return &cfg, nil
@@ -284,10 +290,14 @@ func (c *Config) Descriptions() []SpecRef {
 	if len(c.Specs) > 0 {
 		return c.Specs
 	}
-	if c.Spec == (SpecRef{}) {
+	if c.Spec.empty() {
 		return nil
 	}
 	return []SpecRef{c.Spec}
+}
+
+func (r SpecRef) empty() bool {
+	return r.Name == "" && r.Source == "" && r.Path == "" && r.Revision == "" && r.SHA256 == "" && r.File == "" && r.URL == "" && len(r.Files) == 0
 }
 
 // Label names a description in the rendered documents.

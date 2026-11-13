@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ENHANCEMENTS
+
+- `epack sdk surface` fetches a vendor API description from the `url` an
+  entry of `docs/surface.yaml` names, pinned to a revision and checked
+  against its `sha256`, into epack's cache, so CI needs no committed copy. A
+  `url` ending in `/` with `files` fetches a directory description. The
+  reusable collector CI workflow gains a `surface` job that runs the check
+  for a collector with a `docs/surface.yaml`, through `make surface` when
+  the Makefile has the target and at the go.mod epack version otherwise
+
 ## [0.12.1] - 2026-11-13
 
 ### ENHANCEMENTS

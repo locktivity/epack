@@ -240,6 +240,36 @@ jobs:
           EPACK_VERSION="$(go list -m -f '{{.Version}}' github.com/locktivity/epack)"
           go run -tags components github.com/locktivity/epack/cmd/epack@"${EPACK_VERSION}" sdk map --check --out "$TRACE_MAP"
 
+  surface:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # The surface check needs the vendor's API description, which the
+      # verdict file names by URL and digest, so it fetches it here. A
+      # Makefile target pins the epack version the check runs at, since the
+      # command may be newer than the epack go.mod pins.
+      - name: Check the surface verdicts
+        run: |
+          if [ ! -f docs/surface.yaml ]; then
+            echo "There is no docs/surface.yaml, so there is nothing to check. Run epack sdk surface to start one."
+            exit 0
+          fi
+          if grep -q '^surface:' Makefile; then
+            make surface
+          else
+            EPACK_VERSION="$(go list -m -f '{{.Version}}' github.com/locktivity/epack)"
+            go run -tags components github.com/locktivity/epack/cmd/epack@"${EPACK_VERSION}" sdk surface --check
+          fi
+
   govulncheck:
     runs-on: ubuntu-latest
     permissions:

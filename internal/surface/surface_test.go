@@ -1,6 +1,9 @@
 package surface
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -471,5 +474,60 @@ func TestSpanningParametersAnywhereAndInSelector(t *testing.T) {
 	graphOnly := Item{Reason: "Webhooks", Paths: []string{"/subscriptions*"}, In: []string{"Graph"}}
 	if graphOnly.Specificity(webhooks) == 0 || graphOnly.Specificity(sub) != 0 {
 		t.Error("an item limited to a description should not cover another description's paths")
+	}
+}
+
+func TestFetchCachesPinnedDescriptions(t *testing.T) {
+	files := map[string]string{"/v1/openapi.json": `{"openapi":"3.0.0","paths":{"/a":{"get":{"operationId":"a"}}}}`, "/arm/a.json": armSpec, "/arm/b.json": `{"swagger":"2.0","host":"management.azure.com","paths":{}}`}
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		body, ok := files[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	cache := t.TempDir()
+
+	one := SpecRef{Name: "one", URL: server.URL + "/v1/openapi.json"}
+	got, err := Fetch(context.Background(), one, cache, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(got) != "openapi.json" {
+		t.Errorf("fetched to %s", got)
+	}
+	one.SHA256, _ = Digest(got)
+	if _, err := Fetch(context.Background(), one, cache, server.Client()); err != nil || hits != 1 {
+		t.Errorf("a cached copy with the pinned digest should not be fetched again: err %v, hits %d", err, hits)
+	}
+	one.SHA256 = strings.Repeat("0", 64)
+	if _, err := Fetch(context.Background(), one, cache, server.Client()); err != nil || hits != 2 {
+		t.Errorf("a cached copy with another digest should be fetched again: err %v, hits %d", err, hits)
+	}
+
+	dir := SpecRef{Name: "arm", URL: server.URL + "/arm/", Files: []string{"a.json", "b.json"}}
+	got, err = Fetch(context.Background(), dir, cache, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := LoadSpec(got)
+	if err != nil || len(spec.Operations) != 3 {
+		t.Errorf("LoadSpec of a fetched directory = %v, %v", spec, err)
+	}
+	if _, err := Fetch(context.Background(), SpecRef{Name: "bad", URL: server.URL + "/arm", Files: []string{"a.json"}}, cache, server.Client()); err == nil {
+		t.Error("a url with files must end in /")
+	}
+	if _, err := Fetch(context.Background(), SpecRef{Name: "bad", URL: server.URL + "/arm/", Files: []string{"../a.json"}}, cache, server.Client()); err == nil {
+		t.Error("a file name with a path should be refused")
+	}
+	if _, err := Fetch(context.Background(), SpecRef{Name: "bad", URL: "http://example.com/spec.json"}, cache, server.Client()); err == nil {
+		t.Error("plain http to a non-loopback host should be refused")
+	}
+	if _, err := Fetch(context.Background(), SpecRef{Name: "missing", URL: server.URL + "/nope.json"}, cache, server.Client()); err == nil {
+		t.Error("a 404 should fail the fetch")
 	}
 }
