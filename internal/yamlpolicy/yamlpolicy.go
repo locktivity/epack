@@ -43,6 +43,22 @@ func ValidateBeforeParse(data []byte, maxSize int64) error {
 //
 // SECURITY: This must be called BEFORE yaml.Unmarshal, which expands aliases during parsing.
 func CheckAliasAbuse(data []byte) error {
+	return checkAliasAbuse(data, true)
+}
+
+// ValidateDocumentBeforeParse is ValidateBeforeParse for a large document a
+// developer points the CLI at, such as a vendor's API description, where
+// anchors are many and legitimate. It enforces the size limit and the
+// alias-to-anchor ratio, but not the absolute alias cap.
+func ValidateDocumentBeforeParse(data []byte, maxSize int64) error {
+	if int64(len(data)) > maxSize {
+		return fmt.Errorf("YAML data too large: %d bytes exceeds limit of %d bytes",
+			len(data), maxSize)
+	}
+	return checkAliasAbuse(data, false)
+}
+
+func checkAliasAbuse(data []byte, absoluteCap bool) error {
 	// Parse into yaml.Node tree - this preserves alias/anchor structure
 	// without expanding aliases (unlike yaml.Unmarshal to a Go type)
 	var root yaml.Node
@@ -69,7 +85,7 @@ func CheckAliasAbuse(data []byte) error {
 	}
 
 	// Also check absolute limits - even a single anchor with many aliases is dangerous
-	if aliases > limits.MaxYAMLAliasExpansion*10 {
+	if absoluteCap && aliases > limits.MaxYAMLAliasExpansion*10 {
 		return fmt.Errorf("potential YAML alias bomb detected: %d aliases exceeds limit", aliases)
 	}
 

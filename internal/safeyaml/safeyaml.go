@@ -56,6 +56,20 @@ func Unmarshal(data []byte, limit limits.SizeLimit, v any) error {
 	return nil
 }
 
+// UnmarshalDocument is Unmarshal for a large document a developer points
+// the CLI at, such as a vendor's API description. It enforces the size
+// limit and the alias-to-anchor ratio, but not the absolute alias cap,
+// which such documents exceed legitimately.
+func UnmarshalDocument(data []byte, limit limits.SizeLimit, v any) error {
+	if err := yamlpolicy.ValidateDocumentBeforeParse(data, limit.Bytes()); err != nil {
+		return err
+	}
+	if err := yaml.Unmarshal(data, v); err != nil {
+		return fmt.Errorf("parsing YAML: %w", err)
+	}
+	return nil
+}
+
 // UnmarshalStrict is like Unmarshal but returns an error for unknown fields.
 //
 // Use this for configuration files where typos should be caught.

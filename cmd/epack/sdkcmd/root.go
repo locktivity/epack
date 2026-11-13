@@ -60,6 +60,7 @@ Generate sample inputs for testing:
 	cmd.AddCommand(newTestCommand())
 	cmd.AddCommand(newMockCommand())
 	cmd.AddCommand(newMapCommand())
+	cmd.AddCommand(newSurfaceCommand())
 
 	return cmd
 }
