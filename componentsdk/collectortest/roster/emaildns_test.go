@@ -415,6 +415,33 @@ func TestDeriveMailSummary(t *testing.T) {
 	}
 }
 
+// A domain's MX records are listed by priority, as a resolver answers them,
+// and those of equal priority keep the roster's order. The roster keeps its
+// own order.
+func TestDeriveMailListsMXByPriority(t *testing.T) {
+	r := mailRoster(t, []string{"a.example.test"}, map[string]any{
+		"a.example.test": map[string]any{"mx": []map[string]any{
+			{"host": "backup.example.test", "priority": 20},
+			{"host": "mx2.example.test", "priority": 10},
+			{"host": "mx1.example.test", "priority": 10},
+			{"host": "first.example.test", "priority": 0},
+		}},
+	})
+	checkMail(t, deriveMailValues(t, r), map[string]any{
+		"/domains/0/mx/0/host":     "first.example.test",
+		"/domains/0/mx/0/priority": 0,
+		"/domains/0/mx/1/host":     "mx2.example.test",
+		"/domains/0/mx/1/priority": 10,
+		"/domains/0/mx/2/host":     "mx1.example.test",
+		"/domains/0/mx/2/priority": 10,
+		"/domains/0/mx/3/host":     "backup.example.test",
+		"/domains/0/mx/3/priority": 20,
+	})
+	if got := r.MailDomains.Names["a.example.test"].MX[0].Host; got != "backup.example.test" {
+		t.Errorf("the roster's first MX record is now %s; Derive should leave the roster as it is", got)
+	}
+}
+
 // Names match ignoring case and a trailing dot, and a domain is reported as
 // the roster lists it.
 func TestMailNamesIgnoreCase(t *testing.T) {

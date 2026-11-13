@@ -1,13 +1,16 @@
 package collectortest
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base32"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -15,6 +18,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +89,134 @@ func TestScrubbingKeepsODataAnnotations(t *testing.T) {
 		`"members@odata.nextLink":"y","manager@odata.bind":"z","owner":"user1@example.com","contact":"user2@example.com"}]}`
 	if got := s.text(in); got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+// Phone numbers in Microsoft Graph users, Okta profiles, Google Workspace
+// users, and JumpCloud users become fakes, numbered by their digits, and
+// the answer keeps its shape.
+func TestScrubbingReplacesPhoneNumbers(t *testing.T) {
+	in := `{"value":[{"businessPhones":["+1 206 555 0182","206 555 0199"],"mobilePhone":"+1 206 555 0173","faxNumber":null},` +
+		`{"businessPhones":[],"mobilePhone":null,"faxNumber":""}],` +
+		`"profile":{"mobilePhone":"+1-206-555-0182","primaryPhone":"(206) 555-0144"},` +
+		`"phones":[{"value":"+1 206 555 0173","type":"work"},{"type":"mobile","value":""}],` +
+		`"phoneNumbers":[{"id":"p1","number":"206.555.0111","type":"mobile"}],` +
+		`"phone":"none","phoneNumber":"555-0100","phone_count":2}`
+	want := `{"value":[{"businessPhones":["555-0100","555-0101"],"mobilePhone":"555-0102","faxNumber":null},` +
+		`{"businessPhones":[],"mobilePhone":null,"faxNumber":""}],` +
+		`"profile":{"mobilePhone":"555-0100","primaryPhone":"555-0103"},` +
+		`"phones":[{"value":"555-0102","type":"work"},{"type":"mobile","value":""}],` +
+		`"phoneNumbers":[{"id":"p1","number":"555-0104","type":"mobile"}],` +
+		`"phone":"none","phoneNumber":"555-0100","phone_count":2}`
+	s := newScrubber(nil, ScrubRules{})
+	got := s.text(in)
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	if again := s.text(got); again != got {
+		t.Errorf("scrubbing the fakes changed them: %s", again)
+	}
+
+	var indented, wantIndented bytes.Buffer
+	if err := json.Indent(&indented, []byte(in), "", "  "); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Indent(&wantIndented, []byte(want), "", "  "); err != nil {
+		t.Fatal(err)
+	}
+	if got := newScrubber(nil, ScrubRules{}).text(indented.String()); got != wantIndented.String() {
+		t.Errorf("indented, got\n%s\nwant\n%s", got, wantIndented.String())
+	}
+}
+
+func TestTheScrubCheckFlagsPhoneNumbers(t *testing.T) {
+	body := func(text string) Scenario {
+		return Scenario{Responses: []Response{{URL: "https://a.example/", Body: text}}}
+	}
+	for _, text := range []string{
+		`{"mobilePhone":"+1 206 555 0173"}`,
+		`{"businessPhones":["555-0100","206 555 0199"]}`,
+		`{"profile":{"primaryPhone":"(206) 555-0144"}}`,
+		`{"phones":[{"type":"work","value":"+1 206 555 0173"}]}`,
+		`{"phoneNumbers":[{"number":"206.555.0111"}]}`,
+		base64.StdEncoding.EncodeToString([]byte(`{"user":{"phone":"+1 206 555 0173","name":"a user with a phone"}}`)),
+	} {
+		leaks := scanScenario(body(text), nil, nil)
+		if len(leaks) != 1 || leaks[0].what != "a phone number" {
+			t.Errorf("%s: leaks = %v, want the phone number flagged", text, leaks)
+		}
+	}
+	clean := `{"businessPhones":[],"mobilePhone":null,"faxNumber":"","phone":"none","phoneNumber":"555-0100",` +
+		`"phones":[{"type":"work","value":"555-0101"}],"phoneNumbers":[{"id":"p1","number":"555-0102"}],"phone_count":2065550173}`
+	if leaks := scanScenario(body(clean), nil, nil); len(leaks) > 0 {
+		t.Errorf("flagged %v", leaks)
+	}
+}
+
+// uniqueIDFor returns prefix, then the base32 of core's first 10 bytes with
+// account in their account bits, then extra.
+func uniqueIDFor(prefix string, account uint64, core []byte, extra string) string {
+	b := append([]byte(nil), core[:10]...)
+	binary.BigEndian.PutUint64(b, binary.BigEndian.Uint64(b)&^(uniqueIDAccountBits<<23)|account<<23)
+	return prefix + base32.StdEncoding.EncodeToString(b) + extra
+}
+
+// An IAM unique ID encodes its account. Where that account is an
+// identifier's, scrubbing encodes the identifier's fake account in its
+// place and keeps the rest of the ID. The account here stands in for a
+// real one.
+func TestScrubbingReencodesUniqueIDsOfAnIdentifiersAccount(t *testing.T) {
+	const account, fake, other = 123456789012, 111122223333, 210987654321
+	ids := map[string]string{strconv.Itoa(account): strconv.Itoa(fake)}
+	role := sha512.Sum512([]byte("role"))
+	user := sha512.Sum512([]byte("user"))
+	in := `<RoleId>AROABZPUZDIKAAAAAAAAA</RoleId><Arn>arn:aws:iam::123456789012:role/x</Arn>` +
+		`{"CreatedBy":"` + uniqueIDFor("AROA", account, role[:], "Q") + `:botocore-session-1",` +
+		`"UserId":"` + uniqueIDFor("AIDA", account, user[:], "") + `","Other":"` + uniqueIDFor("AROA", other, role[:], "Q") + `",` +
+		`"AccessKeyId":"AKIA` + "BZPUZDIKAAAAAAAA" + `"}`
+	// AROABTX3GSDSQAAAAAAAA is AROABZPUZDIKAAAAAAAAA with the account
+	// 111122223333 in place of 123456789012, as epack-collector-aws encodes
+	// it.
+	want := `<RoleId>AROABTX3GSDSQAAAAAAAA</RoleId><Arn>arn:aws:iam::111122223333:role/x</Arn>` +
+		`{"CreatedBy":"` + uniqueIDFor("AROA", fake, role[:], "Q") + `:botocore-session-1",` +
+		`"UserId":"` + uniqueIDFor("AIDA", fake, user[:], "") + `","Other":"` + uniqueIDFor("AROA", other, role[:], "Q") + `",` +
+		`"AccessKeyId":"AKIAEXAMPLE000000001"}`
+	s := newScrubber(nil, ScrubRules{Identifiers: ids})
+	got := s.text(in)
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	if again := newScrubber(nil, ScrubRules{Identifiers: ids}).text(in); again != got {
+		t.Errorf("the same IDs scrubbed two ways:\n%s\n%s", got, again)
+	}
+	if n := s.counts()["aws_unique_id"]; n != 3 {
+		t.Errorf("replaced %d unique IDs, want 3", n)
+	}
+	for _, text := range []string{"AROABZPUZDIKAAAAAAAAA", uniqueIDFor("AIDA", account, user[:], "")} {
+		if account, _ := uniqueIDAccount(text); account != 123456789012 {
+			t.Errorf("%s encodes account %d, want 123456789012", text, account)
+		}
+	}
+
+	body := func(text string) Scenario {
+		return Scenario{Responses: []Response{{URL: "https://a.example/", Body: text}}}
+	}
+	leaks := scanScenario(body(`{"RoleId":"AROABZPUZDIKAAAAAAAAA"}`), nil, ids)
+	if len(leaks) != 1 || leaks[0].what != "an IAM unique ID that encodes the account ScrubRules.Identifiers replaces with 111122223333" {
+		t.Errorf("leaks = %v, want the unique ID flagged", leaks)
+	}
+	if leaks := scanScenario(body(got), nil, ids); len(leaks) > 0 {
+		t.Errorf("the scrubbed IDs were flagged: %v", leaks)
+	}
+
+	// A fake that isn't 12 digits can't be encoded in an ID, so the ID
+	// stays and the scrub check flags it.
+	named := map[string]string{strconv.Itoa(account): "sandbox-account"}
+	if got := newScrubber(nil, ScrubRules{Identifiers: named}).text("AROABZPUZDIKAAAAAAAAA"); got != "AROABZPUZDIKAAAAAAAAA" {
+		t.Errorf("got %s, want the ID as it was", got)
+	}
+	if leaks := scanScenario(body("AROABZPUZDIKAAAAAAAAA"), nil, named); len(leaks) != 1 {
+		t.Errorf("leaks = %v, want the unique ID flagged", leaks)
 	}
 }
 

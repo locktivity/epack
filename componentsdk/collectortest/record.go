@@ -95,7 +95,7 @@ type RecordReport struct {
 
 	// Replaced counts the distinct values scrubbing replaced, by rule:
 	// "secret", "identifier", "literal", "pattern", "token", "email", "ip",
-	// "guid", "aws_account", and "aws_key_id".
+	// "guid", "phone", "aws_account", "aws_key_id", and "aws_unique_id".
 	Replaced map[string]int
 }
 
