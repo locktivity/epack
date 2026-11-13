@@ -381,7 +381,7 @@ func TestLongerPathPrefixesAndContainsWin(t *testing.T) {
 	calendar, _ := graph.Lookup("groups.GetCalendar")
 	broad := Item{Reason: "Group content", Paths: []string{"/groups/{group-id}/*"}}
 	narrow := Item{Title: "Group membership", Says: "x", Paths: []string{"/groups/{group-id}/members*"}}
-	if !(narrow.Specificity(members) > broad.Specificity(members)) {
+	if narrow.Specificity(members) <= broad.Specificity(members) {
 		t.Error("the longer prefix should win for members")
 	}
 	if narrow.Specificity(calendar) != 0 || broad.Specificity(calendar) == 0 {
