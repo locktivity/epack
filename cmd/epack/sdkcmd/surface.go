@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	surfaceSpec       string
+	surfaceSpecs      []string
 	surfaceConfig     string
 	surfaceRecordings string
 	surfaceDocs       string
@@ -63,7 +63,7 @@ Examples:
 		Args: cobra.MaximumNArgs(1),
 		RunE: runSurface,
 	}
-	cmd.Flags().StringVar(&surfaceSpec, "spec", "", "the vendor's OpenAPI description, JSON or YAML (default: spec.file in surface.yaml)")
+	cmd.Flags().StringArrayVar(&surfaceSpecs, "spec", nil, "the vendor's OpenAPI description, JSON or YAML; repeat it for several, one per entry of specs in surface.yaml (default: the file each entry names)")
 	cmd.Flags().StringVar(&surfaceConfig, "surface", surface.DefaultConfigFile, "the verdicts file, relative to the module root")
 	cmd.Flags().StringVar(&surfaceRecordings, "recordings", surface.DefaultRecordingsDir, "the recordings directory, relative to the module root")
 	cmd.Flags().StringVar(&surfaceDocs, "docs", "docs/overview.md", "the overview whose Not Collected section is rendered, relative to the module root")
@@ -96,26 +96,45 @@ func runSurface(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
-	specPath := surfaceSpec
-	if specPath == "" {
-		if cfg.Spec.File == "" {
+	refs := cfg.Descriptions()
+	specPaths := surfaceSpecs
+	if len(specPaths) == 0 {
+		for _, ref := range refs {
+			if ref.File == "" {
+				return fmt.Errorf("pass --spec for %s, or set its file in %s", ref.Label(), surfaceConfig)
+			}
+			specPaths = append(specPaths, filepath.Join(root, filepath.FromSlash(ref.File)))
+		}
+		if len(specPaths) == 0 {
 			return fmt.Errorf("pass --spec, or set spec.file in %s", surfaceConfig)
 		}
-		specPath = filepath.Join(root, filepath.FromSlash(cfg.Spec.File))
 	}
-	if cfg.Spec.SHA256 != "" {
-		data, err := safefile.ReadFile(specPath, limits.Artifact)
+	if len(refs) > 1 && len(specPaths) != len(refs) {
+		return fmt.Errorf("%s pins %d descriptions, so pass --spec %d times, in their order", surfaceConfig, len(refs), len(refs))
+	}
+	for i, specPath := range specPaths {
+		if i >= len(refs) || refs[i].SHA256 == "" {
+			continue
+		}
+		got, err := descriptionDigest(specPath)
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(data)
-		if got := hex.EncodeToString(sum[:]); !strings.EqualFold(got, cfg.Spec.SHA256) {
-			return fmt.Errorf("%s has digest %s, and %s pins %s; refresh the verdicts against the new description, then update spec.sha256 and spec.revision", specPath, got, surfaceConfig, cfg.Spec.SHA256)
+		if !strings.EqualFold(got, refs[i].SHA256) {
+			return fmt.Errorf("%s has digest %s, and %s pins %s for %s; refresh the verdicts against the new description, then update its sha256 and revision", specPath, got, surfaceConfig, refs[i].SHA256, refs[i].Label())
 		}
 	}
-	spec, err := surface.LoadSpec(specPath)
+	spec, err := surface.LoadSpecs(specPaths)
 	if err != nil {
 		return err
+	}
+	for i, part := range spec.Parts {
+		if i < len(refs) && refs[i].Name != "" {
+			part.Rename(refs[i].Name)
+		}
+	}
+	if len(spec.Parts) == 0 && len(refs) == 1 && refs[0].Name != "" {
+		spec.Rename(refs[0].Name)
 	}
 	calls, err := surface.LoadCalls(root, surfaceRecordings)
 	if err != nil {
@@ -125,6 +144,9 @@ func runSurface(cmd *cobra.Command, args []string) error {
 
 	out.Section("API description")
 	out.KeyValue("Operations", fmt.Sprintf("%d, %d in scope, %d deprecated", report.SpecOperations, report.InScope, report.Deprecated))
+	for _, part := range spec.Parts {
+		out.KeyValue("  "+part.Name, fmt.Sprintf("%d operations", len(part.Operations)))
+	}
 	out.KeyValue("Recorded requests", fmt.Sprintf("%d, from %d collector operations", len(calls), countOperations(calls)))
 
 	out.Section(fmt.Sprintf("Exercised: %d operations", len(report.Exercised)))
@@ -229,6 +251,34 @@ func printVerdicts(out interface{ Print(string, ...interface{}) }, verdicts []su
 	for _, v := range verdicts {
 		out.Print("  %-48s %s %s  %s\n", v.Op.Key(), v.Op.Method, v.Op.Path, v.Item.Label())
 	}
+}
+
+// descriptionDigest is the SHA-256 of a description file, or, for a
+// directory, of the digests of its description files in name order, each
+// followed by a newline.
+func descriptionDigest(path string) (string, error) {
+	files, err := surface.DescriptionFiles(path)
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 1 && files[0] == path {
+		data, err := safefile.ReadFile(path, limits.Artifact)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:]), nil
+	}
+	h := sha256.New()
+	for _, file := range files {
+		data, err := safefile.ReadFile(file, limits.Artifact)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(data)
+		fmt.Fprintf(h, "%s\n", hex.EncodeToString(sum[:]))
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // modulePath reads the module line of the module's go.mod.

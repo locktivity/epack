@@ -2,6 +2,7 @@ package surface
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/locktivity/epack/internal/limits"
@@ -20,9 +21,13 @@ const DefaultRecordingsDir = "internal/collector/testdata/recordings"
 // each in-scope operation the recordings never exercise.
 type Config struct {
 	// Vendor names the vendor in the rendered documentation, such as Okta.
-	Vendor string  `yaml:"vendor"`
-	Spec   SpecRef `yaml:"spec"`
-	Scope  Scope   `yaml:"scope"`
+	Vendor string `yaml:"vendor"`
+	// Spec pins the one description the verdicts were made against, or
+	// Specs pins several, such as Microsoft Graph and the Azure resource
+	// providers. With several, --spec takes one file per entry, in order.
+	Spec  SpecRef   `yaml:"spec"`
+	Specs []SpecRef `yaml:"specs"`
+	Scope Scope     `yaml:"scope"`
 	// Overview picks what the Not Collected section of the overview says:
 	// a few headlines, each folding one or more not_collected items into
 	// one sentence a buyer needs. Everything else stays in the coverage
@@ -80,6 +85,9 @@ type Read struct {
 
 // SpecRef pins the API description the verdicts were made against.
 type SpecRef struct {
+	// Name says which description this is in the rendered documents, such
+	// as "Microsoft Graph". It defaults to Path.
+	Name string `yaml:"name"`
 	// Source is the repository or site the description comes from.
 	Source string `yaml:"source"`
 	// Path is the description's path within Source.
@@ -107,16 +115,27 @@ type Scope struct {
 }
 
 // Item is one verdict, covering the operations it names directly, every
-// operation with one of its tags or categories, and every operation under
-// one of its paths. A path ending in * is a prefix.
+// operation with one of its tags or categories, every operation under one
+// of its paths, where a path ending in * is a prefix, and every operation
+// whose path contains one of its path_contains strings, compared without
+// regard to case, such as an Azure resource provider's namespace.
 type Item struct {
-	Title      string   `yaml:"title"`
-	Says       string   `yaml:"says"`
-	Reason     string   `yaml:"reason"`
-	Operations []string `yaml:"operations"`
-	Tags       []string `yaml:"tags"`
-	Categories []string `yaml:"categories"`
-	Paths      []string `yaml:"paths"`
+	Title        string   `yaml:"title"`
+	Says         string   `yaml:"says"`
+	Reason       string   `yaml:"reason"`
+	Operations   []string `yaml:"operations"`
+	Tags         []string `yaml:"tags"`
+	Categories   []string `yaml:"categories"`
+	Paths        []string `yaml:"paths"`
+	PathContains []string `yaml:"path_contains"`
+	// In limits the item to operations of the named descriptions, by the
+	// name each entry of specs gives, when several descriptions share path
+	// shapes, such as Graph's /subscriptions and Azure's.
+	In []string `yaml:"in"`
+	// Priority lets an item win over others that cover an operation more
+	// specifically, such as a verdict on capacity and usage operations
+	// across every Azure resource provider. Higher wins; the default is 0.
+	Priority int `yaml:"priority"`
 }
 
 // Unmatched acknowledges a recorded operation the description does not
@@ -172,6 +191,9 @@ func LoadConfig(root, rel string) (*Config, error) {
 	if cfg.Reference.File == "" {
 		cfg.Reference.File = DefaultReferenceFile
 	}
+	if len(cfg.Specs) > 0 && cfg.Spec != (SpecRef{}) {
+		return nil, fmt.Errorf("%s: give spec or specs, not both", rel)
+	}
 	return &cfg, nil
 }
 
@@ -213,15 +235,38 @@ func (it Item) Covers(op *Operation) bool {
 	return it.Specificity(op) > 0
 }
 
-// Specificity says how an item covers an operation: 2 when it names the
-// operation, 1 when a tag, category or path of the item covers it, and 0
-// when it does not. An item that names an operation wins over one that
-// covers it by tag, category or path.
+// Specificity says how closely an item covers an operation, and 0 when it
+// does not. Naming the operation is most specific, then its exact path,
+// then the longest path prefix or contained string that covers it, with a
+// longer one winning over a shorter, then a tag or category. The most
+// specific item gives the verdict; two items covering an operation equally
+// is a conflict.
 func (it Item) Specificity(op *Operation) int {
+	if len(it.In) > 0 && !slices.Contains(it.In, op.Description()) {
+		return 0
+	}
 	for _, name := range it.Operations {
 		if name == op.Key() || strings.EqualFold(name, op.Method+" "+op.Path) {
-			return 2
+			return 1 << 20
 		}
+	}
+	best := 0
+	for _, path := range it.Paths {
+		if prefix, ok := strings.CutSuffix(path, "*"); ok {
+			if strings.HasPrefix(op.Path, prefix) {
+				best = max(best, 2+len(prefix))
+			}
+		} else if path == op.Path {
+			best = max(best, 1<<19)
+		}
+	}
+	for _, part := range it.PathContains {
+		if strings.Contains(strings.ToLower(op.Path), strings.ToLower(part)) {
+			best = max(best, 2+len(part))
+		}
+	}
+	if best > 0 {
+		return best
 	}
 	if intersects(it.Tags, op.Tags) {
 		return 1
@@ -231,16 +276,29 @@ func (it Item) Specificity(op *Operation) int {
 			return 1
 		}
 	}
-	for _, path := range it.Paths {
-		if prefix, ok := strings.CutSuffix(path, "*"); ok {
-			if strings.HasPrefix(op.Path, prefix) {
-				return 1
-			}
-		} else if path == op.Path {
-			return 1
-		}
-	}
 	return 0
+}
+
+// Descriptions lists the pinned descriptions: Specs, or Spec alone.
+func (c *Config) Descriptions() []SpecRef {
+	if len(c.Specs) > 0 {
+		return c.Specs
+	}
+	if c.Spec == (SpecRef{}) {
+		return nil
+	}
+	return []SpecRef{c.Spec}
+}
+
+// Label names a description in the rendered documents.
+func (r SpecRef) Label() string {
+	if r.Name != "" {
+		return r.Name
+	}
+	if r.Path != "" {
+		return r.Path
+	}
+	return r.Source
 }
 
 // Item finds a not_collected item by title.
