@@ -138,7 +138,7 @@ func readFile(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(raw)
+	return strings.ReplaceAll(string(raw), "\r\n", "\n")
 }
 
 // collectorRules parses the rows of the tables between the common and the
