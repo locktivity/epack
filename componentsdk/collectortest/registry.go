@@ -7,8 +7,8 @@ import (
 	"github.com/locktivity/epack/internal/tracemap"
 )
 
-// kitCheck is one of the kit's checks. It holds the check's name, which
-// Suite.SkipChecks uses to turn it off, and the hooks the check runs at. At
+// kitCheck is one of the kit's checks. It holds the check's name, which a
+// Waiver uses to turn it off, and the hooks the check runs at. At
 // each hook, the checks run in the order kitChecks lists them. To add a
 // check, add an entry to kitChecks.
 type kitCheck struct {
@@ -31,8 +31,9 @@ type kitCheck struct {
 
 // kitChecks lists the kit's checks in the order they run at each hook. The
 // output checks come last. They run in the SDK and in checkOutput, and are
-// listed here so SkipChecks can name them. init fills kitChecks because the
-// checks call back into the hooks that read it.
+// listed here so a waiver can name them, as is the waivers check, which
+// runs in Check. init fills kitChecks because the checks call back into the
+// hooks that read it.
 var kitChecks []kitCheck
 
 func init() {
@@ -61,7 +62,7 @@ func init() {
 		}},
 		{name: "pages",
 			eachSuccess: func(k *kit, label string, _ Scenario, _ componentsdk.InProcessResult, n *network) {
-				for _, msg := range n.replay.unreadPages(k.suite.Capped) {
+				for _, msg := range n.replay.unreadPages(sorted(k.waived.capped)) {
 					k.violate("pages", label, "%s", msg)
 				}
 			},
@@ -72,7 +73,7 @@ func init() {
 		{name: "order", afterBaseline: (*kit).checkOrder},
 		{name: "variants", afterBaseline: (*kit).checkVariants},
 		{name: "fields", on: func(s Suite) bool { return s.FieldSensitivity }, afterBaseline: (*kit).checkFields},
-		{name: "field_faults", on: func(s Suite) bool { return s.FieldFaults }, afterBaseline: (*kit).checkFieldFaults},
+		{name: "field_faults", afterBaseline: (*kit).checkFieldFaults},
 		{name: "sensitivity", afterBaseline: (*kit).checkSensitivity},
 		{name: "tracemap", afterBaseline: func(k *kit) {
 			if k.trace != nil && os.Getenv(tracemap.Env) == "" {
@@ -83,11 +84,12 @@ func init() {
 		{name: "nulls"},
 		{name: "rollups"},
 		{name: "ratios"},
+		{name: "waivers"},
 	}
 }
 
 // CheckNames returns the names of the kit's checks in the order they run.
-// Suite.SkipChecks and Violation.Check use these names.
+// Waiver.Check and Violation.Check use these names.
 func CheckNames() []string {
 	names := make([]string, len(kitChecks))
 	for i, c := range kitChecks {

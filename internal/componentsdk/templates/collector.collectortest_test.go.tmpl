@@ -18,8 +18,11 @@ import (
 
 // TestCollectorKit runs the collector against the scenarios below and the
 // one recorded from the sandbox, then injects faults into each operation's
-// calls and checks the output against the schema, every collection level,
-// and the credential and sensitivity rules.
+// calls, sets each field the collector reads to null, drops it, and empties
+// each list, and checks the output against the schema, every collection
+// level, and the credential and sensitivity rules. Every check is on; a
+// check this collector cannot pass yet is turned off with a waiver in
+// Waivers, with the reason and the date it lapses.
 func TestCollectorKit(t *testing.T) {
 	collectortest.Run(t, collectortest.Suite{
 		Spec:    Spec("test", "collectortest"),
@@ -58,6 +61,14 @@ func TestCollectorKit(t *testing.T) {
 			{{.VendorPackage}}.OpGetOrganization,
 			{{.VendorPackage}}.OpListUsers,
 			{{.VendorPackage}}.OpListFactors,
+		},
+		// The lists whose emptiness is an answer: the field_faults check
+		// lets emptying them change values without a gap. A field set to
+		// null or dropped still needs a gap, as a factor with no status
+		// shows.
+		Populations: []collectortest.Population{
+			{Operation: {{.VendorPackage}}.OpListUsers, List: "/", Reason: "An organization with no users lists none, as the no users scenario shows."},
+			{Operation: {{.VendorPackage}}.OpListFactors, List: "/", Reason: "A user who has enrolled no factor lists none, as u2 in the clean scenario shows."},
 		},
 		// Every gap a fault leaves names the faulted call, since the client
 		// builds its errors with componentsdk.ResponseError.

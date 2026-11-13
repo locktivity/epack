@@ -9,10 +9,12 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/locktivity/epack/componentsdk"
 	"github.com/locktivity/epack/internal/jsonpointer"
 	"github.com/locktivity/epack/internal/outputcheck"
+	"github.com/locktivity/epack/internal/tracemap"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -24,6 +26,10 @@ var (
 	decodedResultIDs = []string{"COL-076", "COL-077", "COL-078", "COL-079", "COL-080"}
 	resultIDs        = append([]string{"COL-075"}, decodedResultIDs...)
 )
+
+// suiteIDs are the checks of the test kit suites a collector's capabilities
+// list, which run on the --capabilities answer, so they need no credentials.
+var suiteIDs = []string{"COL-110", "COL-113", "COL-114"}
 
 // emitted is the part of an artifact the result checks read.
 type emitted struct {
@@ -265,6 +271,108 @@ func (r *Runner) testBuildFile(raw json.RawMessage, result componentsdk.Collecto
 		return
 	}
 	r.pass("COL-079")
+}
+
+// recordingWaivers describes each current waiver of the recording rule the
+// suites carry, as "suite <name> waives the recording of <sandbox> until
+// <date>: <reason>". A waiver that has lapsed, or has no reason or date,
+// is left out; COL-114 reports it.
+func recordingWaivers(suites []tracemap.Suite, today time.Time) []string {
+	var out []string
+	for _, st := range suites {
+		for _, w := range st.Waivers {
+			expires, err := time.Parse(tracemap.WaiverDate, w.Expires)
+			if w.Check != "recording" || strings.TrimSpace(w.Reason) == "" || err != nil || !today.Before(expires) {
+				continue
+			}
+			out = append(out, fmt.Sprintf("suite %s waives the recording of %s until %s: %s", st.Name, w.Subject, w.Expires, strings.TrimSpace(w.Reason)))
+		}
+	}
+	return out
+}
+
+// mapCommand names the command that writes the trace map at the epack
+// version the collector builds against.
+const mapCommand = "run epack sdk map at the epack version in go.mod and commit the map it writes"
+
+// testSuiteRecord checks what the capabilities say about the collector's
+// test kit suites, which the SDK copies from the trace map: that they are
+// listed, each with its operations and at least one scenario (COL-110), that
+// one of them replays a recording of the test account or waives the
+// recording for a stated reason and time (COL-113), and that every waiver
+// carries a reason and an expiry that has not passed (COL-114).
+// A collector whose capabilities list no suite has none on record, so it
+// fails COL-110. The checks read the --capabilities answer, so they run
+// where the harness has no credentials, as in CI.
+func (r *Runner) testSuiteRecord(raw json.RawMessage, now time.Time) {
+	dependents := func(reason string) {
+		for _, id := range []string{"COL-113", "COL-114"} {
+			r.skip(id, reason)
+		}
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		r.fail("COL-110", "the capabilities list no test kit suite, so the collector's tests are not on record; "+mapCommand+", and embed it as CollectorSpec.TraceMap")
+		dependents("depends on COL-110")
+		return
+	}
+	var suites []tracemap.Suite
+	if err := json.Unmarshal(raw, &suites); err != nil {
+		r.fail("COL-110", "the capabilities' suites do not decode: "+err.Error())
+		dependents("depends on COL-110")
+		return
+	}
+	if len(suites) == 0 {
+		r.fail("COL-110", "the capabilities list no test kit suite; "+mapCommand)
+		dependents("depends on COL-110")
+		return
+	}
+	recordings := 0
+	for _, st := range suites {
+		switch {
+		case len(st.Operations) == 0:
+			r.fail("COL-110", fmt.Sprintf("suite %s declares no operations; set Suite.Operations to every operation the collector calls", st.Name))
+			dependents("depends on COL-110")
+			return
+		case st.Scenarios == 0:
+			r.fail("COL-110", fmt.Sprintf("suite %s runs no scenario", st.Name))
+			dependents("depends on COL-110")
+			return
+		}
+		recordings += st.Recordings
+	}
+	r.pass("COL-110")
+
+	today := now.Truncate(24 * time.Hour)
+	switch waived := recordingWaivers(suites, today); {
+	case recordings > 0:
+		r.pass("COL-113")
+	case len(waived) > 0:
+		r.passWith("COL-113", "no test kit suite replays a recording; "+strings.Join(waived, "; "))
+	default:
+		r.fail("COL-113", "no test kit suite replays a recording of the test account; record one with collectortest.Record and load it with collectortest.LoadScenario, or waive it with collectortest.WaiveRecording, the sandbox it stands for, a reason, and an expiry")
+	}
+
+	for _, st := range suites {
+		for _, w := range st.Waivers {
+			at := fmt.Sprintf("suite %s waives %s", st.Name, w.Check)
+			if w.Subject != "" {
+				at += " " + w.Subject
+			}
+			expires, err := time.Parse(tracemap.WaiverDate, w.Expires)
+			switch {
+			case strings.TrimSpace(w.Reason) == "":
+				r.fail("COL-114", at+" with no reason")
+				return
+			case err != nil:
+				r.fail("COL-114", fmt.Sprintf("%s with the expiry %q, which is not a YYYY-MM-DD date", at, w.Expires))
+				return
+			case !today.Before(expires):
+				r.fail("COL-114", fmt.Sprintf("%s under a waiver that expired on %s; fix what it waived, or renew it with a reason that still holds", at, w.Expires))
+				return
+			}
+		}
+	}
+	r.pass("COL-114")
 }
 
 // testTrustLevelResult checks that a run at the trust level kept out of its

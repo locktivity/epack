@@ -29,7 +29,7 @@ func TestTheLabelsCheckReportsAGoalThatDoesNotFit(t *testing.T) {
 
 func TestTheLabelsCheckCanBeSkipped(t *testing.T) {
 	s := labelSuite("")
-	s.SkipChecks = append(s.SkipChecks, "labels")
+	s.Waivers = append(s.Waivers, waive("labels"))
 	if got := violationsOf(checkSuite(t, s), "labels"); len(got) != 0 {
 		t.Errorf("a skipped check: %+v", got)
 	}

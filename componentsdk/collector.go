@@ -716,6 +716,9 @@ func writeCollectorCapabilities(out, errOut io.Writer, spec CollectorSpec) int {
 	if writes := sortedWrites(spec.Writes); len(writes) > 0 {
 		caps["writes"] = writes
 	}
+	if suites := traceMapSuites(spec.TraceMap); len(suites) > 0 {
+		caps["suites"] = suites
+	}
 
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
@@ -724,6 +727,19 @@ func writeCollectorCapabilities(out, errOut io.Writer, spec CollectorSpec) int {
 		return 1
 	}
 	return 0
+}
+
+// traceMapSuites returns the suites a trace map keeps, which say how the
+// collector was tested, so --capabilities publishes them without a run. It
+// returns nil for a map without them, or one that is not a JSON object.
+func traceMapSuites(traceMap []byte) json.RawMessage {
+	var m struct {
+		Suites json.RawMessage `json:"suites"`
+	}
+	if json.Unmarshal(traceMap, &m) != nil || len(m.Suites) == 0 || string(m.Suites) == "null" {
+		return nil
+	}
+	return m.Suites
 }
 
 // sdkConfigKeys are the config keys the SDK reads itself. A collector's

@@ -57,7 +57,7 @@ func methodSuite(p methodsProbe) Suite {
 		Scenarios: []Scenario{{Name: "clean", Responses: []Response{
 			{URL: demoHost + "/org", Body: `{"name": "probe"}`},
 		}}},
-		SkipChecks: []string{"faults", "levels", "determinism", "credentials", "sensitivity", "order", "pages", "nulls"},
+		Waivers: waiving("faults", "levels", "determinism", "credentials", "sensitivity", "order", "pages", "nulls"),
 	}
 }
 

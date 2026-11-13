@@ -129,9 +129,12 @@ func TestBuildSchemaChecksTheTraceMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, traceMap := range map[string]string{
-		"unknown role":      `{"artifacts": {"a.json": {"/x": {"code": [{"role": "guess", "line": "a.go:1"}]}}}, "lines": {}}`,
-		"line without file": `{"artifacts": {}, "lines": {"12": "x := 1"}}`,
-		"extra member":      `{"artifacts": {}, "lines": {}, "steps": []}`,
+		"unknown role":             `{"artifacts": {"a.json": {"/x": {"code": [{"role": "guess", "line": "a.go:1"}]}}}, "lines": {}}`,
+		"line without file":        `{"artifacts": {}, "lines": {"12": "x := 1"}}`,
+		"extra member":             `{"artifacts": {}, "lines": {}, "steps": []}`,
+		"suite without a name":     `{"artifacts": {}, "lines": {}, "suites": [{"operations": [], "scenarios": 1, "recordings": 0}]}`,
+		"waiver without expiry":    `{"artifacts": {}, "lines": {}, "suites": [{"name": "demo", "operations": ["demo.me.get"], "scenarios": 1, "recordings": 0, "waivers": [{"check": "faults", "reason": "r"}]}]}`,
+		"waiver with a loose date": `{"artifacts": {}, "lines": {}, "suites": [{"name": "demo", "operations": ["demo.me.get"], "scenarios": 1, "recordings": 0, "waivers": [{"check": "faults", "reason": "r", "expires": "next year"}]}]}`,
 	} {
 		doc, err := outputcheck.Decode([]byte(`{"collector": {"name": "demo"}, "schemas": {}, "trace_map": ` + traceMap + `}`))
 		if err != nil {
@@ -140,6 +143,23 @@ func TestBuildSchemaChecksTheTraceMap(t *testing.T) {
 		if found := outputcheck.Validate(sch, "build", doc); len(found) == 0 {
 			t.Errorf("%s: the build schema accepted %s", name, traceMap)
 		}
+	}
+}
+
+func TestBuildSchemaAcceptsTheSuitesAMapKeeps(t *testing.T) {
+	sch, err := outputcheck.Compile(BuildSchemaJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := outputcheck.Decode([]byte(`{"collector": {"name": "demo"}, "schemas": {}, "trace_map": {"artifacts": {}, "lines": {}, "suites": [
+		{"name": "demo", "operations": ["demo.me.get", "demo.users.list"], "scenarios": 3, "recordings": 1,
+		 "waivers": [{"check": "insensitive", "subject": "demo.me.get", "reason": "The sign-in feeds no value.", "expires": "2027-03-01"}]},
+		{"name": "demo-token", "operations": ["demo.users.list"], "scenarios": 1, "recordings": 0}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found := outputcheck.Validate(sch, "build", doc); len(found) > 0 {
+		t.Errorf("the build schema rejects a map with suites: %+v", found)
 	}
 }
 

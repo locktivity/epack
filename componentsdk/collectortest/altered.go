@@ -102,9 +102,10 @@ type opPick struct {
 	// anyKind keeps operations the run made through DNS or a dialed
 	// endpoint as well as HTTP ones.
 	anyKind bool
-	// skipInsensitive leaves out the operations in Suite.Insensitive.
+	// skipInsensitive leaves out the operations waived as insensitive.
 	skipInsensitive bool
-	// exempt lists more operations to leave out, such as Suite.Ordered.
+	// exempt lists more operations to leave out, such as those waived as
+	// ordered.
 	exempt []string
 }
 

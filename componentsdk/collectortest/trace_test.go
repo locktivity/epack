@@ -191,9 +191,9 @@ func TestKitChecksTheCommittedTraceMap(t *testing.T) {
 	expectViolation(t, report, "schema", "collector-build.json")
 
 	skipped := withMap(stale)
-	skipped.SkipChecks = []string{"tracemap"}
+	skipped.Waivers = waiving("tracemap")
 	if got := violationsOf(checkSuite(t, skipped), "tracemap"); len(got) != 0 {
-		t.Errorf("SkipChecks tracemap still reported %+v", got)
+		t.Errorf("a waived tracemap check still reported %+v", got)
 	}
 
 	t.Setenv(tracemap.Env, t.TempDir())

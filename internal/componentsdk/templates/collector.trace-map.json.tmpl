@@ -382,5 +382,17 @@
     "internal/collector/collector.go:143": "\tp := n * 100 / total",
     "internal/collector/collector.go:144": "\treturn \u0026p",
     "internal/collector/collector.go:145": "}"
-  }
+  },
+  "suites": [
+    {
+      "name": "{{.Name}}",
+      "operations": [
+        "{{.Name}}.organization.get",
+        "{{.Name}}.users.factors.list",
+        "{{.Name}}.users.list"
+      ],
+      "scenarios": 2,
+      "recordings": 0
+    }
+  ]
 }

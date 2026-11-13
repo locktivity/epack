@@ -477,13 +477,15 @@ func TestARecordingMatchesRequestBodiesAfterScrubbing(t *testing.T) {
 	srv.Close()
 	loaded.Expect = map[string]map[string]any{directoryPath: {"/tenant": "example-org", "/users": 3, "/admins": 1}}
 	report := checkSuite(t, Suite{
-		Spec:        spec,
-		Run:         directory{api: srv.URL}.run,
-		Secrets:     map[string]string{"DIRECTORY_SECRET": "fake-directory-secret-0123"},
-		Scenarios:   []Scenario{loaded},
-		Required:    []string{"directory.token.create"},
-		Operations:  []string{"directory.token.create", "directory.users.list", "directory.admin.get"},
-		Insensitive: []string{"directory.token.create"},
+		Spec:       spec,
+		Run:        directory{api: srv.URL}.run,
+		Secrets:    map[string]string{"DIRECTORY_SECRET": "fake-directory-secret-0123"},
+		Scenarios:  []Scenario{loaded},
+		Required:   []string{"directory.token.create"},
+		Operations: []string{"directory.token.create", "directory.users.list", "directory.admin.get"},
+		// The directory collector counts an empty users list as none, with
+		// no population declared, as the kit's demo does.
+		Waivers: []Waiver{waive(WaiveInsensitive, "directory.token.create"), waive("field_faults")},
 	})
 	for _, v := range report.Violations {
 		t.Errorf("%s/%s: %s", v.Check, v.Case, v.Message)

@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### NEW FEATURES
+
+- Every rule a collector follows now names the check that enforces it.
+  `docs/component-rules.md` gains an Enforced by column on the common and
+  collector rules, sections 2.8 to 2.11 give the test kit's checks the
+  rules they enforce (COL-081 to COL-114), and `TestRulesNameTheirChecks`
+  fails when a MUST rule names no check and carries no backlog entry, when
+  a kit check is named against no rule, or when a name matches nothing in
+  the code. The harness tests a collector's `--version` and
+  `--capabilities` (COL-060 to COL-063)
+- The test kit refuses silence. `Suite.Waivers` replaces `SkipChecks`,
+  `SkipFaults`, `Ignore`, `Insensitive`, `Capped`, `Ordered`, and
+  `IgnoredFields`: each waiver names the check or softening, its subject,
+  a reason, and an expiry at most a year out. From that day the kit runs
+  the check again and reports the waiver. A suite that still sets one of
+  the old fields fails with the waiver to add. The `field_faults` check
+  runs in every suite; `FieldFaults` does nothing. A suite that lists no
+  `Operations` fails the coverage check
+- The kit exports each suite's operations, scenario and recording counts,
+  and waivers in its trace. `epack sdk map` writes them into the trace
+  map's `suites`, the build file carries them, and `--capabilities` lists
+  them, so the registry and the harness can show how a collector was
+  tested without running it. The harness fails a collector whose
+  capabilities list no suite, a suite that declares no operations or runs
+  no scenario (COL-110), a collector no suite of which replays a recording
+  (COL-113), and a waiver with no reason, no date, or a date that has
+  passed (COL-114). A collector with no sandbox yet waives the recording
+  with `WaiveRecording`, the sandbox it stands for, a reason, and an
+  expiry; COL-113 then passes and reports the waiver until it lapses. A
+  collector that still pins an older epack is unaffected until it bumps
+
+### BUG FIXES
+
+- The scaffold's example collector left a user's MFA value as off when a
+  factor came back with no status, and the field_faults check caught it
+  once it ran by default. The client now rejects such an answer as
+  `invalid_response`, so the value is left out with a gap, and the suite
+  declares the users and factors lists as populations
+
 ## [0.12.1] - 2026-11-13
 
 ### ENHANCEMENTS

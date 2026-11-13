@@ -30,7 +30,7 @@ type SuiteTrace struct {
 	// Suite.Operations, or those its clean scenario called when it
 	// declares none.
 	Operations []string `json:"operations"`
-	// Insensitive lists the operations the suite marks as changing no
+	// Insensitive lists the operations the suite waives as changing no
 	// value, such as the sign-in.
 	Insensitive []string `json:"insensitive,omitempty"`
 	// Required lists the operations whose failure may fail the whole run.
@@ -43,6 +43,49 @@ type SuiteTrace struct {
 	// with one, by path, for finding the code that emits an artifact whose
 	// path is not a constant.
 	Schemas map[string]string `json:"schemas,omitempty"`
+	// Summary is what the map keeps of the suite. A trace from a kit that
+	// predates it has none.
+	Summary *Suite `json:"summary,omitempty"`
+}
+
+// Suite is what the map keeps of one collectortest suite, so the build file
+// says how the collector was tested: the operations the suite declares, how
+// many scenarios it runs and how many of them are recordings of the test
+// account, and the checks it waives.
+type Suite struct {
+	// Name is the suite's name, Suite.Name or the collector's.
+	Name string `json:"name"`
+	// Operations is Suite.Operations, sorted. It is empty for a suite that
+	// declares none.
+	Operations []string `json:"operations"`
+	// Scenarios counts the suite's scenarios, and Recordings those among
+	// them that LoadScenario loaded from a recording.
+	Scenarios  int `json:"scenarios"`
+	Recordings int `json:"recordings"`
+	// Waivers lists the suite's waivers, sorted by check and subject.
+	Waivers []Waiver `json:"waivers,omitempty"`
+}
+
+// Waiver is a check a suite turns off or softens, with the reason and the
+// date it lapses. collectortest.Waiver documents the checks and subjects.
+type Waiver struct {
+	Check   string `json:"check"`
+	Subject string `json:"subject,omitempty"`
+	Reason  string `json:"reason"`
+	Expires string `json:"expires"`
+}
+
+// WaiverDate is the layout of Waiver.Expires.
+const WaiverDate = "2006-01-02"
+
+// CompareWaivers orders waivers by check, then by subject.
+func CompareWaivers(a, b Waiver) int {
+	return cmp.Or(cmp.Compare(a.Check, b.Check), cmp.Compare(a.Subject, b.Subject))
+}
+
+// compareSuites orders suites by name.
+func compareSuites(a, b Suite) int {
+	return cmp.Compare(a.Name, b.Name)
 }
 
 // FieldTrace is what a suite's runs found for one field.
@@ -69,6 +112,9 @@ type Map struct {
 	Artifacts map[string]map[string]*Field `json:"artifacts"`
 	// Lines holds the text of every line the fields name.
 	Lines Lines `json:"lines"`
+	// Suites lists the collectortest suites the map was built from, by
+	// name. A map built before suites were kept has none.
+	Suites []Suite `json:"suites,omitempty"`
 }
 
 // Field is one field of a trace map.

@@ -15,7 +15,7 @@ func TestTheNormalizedCheckReportsACopyOfANormalizedSchema(t *testing.T) {
 	expectViolation(t, checkSuite(t, s), "normalized",
 		"CollectorSpec.Schemas holds its own copy of the SDK's evidencepack/tls@v1 schema. A copy replaces the SDK's schema and falls behind it. Give the collector's x-epack-method sentences in CollectorSpec.Methods instead")
 
-	s.SkipChecks = []string{"normalized"}
+	s.Waivers = waiving("normalized")
 	if got := violationsOf(checkSuite(t, s), "normalized"); len(got) != 0 {
 		t.Errorf("a skipped check: %+v", got)
 	}

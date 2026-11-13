@@ -142,6 +142,21 @@ func (r *Runner) pass(id string) {
 	})
 }
 
+// passWith passes id with a message that says what the pass rests on, such
+// as a waiver.
+func (r *Runner) passWith(id, message string) {
+	req := RequirementByID(id)
+	if req == nil {
+		return
+	}
+	r.results = append(r.results, TestResult{
+		ID:      id,
+		Level:   req.Level,
+		Status:  StatusPass,
+		Message: message,
+	})
+}
+
 func (r *Runner) fail(id, message string) {
 	req := RequirementByID(id)
 	if req == nil {

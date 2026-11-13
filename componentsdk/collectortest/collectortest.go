@@ -111,8 +111,10 @@ type Suite struct {
 	// componentsdk.ResultSchemaJSON.
 	Schemas map[string]string
 
-	// Ignore lists JSON pointer prefixes, by artifact path, whose values may
-	// change without a gap, such as a warnings list kept for older readers.
+	// Ignore is no longer read. Check returns an error when it is set,
+	// naming the waiver to add.
+	//
+	// Deprecated: waive the values with WaiveIgnore in Waivers.
 	Ignore map[string][]string
 
 	// Operations lists every operation the collector can call. When set, an
@@ -120,16 +122,16 @@ type Suite struct {
 	// coverage check.
 	Operations []string
 
-	// Insensitive lists operations whose responses never change a value,
-	// such as a token exchange, so the sensitivity check skips them and a
-	// fault on one need not leave a gap.
+	// Insensitive is no longer read. Check returns an error when it is set,
+	// naming the waiver to add.
+	//
+	// Deprecated: waive the operations with WaiveInsensitive in Waivers.
 	Insensitive []string
 
-	// Capped lists operations that may leave a next page unread, which the
-	// pages check otherwise reports. Such an operation is a list the
-	// collector cuts short on purpose, or a polling API that always offers
-	// another page, such as Okta's System Log. A list cut short must leave a
-	// partial gap where it stops.
+	// Capped is no longer read. Check returns an error when it is set,
+	// naming the waiver to add.
+	//
+	// Deprecated: waive the operations with WaiveCapped in Waivers.
 	Capped []string
 
 	// Paged lists operations that page by Link header although the
@@ -139,9 +141,10 @@ type Suite struct {
 	// answers show they page.
 	Paged []string
 
-	// Ordered lists operations whose answers come in an order the vendor
-	// documents, such as a list sorted by a parameter the collector sends.
-	// The order check does not reverse them.
+	// Ordered is no longer read. Check returns an error when it is set,
+	// naming the waiver to add.
+	//
+	// Deprecated: waive the operations with WaiveOrdered in Waivers.
 	Ordered []string
 
 	// Variants hold the clean scenario rewritten for other deployments of
@@ -156,19 +159,21 @@ type Suite struct {
 	// recording.
 	FieldSensitivity bool
 
-	// IgnoredFields lists, by operation, the state fields the collector may
-	// ignore, written as the fields check reports them. Each is a JSON
-	// pointer with "*" for each array index, such as "/value/*/state", or an
-	// XML element's name.
+	// IgnoredFields is no longer read. Check returns an error when it is
+	// set, naming the waiver to add.
+	//
+	// Deprecated: waive the fields with WaiveIgnoredField in Waivers.
 	IgnoredFields map[string][]string
 
-	// FieldFaults turns on the field_faults check. For each field the
-	// collector reads in an operation's answers, the check runs the clean
-	// scenario with the field set to null, dropped, and, for a list,
-	// emptied. Each number and boolean in the output must keep its clean
-	// value or be left out under a gap, so a missing or unreadable field
-	// never shows as a count of 0. See Populations and Omissions for the
-	// lists and fields whose change is a real answer.
+	// FieldFaults does nothing. The field_faults check runs in every suite:
+	// for each field the collector reads in an operation's answers, it runs
+	// the clean scenario with the field set to null, dropped, and, for a
+	// list, emptied. Each number and boolean in the output must keep its
+	// clean value or be left out under a gap, so a missing or unreadable
+	// field never shows as a count of 0. See Populations and Omissions for
+	// the lists and fields whose change is a real answer.
+	//
+	// Deprecated: the check is on; a waiver on field_faults turns it off.
 	FieldFaults bool
 
 	// Populations lists the lists in operations' answers that are
@@ -188,12 +193,24 @@ type Suite struct {
 	// field the schema does not define fails.
 	ResponseSchemas map[string][]byte
 
-	// SkipChecks turns off checks by name, such as "determinism" or
-	// "faults". CheckNames lists the names.
+	// Waivers turn checks off or soften them, each with a reason and an
+	// expiry, as Waiver describes. Every check is on without one. The
+	// suite's trace carries the waivers, so the trace map and the build file
+	// report them, and the kit reports an expired waiver and runs its check.
+	Waivers []Waiver
+
+	// SkipChecks is no longer read. Check returns an error when it is set,
+	// naming the waiver to add.
+	//
+	// Deprecated: waive the check by name in Waivers.
 	SkipChecks []string
 
-	// SkipFaults leaves faults out of the matrix by name. A name such as
-	// "timeout" leaves out the fault of that name for every kind of call.
+	// SkipFaults is no longer read. Check returns an error when it is set,
+	// naming the waiver to add.
+	//
+	// Deprecated: waive the fault with WaiveFault in Waivers. A fault name
+	// such as "timeout" covers the fault of that name for every kind of
+	// call.
 	SkipFaults []string
 
 	// Faults adds faults to the matrix after the built-in ones, such as a
@@ -248,8 +265,8 @@ type Report struct {
 	// not change, such as XML bodies, so it proved nothing for them.
 	Unmutated []string
 	// IgnoredFields lists, as "operation pattern", each state field whose
-	// change moved no value in the fields check. It includes the fields
-	// Suite.IgnoredFields lists.
+	// change moved no value in the fields check. It includes the fields the
+	// suite waives with WaiveIgnoredField.
 	IgnoredFields []string
 }
 
@@ -309,6 +326,7 @@ func Check(s Suite) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	k.reportWaivers()
 	k.runScenarios()
 	if k.baseline == nil {
 		return k.report, nil
@@ -339,6 +357,9 @@ func validateSuite(s Suite) (map[string]*outputcheck.Schema, error) {
 	}
 	if s.Scenarios[0].ExpectFailure != "" {
 		return nil, errors.New("the first scenario is the clean one and must expect success")
+	}
+	if old := oldSuiteFields(s); len(old) > 0 {
+		return nil, errors.New(strings.Join(old, "\n"))
 	}
 	for _, sc := range s.Scenarios {
 		if sc.ExpectFailure != "" && len(sc.Expect) > 0 {
@@ -393,7 +414,11 @@ func validateSuite(s Suite) (map[string]*outputcheck.Schema, error) {
 // the schemas, the clock, the scrub check on recordings, and the CA the
 // endpoints chain to.
 func newKit(s Suite, responseSchemas map[string]*outputcheck.Schema) (*kit, error) {
-	k := &kit{suite: s, report: &Report{}, seen: map[string]bool{}, reported: map[Violation]bool{}, canaries: canariesOf(s), ignore: newIgnoreSet(runKeys(s, s.Ignore)), responseSchemas: responseSchemas, specSchemas: runSchemas(s, s.Spec.ArtifactSchemas())}
+	w, err := validateWaivers(s.Waivers, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	k := &kit{suite: s, waived: w, report: &Report{}, seen: map[string]bool{}, reported: map[Violation]bool{}, canaries: canariesOf(s), ignore: newIgnoreSet(runKeys(s, w.ignore)), responseSchemas: responseSchemas, specSchemas: runSchemas(s, s.Spec.ArtifactSchemas())}
 	if tracing(s) {
 		k.trace = newTracer(s)
 	}
@@ -417,7 +442,9 @@ func newKit(s Suite, responseSchemas map[string]*outputcheck.Schema) (*kit, erro
 }
 
 type kit struct {
-	suite   Suite
+	suite Suite
+	// waived is what the suite's current waivers turn off or soften.
+	waived  waived
 	report  *Report
 	schemas map[string]*outputcheck.Schema
 	// specSchemas is Spec.ArtifactSchemas, the schemas Emit checks
@@ -489,23 +516,11 @@ func (k *kit) violate(check, name, format string, args ...any) {
 	k.report.Violations = append(k.report.Violations, v)
 }
 
-func (k *kit) skipped(check string) bool {
-	for _, c := range k.suite.SkipChecks {
-		if c == check {
-			return true
-		}
-	}
-	return false
-}
+// skipped reports whether the suite waives a check.
+func (k *kit) skipped(check string) bool { return k.waived.checks[check] }
 
-func (k *kit) faultSkipped(name string) bool {
-	for _, f := range k.suite.SkipFaults {
-		if f == name {
-			return true
-		}
-	}
-	return false
-}
+// faultSkipped reports whether the suite waives a fault.
+func (k *kit) faultSkipped(name string) bool { return k.waived.faults[name] }
 
 // runOnce runs the collector against scenario, with wrap given the run's
 // network to put a fault or a redirect in when set, and applies the checks
@@ -890,6 +905,7 @@ func (k *kit) checkCoverage() {
 		k.violate("coverage", "", "some calls carry no operation name; name each call with componentsdk.WithOperation")
 	}
 	if len(k.suite.Operations) == 0 {
+		k.violate("coverage", "", "Suite.Operations lists no operations; list every operation the collector calls, so a scenario that reaches none of them, or a call the list lacks, is reported")
 		return
 	}
 	declared := map[string]bool{}
@@ -1093,7 +1109,7 @@ func unrecorded(op string, code componentsdk.Code) string {
 		gap = "no new gap with code " + string(code)
 	}
 	return fmt.Sprintf("the fault reached %s but left %s; a failed call must leave out what it would have read, with a gap, even where the clean run found nothing. "+
-		"Declare a fault that is an answer in Suite.Semantics, or list an operation whose responses change no value in Suite.Insensitive", op, gap)
+		"Declare a fault that is an answer in Suite.Semantics, or waive an operation whose responses change no value as insensitive, with the reason", op, gap)
 }
 
 func (k *kit) checkSemantic(label string, sem Semantic, res componentsdk.InProcessResult) {
@@ -1118,7 +1134,7 @@ func (k *kit) checkSensitivity() {
 			continue
 		}
 		if len(compareRuns(k.baseline.Artifacts, run.res.Artifacts, nil, k.ignore)) == 0 && reflect.DeepEqual(signedInAs(k.baseline), signedInAs(&run.res)) {
-			k.violate("sensitivity", op.Name, "changing %s's responses changed no value and not the result's signed_in_as, so the faults injected into it prove nothing; check that its data is used, or list it in Suite.Insensitive", op.Name)
+			k.violate("sensitivity", op.Name, "changing %s's responses changed no value and not the result's signed_in_as, so the faults injected into it prove nothing; check that its data is used, or waive it as insensitive, with the reason", op.Name)
 		}
 	}
 }
@@ -1131,7 +1147,7 @@ func signedInAs(res *componentsdk.InProcessResult) *componentsdk.Principal {
 }
 
 func (k *kit) required(op string) bool    { return containsString(k.suite.Required, op) }
-func (k *kit) insensitive(op string) bool { return containsString(k.suite.Insensitive, op) }
+func (k *kit) insensitive(op string) bool { return k.waived.insensitive[op] }
 
 // semantic returns the Semantic that declares what fault on op means at
 // position, and whether its Expect applies there. A Semantic for op and fault

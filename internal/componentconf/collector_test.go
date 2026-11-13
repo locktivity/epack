@@ -396,8 +396,16 @@ func TestCollectorSignalHandling(t *testing.T) {
 }
 
 // resultCollector writes a collector that prints an envelope holding a data
-// artifact and the given result and build file, either of which may be nil.
+// artifact and the given result and build file, either of which may be nil,
+// and answers --capabilities with sdkCapabilities.
 func resultCollector(t *testing.T, result, build map[string]any) string {
+	t.Helper()
+	return capsCollector(t, sdkCapabilities(), result, build)
+}
+
+// capsCollector is resultCollector with the --capabilities answer given, or
+// none when caps is nil.
+func capsCollector(t *testing.T, caps, result, build map[string]any) string {
 	t.Helper()
 	artifacts := []map[string]any{{"path": "artifacts/test.json", "data": map[string]any{"ok": true}}}
 	if build != nil {
@@ -410,7 +418,41 @@ func resultCollector(t *testing.T, result, build map[string]any) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return writeCollector(t, "results", "cat <<'EOF'\n"+string(raw)+"\nEOF\n")
+	return writeCollector(t, "results", withCapabilities(t, caps)+"cat <<'EOF'\n"+string(raw)+"\nEOF\n")
+}
+
+// withCapabilities returns the shell lines that answer --version and, when
+// caps is not nil, --capabilities, as an SDK collector does.
+func withCapabilities(t *testing.T, caps map[string]any) string {
+	t.Helper()
+	script := `case "$1" in --version) echo v0.4.0; exit 0;; esac` + "\n"
+	if caps == nil {
+		return script
+	}
+	raw, err := json.Marshal(caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return script + `case "$1" in --capabilities) cat <<'CAPS'` + "\n" + string(raw) + "\nCAPS\nexit 0;; esac\n"
+}
+
+// sdkCapabilities is a --capabilities answer as the SDK writes it, with the
+// suites its trace map keeps.
+func sdkCapabilities() map[string]any {
+	return map[string]any{
+		"kind": "collector", "name": "test", "version": "v0.4.0", "protocol_version": 1, "description": "A test collector.",
+		"suites": sdkSuites(),
+	}
+}
+
+// sdkSuites are the suites sdkCapabilities and sdkBuild list: one with the
+// sandbox recording and a current waiver, and one built in code.
+func sdkSuites() []any {
+	return []any{
+		map[string]any{"name": "okta", "operations": []any{"okta.logs.list", "okta.users.list"}, "scenarios": 4, "recordings": 1,
+			"waivers": []any{map[string]any{"check": "insensitive", "subject": "okta.users.me.get", "reason": "The sign-in feeds no value.", "expires": time.Now().AddDate(0, 3, 0).Format("2006-01-02")}}},
+		map[string]any{"name": "okta-oauth", "operations": []any{"okta.logs.list", "okta.token.create", "okta.users.list"}, "scenarios": 2, "recordings": 0},
+	}
 }
 
 // sdkResult is a result in the shape the SDK writes, with every field
@@ -457,11 +499,13 @@ func trimmedResult() map[string]any {
 	return r
 }
 
+// sdkBuild is a build file as the SDK writes it, with a trace map that keeps
+// the suites sdkSuites lists.
 func sdkBuild() map[string]any {
 	return map[string]any{
 		"collector": map[string]any{"name": "okta", "version": "v0.4.0", "commit": "abc123"},
 		"schemas":   map[string]any{"artifacts/okta.json": map[string]any{"type": "object"}},
-		"trace_map": map[string]any{"artifacts": map[string]any{}, "lines": map[string]any{}},
+		"trace_map": map[string]any{"artifacts": map[string]any{}, "lines": map[string]any{}, "suites": sdkSuites()},
 	}
 }
 
@@ -502,6 +546,7 @@ func TestCollectorResultChecks_PassANewResult(t *testing.T) {
 	results := resultChecks(t, sdkResult(), sdkBuild(), "")
 	expectStatuses(t, results, map[string]TestStatus{
 		"COL-075": StatusPass, "COL-076": StatusSkip, "COL-077": StatusPass, "COL-078": StatusPass, "COL-079": StatusPass, "COL-080": StatusPass,
+		"COL-110": StatusPass, "COL-113": StatusPass, "COL-114": StatusPass,
 	})
 
 	audit := sdkResult()
@@ -593,6 +638,141 @@ func TestCollectorResultChecks_FailWhatDisagrees(t *testing.T) {
 				t.Errorf("%s = %s (%s%s), want a failure saying %q", tc.id, got.Status, got.Message, got.Reason, tc.want)
 			}
 		})
+	}
+}
+
+// capsChecks runs the harness on a collector that answers --capabilities
+// with caps and collects nothing it can check.
+func capsChecks(t *testing.T, caps map[string]any) map[string]TestResult {
+	t.Helper()
+	return runCollectorConformance(t, NewRunner(capsCollector(t, caps, nil, nil), componenttypes.KindCollector))
+}
+
+// capsSuites returns the suites a capabilities answer lists.
+func capsSuites(caps map[string]any) []any {
+	return caps["suites"].([]any)
+}
+
+func TestCollectorCapabilities_PassAnSDKCollector(t *testing.T) {
+	expectStatuses(t, capsChecks(t, sdkCapabilities()), map[string]TestStatus{
+		"COL-060": StatusPass, "COL-061": StatusPass, "COL-062": StatusPass, "COL-063": StatusPass,
+		"COL-110": StatusPass, "COL-113": StatusPass, "COL-114": StatusPass,
+	})
+}
+
+func TestCollectorCapabilities_FailWhatIsMissing(t *testing.T) {
+	cases := map[string]struct {
+		change func(caps map[string]any)
+		id     string
+		want   string
+	}{
+		"no kind":             {func(c map[string]any) { delete(c, "kind") }, "COL-060", "did not print one JSON object with a kind"},
+		"no name":             {func(c map[string]any) { delete(c, "name") }, "COL-062", "capabilities lack name"},
+		"another kind":        {func(c map[string]any) { c["kind"] = "tool" }, "COL-062", `capabilities give kind "tool", want "collector"`},
+		"an empty version":    {func(c map[string]any) { c["version"] = "" }, "COL-062", "capabilities lack version"},
+		"no description":      {func(c map[string]any) { delete(c, "description") }, "COL-063", "capabilities have no description"},
+		"no suites":           {func(c map[string]any) { delete(c, "suites") }, "COL-110", "the capabilities list no test kit suite, so the collector's tests are not on record; run epack sdk map"},
+		"an empty suite list": {func(c map[string]any) { c["suites"] = []any{} }, "COL-110", "the capabilities list no test kit suite; run epack sdk map"},
+		"a suite with no operations": {func(c map[string]any) {
+			capsSuites(c)[1].(map[string]any)["operations"] = []any{}
+		}, "COL-110", "suite okta-oauth declares no operations; set Suite.Operations"},
+		"a suite with no scenario": {func(c map[string]any) {
+			capsSuites(c)[0].(map[string]any)["scenarios"] = 0
+		}, "COL-110", "suite okta runs no scenario"},
+		"no recording": {func(c map[string]any) {
+			capsSuites(c)[0].(map[string]any)["recordings"] = 0
+		}, "COL-113", "no test kit suite replays a recording of the test account; record one with collectortest.Record"},
+		"an expired waiver": {func(c map[string]any) {
+			capsSuites(c)[0].(map[string]any)["waivers"].([]any)[0].(map[string]any)["expires"] = "2026-01-31"
+		}, "COL-114", "suite okta waives insensitive okta.users.me.get under a waiver that expired on 2026-01-31"},
+		"a waiver without a reason": {func(c map[string]any) {
+			capsSuites(c)[0].(map[string]any)["waivers"].([]any)[0].(map[string]any)["reason"] = " "
+		}, "COL-114", "suite okta waives insensitive okta.users.me.get with no reason"},
+		"a waiver with a loose date": {func(c map[string]any) {
+			capsSuites(c)[0].(map[string]any)["waivers"].([]any)[0].(map[string]any)["expires"] = "next spring"
+		}, "COL-114", `with the expiry "next spring", which is not a YYYY-MM-DD date`},
+		"no recording and a lapsed recording waiver": {func(c map[string]any) {
+			capsSuites(c)[0].(map[string]any)["recordings"] = 0
+			capsSuites(c)[1].(map[string]any)["waivers"] = []any{recordingWaiver("2026-01-31")}
+		}, "COL-113", "no test kit suite replays a recording of the test account; record one"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			caps := sdkCapabilities()
+			tc.change(caps)
+			got := capsChecks(t, caps)[tc.id]
+			if got.Status != StatusFail || !strings.Contains(got.Message, tc.want) {
+				t.Errorf("%s = %s (%s%s), want a failure saying %q", tc.id, got.Status, got.Message, got.Reason, tc.want)
+			}
+		})
+	}
+}
+
+// recordingWaiver is a waiver of the recording rule for a sandbox that does
+// not exist yet, lapsing on expires.
+func recordingWaiver(expires string) map[string]any {
+	return map[string]any{"check": "recording", "subject": "okta-sandbox", "reason": "No sandbox yet.", "expires": expires}
+}
+
+func TestCollectorCapabilities_ARecordingWaiverPassesCOL113AndIsReported(t *testing.T) {
+	expires := time.Now().AddDate(0, 3, 0).Format("2006-01-02")
+	caps := sdkCapabilities()
+	capsSuites(caps)[0].(map[string]any)["recordings"] = 0
+	capsSuites(caps)[1].(map[string]any)["waivers"] = []any{recordingWaiver(expires)}
+	results := capsChecks(t, caps)
+	got := results["COL-113"]
+	if got.Status != StatusPass || got.Message != "no test kit suite replays a recording; suite okta-oauth waives the recording of okta-sandbox until "+expires+": No sandbox yet." {
+		t.Errorf("COL-113 = %s (%s), want a pass that reports the waiver", got.Status, got.Message)
+	}
+	if got := results["COL-114"]; got.Status != StatusPass {
+		t.Errorf("COL-114 = %s (%s), want a pass: the waiver is current", got.Status, got.Message)
+	}
+
+	lapsed := sdkCapabilities()
+	capsSuites(lapsed)[0].(map[string]any)["recordings"] = 0
+	capsSuites(lapsed)[1].(map[string]any)["waivers"] = []any{recordingWaiver("2026-01-31")}
+	results = capsChecks(t, lapsed)
+	if got := results["COL-114"]; got.Status != StatusFail || !strings.Contains(got.Message, "suite okta-oauth waives recording okta-sandbox under a waiver that expired on 2026-01-31") {
+		t.Errorf("COL-114 = %s (%s), want the lapsed waiver reported", got.Status, got.Message)
+	}
+}
+
+func TestCollectorCapabilities_ACollectorWithoutThemFailsAndSkipsTheRest(t *testing.T) {
+	results := capsChecks(t, nil)
+	if got := results["COL-060"]; got.Status != StatusFail || got.Message != "--capabilities did not print one JSON object with a kind" {
+		t.Errorf("COL-060 = %s (%s), want a failure: the fixture answers --capabilities with its result", got.Status, got.Message)
+	}
+	if got := results["COL-061"]; got.Status != StatusPass {
+		t.Errorf("COL-061 = %s (%s), want a pass: the fixture answers --version", got.Status, got.Message)
+	}
+	for _, id := range append([]string{"COL-062", "COL-063"}, suiteIDs...) {
+		if got := results[id]; got.Status != StatusSkip || got.Reason != "depends on COL-060" {
+			t.Errorf("%s = %s (%s%s), want a skip that depends on COL-060", id, got.Status, got.Message, got.Reason)
+		}
+	}
+}
+
+func TestSuiteRecordChecks_AWaiverExpiresOnItsDate(t *testing.T) {
+	today := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	for expires, want := range map[string]TestStatus{"2026-11-14": StatusPass, "2026-11-13": StatusFail, "2026-11-12": StatusFail} {
+		r := &Runner{}
+		raw, err := json.Marshal([]any{
+			map[string]any{"name": "demo", "operations": []any{"demo.me.get"}, "scenarios": 1, "recordings": 1,
+				"waivers": []any{map[string]any{"check": "faults", "reason": "r", "expires": expires}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.testSuiteRecord(raw, today)
+		var got TestResult
+		for _, res := range r.results {
+			if res.ID == "COL-114" {
+				got = res
+			}
+		}
+		if got.Status != want {
+			t.Errorf("a waiver that expires %s, checked on %s: COL-114 = %s (%s), want %s", expires, today.Format("2006-01-02"), got.Status, got.Message, want)
+		}
 	}
 }
 

@@ -81,7 +81,7 @@ func covered(gaps []componentsdk.Gap, path, pointer string) bool {
 	return false
 }
 
-// ignoreSet holds Suite.Ignore's pointer prefixes by artifact path. A lookup
+// ignoreSet holds the waived pointer prefixes by artifact path. A lookup
 // walks the pointer's ancestors, so its cost follows the pointer's depth
 // rather than the number of prefixes.
 type ignoreSet map[string]map[string]bool

@@ -67,7 +67,7 @@ func bucketSuite(p bucketProbe) Suite {
 			{URL: demoHost + "/buckets", Body: `[{"bucketName":"northwind-logs"}]`},
 			{URL: demoHost + "/buckets/northwind-logs/encryption", Status: http.StatusForbidden, Body: `{"code":"AccessDenied"}`},
 		}}},
-		SkipChecks: []string{"faults", "levels", "determinism", "credentials", "sensitivity", "order", "pages", "nulls"},
+		Waivers: waiving("faults", "levels", "determinism", "credentials", "sensitivity", "order", "pages", "nulls"),
 	}
 }
 
@@ -107,7 +107,7 @@ func TestTheGuidanceCheckFindsTheScrubbersFakesInAnyField(t *testing.T) {
 			Scenarios: []Scenario{{Name: "recorded", Responses: []Response{
 				{URL: demoHost + "/identity", Body: `{"roleArn":"arn:aws:iam::123456789012:role/collector","principal":"00000000-0000-4000-8000-000000000001","contact":"user1@example.com"}`},
 			}}},
-			SkipChecks: []string{"faults", "levels", "determinism", "credentials", "sensitivity", "order", "pages", "nulls"},
+			Waivers: waiving("faults", "levels", "determinism", "credentials", "sensitivity", "order", "pages", "nulls"),
 		}
 	}
 	if got := violationsOf(checkSuite(t, suite("Allow kms:GetKeyPolicy in the collector's role.")), "guidance"); len(got) != 0 {

@@ -43,11 +43,11 @@ func methodProbe(ctx componentsdk.CollectorContext) error {
 func TestTheVocabularyCheckCatchesAValueTheVendorAdded(t *testing.T) {
 	suite := func(body string) Suite {
 		return Suite{
-			Spec:       componentsdk.CollectorSpec{Name: "probe"},
-			Run:        methodProbe,
-			Config:     map[string]any{"level": "audit"},
-			Scenarios:  []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/methods", Body: body}}}},
-			SkipChecks: []string{"faults", "levels", "determinism", "credentials", "sensitivity", "order"},
+			Spec:      componentsdk.CollectorSpec{Name: "probe"},
+			Run:       methodProbe,
+			Config:    map[string]any{"level": "audit"},
+			Scenarios: []Scenario{{Name: "clean", Responses: []Response{{URL: demoHost + "/methods", Body: body}}}},
+			Waivers:   waiving("faults", "levels", "determinism", "credentials", "sensitivity", "order"),
 		}
 	}
 	if got := violationsOf(checkSuite(t, suite(`[{"method":"totp"},{"method":"sms"}]`)), "vocabulary"); len(got) != 0 {
