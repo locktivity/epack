@@ -22,8 +22,13 @@ jobs:
       - name: Run tests (core)
         run: go test -race -v ./...
 
-      - name: Run tests (full)
-        run: go test -race -v -tags components ./...
+      # Only the packages whose build differs under the tag; the core run has
+      # covered the rest.
+      - name: Run tests (components)
+        run: |
+          pkgs="$(./scripts/components-packages.sh)"
+          # shellcheck disable=SC2086
+          go test -race -v -tags components $pkgs
 
   # The conformance harness builds only with its tag, so nothing above
   # compiles or tests it.
@@ -128,15 +133,3 @@ jobs:
 
       - name: Verify binary runs
         run: ./epack version
-
-  fuzz:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-
-      - name: Run fuzz tests (brief)
-        run: ./scripts/fuzz.sh 10s

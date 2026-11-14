@@ -1,0 +1,33 @@
+# Fuzzes every target for longer than a push could wait for. go test runs each
+# target's seed corpus on every push; this run looks for new inputs.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: Time to fuzz each target, such as 60s or 5m.
+        required: false
+        type: string
+        default: 60s
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Fuzz every target
+        env:
+          FUZZTIME: ${{ inputs.fuzztime || '60s' }}
+        run: ./scripts/fuzz.sh "$FUZZTIME"

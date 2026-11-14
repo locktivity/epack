@@ -11,8 +11,10 @@ export GOTOOLCHAIN ?= $(GO_TOOLCHAIN)
 # Default target builds the full version with components
 all: build
 
-# Everything CI checks that one machine can run, from a fresh clone.
-check: lint lint-boundary build build-core build-conformance test-race test-conformance fuzz govulncheck
+# Everything CI checks that one machine can run, from a fresh clone. The
+# targets are independent, so make -j4 check runs them side by side. Fuzzing
+# runs nightly in CI (fuzz.yaml) and here with make fuzz.
+check: lint lint-boundary build build-core build-conformance test-race test-conformance govulncheck
 
 # Build full version (with components) - this is the default
 build:
@@ -36,12 +38,13 @@ test-all:
 	go test ./...
 	@echo ""
 	@echo "Testing full build (components)..."
-	go test -tags components ./...
+	pkgs="$$(./scripts/components-packages.sh)" && go test -tags components $$pkgs
 
-# Run tests with race detector
+# Run tests with race detector. The components pass covers only the packages
+# whose build differs under the tag; the core pass has covered the rest.
 test-race:
 	go test -race ./...
-	go test -race -tags components ./...
+	pkgs="$$(./scripts/components-packages.sh)" && go test -race -tags components $$pkgs
 
 # Run tests for the conformance harness, which builds only with its tag
 test-conformance:

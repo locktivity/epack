@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and utilities get a Makefile for the first time, and their CI gains a
   govulncheck job, pinned actions and no lint cache. epack's own Makefile
   gets the same `check` target, and its CI a govulncheck job on both builds
+- `make check` and the CI test job run the components build's tests only on
+  the packages whose build differs under the tag, 39 of 102 today, which
+  `scripts/components-packages.sh` lists from `go list`; the core run has
+  covered the rest with the same compiled code. The fuzz sweep leaves
+  `make check` and the per-push CI, where it ran each of 62 targets for ten
+  seconds in turn, and runs nightly in `fuzz.yaml` for a minute per target;
+  `go test` still runs every target's seed corpus. `make -j4 check` runs
+  its pieces side by side. A cold `make check` takes about three minutes,
+  down from twenty
 
 ### BUG FIXES
 
