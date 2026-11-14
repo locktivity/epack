@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### NEW FEATURES
+
+- `make check` in a project from `epack sdk new` runs what CI runs, from a
+  fresh clone: lint, the repository's `scripts/check-*.sh`, the tests,
+  govulncheck, conformance, and for a collector the trace map check. Every
+  target runs against the epack version go.mod pins rather than a go.work,
+  and under go.mod's toolchain line, so a newer local Go release changes
+  nothing. `make lint` runs golangci-lint with `go run` instead of an
+  install script, and `make test` takes `TEST_TIMEOUT`, which a collector
+  raises together with `test-timeout` in its CI workflow. Tools, remotes
+  and utilities get a Makefile for the first time, and their CI gains a
+  govulncheck job, pinned actions and no lint cache. epack's own Makefile
+  gets the same `check` target, and its CI a govulncheck job on both builds
+- `make check` and the CI test job run the components build's tests only on
+  the packages whose build differs under the tag, 39 of 102 today, which
+  `scripts/components-packages.sh` lists from `go list`; the core run has
+  covered the rest with the same compiled code. The fuzz sweep leaves
+  `make check` and the per-push CI, where it ran each of 62 targets for ten
+  seconds in turn, and runs nightly in `fuzz.yaml` for a minute per target;
+  `go test` still runs every target's seed corpus. `make -j4 check` runs
+  its pieces side by side. A cold `make check` takes about three minutes,
+  down from twenty
+
+### BUG FIXES
+
+- epack and the projects `epack sdk new` scaffolds are built with Go 1.27.4,
+  which fixes GO-2026-6859 in `net/http`, and require Go 1.27. The move
+  lets sigstore-go v1.4.0, rekor v1.5.5 and golang.org/x/crypto v0.59.0 in,
+  which drop the unmaintained `openpgp` package (GO-2026-5932), and
+  golang.org/x/net v0.62.0 (GO-2026-6866, GO-2026-6860). Lint moves to
+  golangci-lint v2.15.0, built with Go 1.27, as v2.9.0's binary refuses a
+  Go 1.27 module. Every component inherits the Go requirement at its next
+  epack bump
+- A tool built on the SDK exits 1 when it fails, or when it requires a pack
+  and gets none, as C-021 says, and never runs its handler without the pack
+  it requires. A failure result used to exit 0
+- The conformance harness builds a fixture pack for a tool whose
+  capabilities require one and hands it to every run, so such a tool can
+  pass. It checks that the tool echoes the pack path and digest (TOOL-014,
+  TOOL-015) and leaves the pack unchanged (TOOL-060, TOOL-061), which it
+  used to skip
+
 ## [0.12.3] - 2026-11-13
 
 ### NEW FEATURES

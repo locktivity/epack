@@ -358,6 +358,9 @@ func (c *toolContext) writeResult(status string, _ error) int {
 		return 1
 	}
 
+	if status == "failure" {
+		return 1
+	}
 	return 0
 }
 

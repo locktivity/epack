@@ -1,7 +1,20 @@
-.PHONY: all build build-core build-conformance test test-all test-race fuzz lint lint-boundary clean install install-core
+.PHONY: all build build-core build-conformance check test test-all test-race test-conformance fuzz lint lint-boundary clean install install-core govulncheck
+
+# Every target runs as CI does: against the modules go.mod pins, not a go.work
+# that points at local checkouts, and under go.mod's toolchain line, the Go
+# release CI installs. golangci-lint panics on a Go release newer than the one
+# it was built with. Set either variable in the environment to override.
+export GOWORK ?= off
+GO_TOOLCHAIN := $(shell sed -n 's/^toolchain \([^[:space:]]*\).*/\1/p' go.mod)
+export GOTOOLCHAIN ?= $(GO_TOOLCHAIN)
 
 # Default target builds the full version with components
 all: build
+
+# Everything CI checks that one machine can run, from a fresh clone. The
+# targets are independent, so make -j4 check runs them side by side. Fuzzing
+# runs nightly in CI (fuzz.yaml) and here with make fuzz.
+check: lint lint-boundary build build-core build-conformance test-race test-conformance govulncheck
 
 # Build full version (with components) - this is the default
 build:
@@ -25,28 +38,39 @@ test-all:
 	go test ./...
 	@echo ""
 	@echo "Testing full build (components)..."
-	go test -tags components ./...
+	pkgs="$$(./scripts/components-packages.sh)" && go test -tags components $$pkgs
 
-# Run tests with race detector
+# Run tests with race detector. The components pass covers only the packages
+# whose build differs under the tag; the core pass has covered the rest.
 test-race:
 	go test -race ./...
-	go test -race -tags components ./...
+	pkgs="$$(./scripts/components-packages.sh)" && go test -race -tags components $$pkgs
+
+# Run tests for the conformance harness, which builds only with its tag
+test-conformance:
+	go test -race -tags conformance ./internal/componentconf/...
 
 # Run fuzz tests (default 10s per target, override with FUZZTIME=1m)
 FUZZTIME ?= 10s
 fuzz:
 	./scripts/fuzz.sh $(FUZZTIME)
 
-# Lint code (downloads golangci-lint binary to match CI)
-GOLANGCI_LINT_VERSION := v2.9.0
-GOLANGCI_LINT := ./bin/golangci-lint
+# Lint with the golangci-lint version CI runs, built by go run under the
+# toolchain above, so there is no install script and no binary to keep current
+GOLANGCI_LINT_VERSION := v2.15.0
+GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
-$(GOLANGCI_LINT):
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b ./bin $(GOLANGCI_LINT_VERSION)
-
-lint: $(GOLANGCI_LINT)
+lint:
 	$(GOLANGCI_LINT) run ./...
 	$(GOLANGCI_LINT) run --build-tags components ./...
+
+# Known vulnerabilities reachable from either build, at the govulncheck
+# version CI runs
+GOVULNCHECK_VERSION := v1.8.0
+
+govulncheck:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) -tags components ./...
 
 # Verify import boundary: core cmd package must not import internal packages directly
 # Also verifies security-critical packages don't import internal/catalog

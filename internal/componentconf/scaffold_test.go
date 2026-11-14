@@ -85,6 +85,57 @@ func TestScaffoldedCollectorConforms(t *testing.T) {
 	}
 }
 
+// TestScaffoldedToolConforms builds what epack sdk new tool generates and
+// runs the harness against it. The scaffold requires a pack, so the harness
+// builds one, and nothing may fail.
+func TestScaffoldedToolConforms(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a scaffolded tool")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("the harness runs the binary by the name go build was given, without .exe")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "epack-tool-demo")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := componentsdk.Scaffold(componentsdk.ScaffoldOptions{
+		TargetDir:  dir,
+		Name:       "demo",
+		Kind:       componenttypes.KindTool,
+		ModulePath: "example.com/epack-tool-demo",
+	})
+	if err != nil {
+		t.Fatalf("Scaffold() = %v", err)
+	}
+	useCheckout(t, dir, repoRoot)
+	goCmd(t, dir, "vet", "./...")
+	binary := filepath.Join(dir, result.BinaryName)
+	goCmd(t, dir, "build", "-o", binary, result.MainPackage)
+
+	runner := NewRunner(binary, componenttypes.KindTool)
+	report, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	results := make(map[string]TestResult, len(report.Results))
+	for _, r := range report.Results {
+		results[r.ID] = r
+		if r.Status == StatusFail {
+			t.Errorf("%s failed: %s", r.ID, r.Message)
+		}
+	}
+	for _, id := range []string{"TOOL-010", "C-020", "TOOL-014", "TOOL-015", "TOOL-060", "TOOL-061"} {
+		if got := results[id]; got.Status != StatusPass {
+			t.Errorf("%s = %s (%s%s), want pass", id, got.Status, got.Message, got.Reason)
+		}
+	}
+}
+
 // useCheckout points the scaffold's epack requirement at this checkout,
 // with this checkout's go.sum for the dependencies they share.
 func useCheckout(t *testing.T, dir, repoRoot string) {

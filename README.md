@@ -198,7 +198,7 @@ p.VerifyIntegrity()
 ```bash
 git clone https://github.com/locktivity/epack.git
 cd epack
-make test-all
+make check
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.

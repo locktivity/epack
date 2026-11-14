@@ -4,6 +4,8 @@ package componentconf
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/locktivity/epack/internal/validate"
+	"github.com/locktivity/epack/pack"
+	"github.com/locktivity/epack/pack/builder"
 )
 
 func (r *Runner) runToolTests(ctx context.Context) {
@@ -20,12 +24,14 @@ func (r *Runner) runToolTests(ctx context.Context) {
 
 	// Tool-specific tests
 	r.testToolCapabilities(ctx)
+	r.setupToolPack()
 	r.testToolExecution(ctx)
 	r.testToolResultJSON(ctx)
 	r.testToolDirectoryBoundary(ctx)
 	r.testToolFlags(ctx)
 	r.testToolRunIDSort(ctx)
 	r.testToolNoColor(ctx)
+	r.testToolPackReadOnly()
 }
 
 func (r *Runner) testToolCapabilities(ctx context.Context) {
@@ -113,14 +119,12 @@ func (r *Runner) testToolExecution(ctx context.Context) {
 		r.skip("TOOL-010", "could not create run directory")
 		return
 	}
-
-	env := map[string]string{
-		"EPACK_RUN_ID":           runID,
-		"EPACK_RUN_DIR":          runDir,
-		"EPACK_TOOL_NAME":        "test",
-		"EPACK_PROTOCOL_VERSION": "1",
-		"EPACK_STARTED_AT":       "2026-02-22T10:00:00Z",
+	if r.toolPackErr != nil {
+		r.skip("TOOL-010", "could not build a fixture pack: "+r.toolPackErr.Error())
+		return
 	}
+
+	env := r.toolEnv(runID, runDir, map[string]string{"EPACK_STARTED_AT": "2026-02-22T10:00:00Z"})
 
 	// Change to run directory for execution
 	origDir := r.WorkDir
@@ -145,9 +149,7 @@ func (r *Runner) testToolExecution(ctx context.Context) {
 		r.skip("TOOL-013", "depends on execution")
 	}
 
-	// TOOL-014, 015: Pack path/digest (not provided, skip)
-	r.skip("TOOL-014", "no pack provided in test")
-	r.skip("TOOL-015", "no pack provided in test")
+	r.testToolPackEnv(runDir)
 
 	// C-020: Exit code 0 on success
 	if result.ExitCode == 0 {
@@ -252,7 +254,7 @@ func (r *Runner) testToolDirectoryBoundary(ctx context.Context) {
 	// Should only have "run" directory
 	unexpected := []string{}
 	for _, e := range entries {
-		if e.Name() != "run" && e.Name() != "config.json" && e.Name() != "invalid.json" {
+		if e.Name() != "run" && e.Name() != "config.json" && e.Name() != "invalid.json" && e.Name() != fixturePackName {
 			unexpected = append(unexpected, e.Name())
 		}
 	}
@@ -316,10 +318,6 @@ func (r *Runner) testToolDirectoryBoundary(ctx context.Context) {
 		r.skip("C-030", "could not create boundary test directory")
 	}
 
-	// TOOL-060, 061: Pack read-only tests require a pack fixture
-	r.skip("TOOL-060", "requires pack fixture")
-	r.skip("TOOL-061", "requires pack fixture")
-
 	// C-021, C-022: Error exit codes
 	r.skip("C-021", "requires triggering error condition")
 	r.skip("C-022", "requires triggering specific errors")
@@ -335,12 +333,7 @@ func (r *Runner) testToolFlags(ctx context.Context) {
 	runDir := filepath.Join(r.WorkDir, "run-json")
 	os.MkdirAll(runDir, 0755)
 
-	env := map[string]string{
-		"EPACK_RUN_ID":           "2026-02-22T10-00-01-000000Z-000001",
-		"EPACK_RUN_DIR":          runDir,
-		"EPACK_TOOL_NAME":        "test",
-		"EPACK_PROTOCOL_VERSION": "1",
-	}
+	env := r.toolEnv("2026-02-22T10-00-01-000000Z-000001", runDir, nil)
 
 	origDir := r.WorkDir
 	r.WorkDir = runDir
@@ -359,12 +352,7 @@ func (r *Runner) testToolFlags(ctx context.Context) {
 	runDir2 := filepath.Join(r.WorkDir, "run-quiet")
 	os.MkdirAll(runDir2, 0755)
 
-	env2 := map[string]string{
-		"EPACK_RUN_ID":           "2026-02-22T10-00-02-000000Z-000001",
-		"EPACK_RUN_DIR":          runDir2,
-		"EPACK_TOOL_NAME":        "test",
-		"EPACK_PROTOCOL_VERSION": "1",
-	}
+	env2 := r.toolEnv("2026-02-22T10-00-02-000000Z-000001", runDir2, nil)
 
 	r.WorkDir = runDir2
 	resultQuiet := r.exec(ctx, []string{"--quiet"}, nil, env2)
@@ -422,13 +410,7 @@ func (r *Runner) testToolNoColor(ctx context.Context) {
 	runDir := filepath.Join(r.WorkDir, "run-color")
 	os.MkdirAll(runDir, 0755)
 
-	envNoColor := map[string]string{
-		"EPACK_RUN_ID":           "2026-02-22T10-00-03-000000Z-000001",
-		"EPACK_RUN_DIR":          runDir,
-		"EPACK_TOOL_NAME":        "test",
-		"EPACK_PROTOCOL_VERSION": "1",
-		"NO_COLOR":               "1",
-	}
+	envNoColor := r.toolEnv("2026-02-22T10-00-03-000000Z-000001", runDir, map[string]string{"NO_COLOR": "1"})
 
 	origDir := r.WorkDir
 	r.WorkDir = runDir
@@ -539,4 +521,133 @@ func (r *Runner) testTimestampFormat(result map[string]interface{}) {
 		r.fail("TOOL-050", "timestamps must be YYYY-MM-DDTHH:MM:SSZ")
 		r.fail("TOOL-051", "timestamps must not include milliseconds or offsets")
 	}
+}
+
+const fixturePackName = "fixture.epack"
+
+// setupToolPack builds a small pack for a tool whose capabilities say it
+// requires one, so its runs can be checked rather than fail for want of a
+// pack. Every run gets its path and digest as EPACK_PACK_PATH and
+// EPACK_PACK_DIGEST, as the epack runner sets them.
+func (r *Runner) setupToolPack() {
+	if requires, _ := r.caps["requires_pack"].(bool); !requires {
+		return
+	}
+	r.toolPackErr = r.buildToolPack()
+}
+
+func (r *Runner) buildToolPack() error {
+	path, err := filepath.Abs(filepath.Join(r.WorkDir, fixturePackName))
+	if err != nil {
+		return err
+	}
+	b := builder.New("conformance/fixture")
+	if err := b.AddBytes("artifacts/fixture.json", []byte("{\"fixture\":true}\n")); err != nil {
+		return err
+	}
+	if err := b.Build(path); err != nil {
+		return err
+	}
+	p, err := pack.Open(path)
+	if err != nil {
+		return err
+	}
+	digest := p.Manifest().PackDigest
+	_ = p.Close()
+	sum, err := fileSum(path)
+	if err != nil {
+		return err
+	}
+	r.toolPack, r.toolPackDigest, r.toolPackSum = path, digest, sum
+	return nil
+}
+
+// toolEnv is the environment the epack runner gives a tool, with the fixture
+// pack when the harness built one.
+func (r *Runner) toolEnv(runID, runDir string, extra map[string]string) map[string]string {
+	env := map[string]string{
+		"EPACK_RUN_ID":           runID,
+		"EPACK_RUN_DIR":          runDir,
+		"EPACK_TOOL_NAME":        "test",
+		"EPACK_PROTOCOL_VERSION": "1",
+	}
+	if r.toolPack != "" {
+		env["EPACK_PACK_PATH"] = r.toolPack
+		env["EPACK_PACK_DIGEST"] = r.toolPackDigest
+	}
+	for k, v := range extra {
+		env[k] = v
+	}
+	return env
+}
+
+// testToolPackEnv checks TOOL-014 and TOOL-015 against the pack path and
+// digest the tool echoes in result.json.
+func (r *Runner) testToolPackEnv(runDir string) {
+	if r.toolPack == "" {
+		r.skip("TOOL-014", r.noToolPackReason())
+		r.skip("TOOL-015", r.noToolPackReason())
+		return
+	}
+	var result struct {
+		PackPath   string `json:"pack_path"`
+		PackDigest string `json:"pack_digest"`
+	}
+	data, err := os.ReadFile(filepath.Join(runDir, "result.json"))
+	if err != nil || json.Unmarshal(data, &result) != nil {
+		r.skip("TOOL-014", "result.json is missing or not JSON")
+		r.skip("TOOL-015", "result.json is missing or not JSON")
+		return
+	}
+	for _, c := range []struct{ id, field, got, want string }{
+		{"TOOL-014", "pack_path", result.PackPath, r.toolPack},
+		{"TOOL-015", "pack_digest", result.PackDigest, r.toolPackDigest},
+	} {
+		switch c.got {
+		case c.want:
+			r.pass(c.id)
+		case "":
+			r.skip(c.id, "result.json does not echo "+c.field)
+		default:
+			r.fail(c.id, c.field+" in result.json is "+c.got+", not the one the run was given")
+		}
+	}
+}
+
+// testToolPackReadOnly checks TOOL-060 and TOOL-061: after every run, the
+// fixture pack's bytes are what they were.
+func (r *Runner) testToolPackReadOnly() {
+	if r.toolPack == "" {
+		r.skip("TOOL-060", r.noToolPackReason())
+		r.skip("TOOL-061", r.noToolPackReason())
+		return
+	}
+	sum, err := fileSum(r.toolPack)
+	switch {
+	case err != nil:
+		r.fail("TOOL-060", "the pack cannot be read after the runs: "+err.Error())
+		r.fail("TOOL-061", "the pack cannot be read after the runs: "+err.Error())
+	case sum != r.toolPackSum:
+		r.fail("TOOL-060", "the pack changed during the runs")
+		r.fail("TOOL-061", "the tool modified the input pack")
+	default:
+		r.pass("TOOL-060")
+		r.pass("TOOL-061")
+	}
+}
+
+func fileSum(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func (r *Runner) noToolPackReason() string {
+	if r.toolPackErr != nil {
+		return "could not build a fixture pack: " + r.toolPackErr.Error()
+	}
+	return "the tool does not require a pack, so none was provided"
 }

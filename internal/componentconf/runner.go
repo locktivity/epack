@@ -44,6 +44,10 @@ type Runner struct {
 	configName       string     // CollectorConfig as given, for messages
 	caps             map[string]interface{}
 	binaryName       string
+	toolPack         string // the fixture pack a tool that requires one runs with, absolute
+	toolPackDigest   string
+	toolPackSum      string // sha256 of the fixture's bytes before any run
+	toolPackErr      error
 }
 
 // NewRunner creates a new conformance test runner.

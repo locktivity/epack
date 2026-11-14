@@ -297,11 +297,13 @@ func TestScaffold_CollectorPinsTheSharedWorkflowToTheRelease(t *testing.T) {
 	}
 }
 
-// TestScaffold_CollectorLintsAsCIDoes checks that make lint runs the
-// golangci-lint version collector-ci.yaml defaults to, under go.mod's
-// toolchain line, the Go release CI installs. golangci-lint panics on a Go
-// release newer than the one it was built with.
-func TestScaffold_CollectorLintsAsCIDoes(t *testing.T) {
+// TestScaffold_ChecksAsCIDoes checks that make runs as CI does in a project
+// of every kind: against the epack version go.mod pins rather than a go.work,
+// under go.mod's toolchain line, the Go release CI installs, and with the
+// golangci-lint version collector-ci.yaml defaults to, which the other kinds'
+// own CI names too. golangci-lint refuses a module whose Go version is newer
+// than the one it was built with.
+func TestScaffold_ChecksAsCIDoes(t *testing.T) {
 	var workflow struct {
 		On struct {
 			WorkflowCall struct {
@@ -319,31 +321,55 @@ func TestScaffold_CollectorLintsAsCIDoes(t *testing.T) {
 		t.Fatal("collector-ci.yaml has no golangci-lint-version default")
 	}
 
-	dir := t.TempDir()
-	if _, err := Scaffold(ScaffoldOptions{TargetDir: dir, Name: "demo", Kind: componenttypes.KindCollector}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(readFile(t, dir, "Makefile"), "\nGOLANGCI_LINT_VERSION := "+version+"\n") {
-		t.Errorf("the Makefile should install golangci-lint %s, as CI does", version)
-	}
-	if runtime.GOOS == "windows" {
-		t.Skip("the Makefile's recipes run under sh")
-	}
-	if _, err := exec.LookPath("make"); err != nil {
-		t.Skip("make is not installed")
-	}
-	toolchain := regexp.MustCompile(`(?m)^toolchain (\S+)$`).FindStringSubmatch(readFile(t, dir, "go.mod"))
-	if toolchain == nil {
-		t.Fatal("the scaffold's go.mod has no toolchain line")
-	}
-	cmd := exec.Command("make", "-n", "lint")
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("make -n lint: %v\n%s", err, out)
-	}
-	if want := "\nGOTOOLCHAIN=" + toolchain[1] + " ./bin/golangci-lint run ./...\n"; !strings.Contains(string(out), want) {
-		t.Errorf("make lint should run golangci-lint under %s:\n%s", toolchain[1], out)
+	for _, kind := range SupportedKinds() {
+		t.Run(string(kind), func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := Scaffold(ScaffoldOptions{TargetDir: dir, Name: "demo", Kind: kind}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(readFile(t, dir, "Makefile"), "\nGOLANGCI_LINT_VERSION := "+version+"\n") {
+				t.Errorf("the Makefile should run golangci-lint %s, as CI does", version)
+			}
+			if kind != componenttypes.KindCollector && !strings.Contains(readFile(t, dir, ".github/workflows/ci.yaml"), "\n          version: "+version+"\n") {
+				t.Errorf("ci.yaml should lint with golangci-lint %s, as the Makefile does", version)
+			}
+			if runtime.GOOS == "windows" {
+				t.Skip("the Makefile's recipes run under sh")
+			}
+			if _, err := exec.LookPath("make"); err != nil {
+				t.Skip("make is not installed")
+			}
+			toolchain := regexp.MustCompile(`(?m)^toolchain (\S+)$`).FindStringSubmatch(readFile(t, dir, "go.mod"))
+			if toolchain == nil {
+				t.Fatal("the scaffold's go.mod has no toolchain line")
+			}
+			var env []string
+			for _, kv := range os.Environ() {
+				if !strings.HasPrefix(kv, "GOWORK=") && !strings.HasPrefix(kv, "GOTOOLCHAIN=") {
+					env = append(env, kv)
+				}
+			}
+			run := func(args ...string) string {
+				cmd := exec.Command("make", args...)
+				cmd.Dir = dir
+				cmd.Env = env
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("make %s: %v\n%s", strings.Join(args, " "), err, out)
+				}
+				return string(out)
+			}
+			if out, want := run("-n", "lint"), "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"+version+" run ./...\n"; !strings.Contains(out, want) {
+				t.Errorf("make lint should run golangci-lint %s with go run:\n%s", version, out)
+			}
+			run("-n", "check")
+			if err := os.WriteFile(filepath.Join(dir, "env.mk"), []byte("include Makefile\nenv:\n\t@echo GOWORK=$$GOWORK GOTOOLCHAIN=$$GOTOOLCHAIN\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out, want := run("-s", "-f", "env.mk", "env"), "GOWORK=off GOTOOLCHAIN="+toolchain[1]+"\n"; out != want {
+				t.Errorf("make runs with %q, want %q", out, want)
+			}
+		})
 	}
 }
 
@@ -582,7 +608,7 @@ func TestGenerateGoMod_PinsOnlyAReleaseVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pinned != "module github.com/acme/epack-tool-demo\n\ngo 1.26.0\n\ntoolchain go1.26.10\n\nrequire github.com/locktivity/epack v0.5.3\n" {
+	if pinned != "module github.com/acme/epack-tool-demo\n\ngo 1.27.0\n\ntoolchain go1.27.4\n\nrequire github.com/locktivity/epack v0.5.3\n" {
 		t.Errorf("go.mod = %q", pinned)
 	}
 	data.EpackVersion = ""
@@ -590,7 +616,7 @@ func TestGenerateGoMod_PinsOnlyAReleaseVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unpinned != "module github.com/acme/epack-tool-demo\n\ngo 1.26.0\n\ntoolchain go1.26.10\n" {
+	if unpinned != "module github.com/acme/epack-tool-demo\n\ngo 1.27.0\n\ntoolchain go1.27.4\n" {
 		t.Errorf("go.mod = %q", unpinned)
 	}
 }

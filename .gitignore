@@ -1,5 +1,7 @@
 # Build output
 /epack
+/epack-core
+/epack-conformance
 *.exe
 
 # Go cache

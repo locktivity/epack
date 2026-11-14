@@ -1,16 +1,27 @@
-.PHONY: build build-all test lint clean conformance record trace-map sdk-test sdk-run
+.PHONY: build build-all check test checks lint govulncheck trace-map-check clean conformance record trace-map sdk-test sdk-run
 
 BINARY_NAME := {{.BinaryName}}
 MAIN := {{.MainPackage}}
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT := $(shell git rev-parse --verify HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)'
-EPACK_VERSION = $(shell go list -m -f '{{"{{"}}.Version{{"}}"}}' github.com/locktivity/epack)
+# Every target runs as CI does: against the epack version go.mod pins, not a
+# go.work that points at a local checkout, and under go.mod's toolchain line,
+# the Go release CI installs. golangci-lint panics on a Go release newer than
+# the one it was built with. Set either variable in the environment to
+# override, such as GOWORK=../go.work make test.
+export GOWORK ?= off
+GO_TOOLCHAIN := $(shell sed -n 's/^toolchain \([^[:space:]]*\).*/\1/p' go.mod)
+export GOTOOLCHAIN ?= $(GO_TOOLCHAIN)
+EPACK_VERSION = $(shell GOWORK=off go list -m -f '{{"{{"}}.Version{{"}}"}}' github.com/locktivity/epack)
 # Variables the collector reads credentials from, as conformance-secrets in
 # .github/workflows/ci.yaml lists them. Conformance sets each to a canary
 # value, fails if any output prints it, and checks that the rejected
 # credential exits 3.
 CONFORMANCE_SECRETS := {{.TokenEnv}}
+
+# Everything CI checks, from a fresh clone, fastest failures first.
+check: lint checks test trace-map-check govulncheck conformance
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) $(MAIN)
@@ -21,21 +32,31 @@ build-all:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-darwin-amd64 $(MAIN)
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-darwin-arm64 $(MAIN)
 
-# Runs the unit tests and the collectortest suite.
+# Runs the unit tests and the collectortest suite. A kit that runs past Go's
+# default under the race detector raises this and test-timeout in
+# .github/workflows/ci.yaml together.
+TEST_TIMEOUT ?= 10m
 test:
-	go test -race -v ./...
+	go test -race -v -timeout $(TEST_TIMEOUT) ./...
 
-GOLANGCI_LINT_VERSION := v2.9.0
-GOLANGCI_LINT := ./bin/golangci-lint
-# golangci-lint panics on a Go release newer than the one it was built with,
-# so lint runs under go.mod's toolchain line, the Go release CI installs.
-GO_TOOLCHAIN = $(shell sed -n 's/^toolchain \([^[:space:]]*\).*/\1/p' go.mod)
+# The repository's own checks, which CI runs after lint as checks: in
+# .github/workflows/ci.yaml lists them.
+CHECKS := $(wildcard scripts/check-*.sh)
+checks:
+	@for check in $(CHECKS); do echo "$$check"; bash -euo pipefail "$$check" || exit 1; done
 
-$(GOLANGCI_LINT):
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b ./bin $(GOLANGCI_LINT_VERSION)
+# The golangci-lint version collector-ci.yaml defaults to, built by go run
+# under the toolchain above, so there is no install script and no binary to
+# keep current.
+GOLANGCI_LINT_VERSION := v2.15.0
+GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+lint:
+	$(GOLANGCI_LINT) run ./...
 
-lint: $(GOLANGCI_LINT)
-	GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GOLANGCI_LINT) run ./...
+# The govulncheck version collector-ci.yaml runs.
+GOVULNCHECK_VERSION := v1.8.0
+govulncheck:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 clean:
 	rm -f $(BINARY_NAME) $(BINARY_NAME)-*
@@ -47,8 +68,17 @@ conformance: build
 
 # Rewrites docs/schema/trace-map.json from the collectortest suites and the
 # source, at the epack version go.mod pins, as CI checks it. Commit the result.
+TRACE_MAP := docs/schema/trace-map.json
 trace-map:
 	go run -tags components github.com/locktivity/epack/cmd/epack@$(EPACK_VERSION) sdk map
+
+# Fails when the committed map is stale, as CI does. A collector without one passes.
+trace-map-check:
+ifeq ($(wildcard $(TRACE_MAP)),)
+	@echo "There is no trace map at $(TRACE_MAP), so there is nothing to check. Run make trace-map to write one."
+else
+	go run -tags components github.com/locktivity/epack/cmd/epack@$(EPACK_VERSION) sdk map --check --out $(TRACE_MAP)
+endif
 
 # Records the sandbox organization to
 # internal/collector/testdata/recordings/{{.Name}}.json. It reads the
