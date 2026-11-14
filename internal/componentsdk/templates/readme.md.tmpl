@@ -34,6 +34,12 @@ $(go env GOPATH)/bin/epack-conformance {{.Kind}} ./{{.BinaryName}}
 ## Testing
 
 ```bash
+make check
+```
+
+This runs what CI runs, from a fresh clone: lint, the repository's `scripts/check-*.sh`, the tests, govulncheck, and conformance. Every target runs against the epack version `go.mod` pins and under its `toolchain` line, so a newer local Go release changes nothing. `GOWORK=../go.work make test` runs the tests against a local epack checkout instead.
+
+```bash
 go test ./...
 ```
 

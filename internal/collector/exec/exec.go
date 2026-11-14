@@ -383,7 +383,7 @@ func escapeControl(s string) string {
 		case r == '\t':
 			sanitized.WriteString("\\t")
 		case r < 32 || r == 127:
-			sanitized.WriteString(fmt.Sprintf("\\x%02x", r))
+			fmt.Fprintf(&sanitized, "\\x%02x", r)
 		default:
 			sanitized.WriteRune(r)
 		}

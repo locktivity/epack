@@ -51,7 +51,7 @@ on:
         description: golangci-lint version.
         required: false
         type: string
-        default: v2.9.0
+        default: v2.15.0
       profile-url:
         description: HTTPS URL of a profile. When set, the evidence diff also validates both sides against it and compares control outcomes.
         required: false

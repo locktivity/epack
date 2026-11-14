@@ -171,7 +171,7 @@ func TestExitCodeFor(t *testing.T) {
 		{"wrapped network", fmt.Errorf("listing users: %w", NewNetworkError("503 from API")), 4},
 		{"config pointer", &ConfigError{Err: errors.New("bad level")}, 2},
 		{"auth pointer", &AuthError{Err: errors.New("token rejected")}, 3},
-		{"wrapped network pointer", fmt.Errorf("listing users: %w", &NetworkError{Err: errors.New("reset")}), 4},
+		{"wrapped network pointer", fmt.Errorf("listing users: %w", error(&NetworkError{Err: errors.New("reset")})), 4},
 		{"joined", errors.Join(errors.New("cleanup failed"), NewAuthError("token rejected")), 3},
 		{"deadline", context.DeadlineExceeded, 4},
 		{"wrapped deadline", fmt.Errorf("listing users: %w", deadline), 4},

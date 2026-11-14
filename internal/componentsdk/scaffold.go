@@ -141,7 +141,10 @@ func scaffoldFiles(kind componenttypes.ComponentKind, binaryName, vendorPackage 
 		readme, ci, release = "collector.readme.md.tmpl", "collector.ci.yaml.tmpl", "collector.release.yaml.tmpl"
 		configuration, examples = "docs/collector.configuration.md.tmpl", "docs/collector.examples.md.tmpl"
 	} else {
-		files = append(files, scaffoldFile{path: "main.go", template: string(kind) + ".main.go.tmpl"})
+		files = append(files,
+			scaffoldFile{path: "main.go", template: string(kind) + ".main.go.tmpl"},
+			scaffoldFile{path: "Makefile", template: "component.makefile.tmpl"},
+		)
 	}
 	files = append(files,
 		scaffoldFile{path: "go.mod", template: "go.mod.tmpl"},
