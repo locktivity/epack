@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   golangci-lint v2.15.0, built with Go 1.27, as v2.9.0's binary refuses a
   Go 1.27 module. Every component inherits the Go requirement at its next
   epack bump
+- A tool built on the SDK exits 1 when it fails, or when it requires a pack
+  and gets none, as C-021 says, and never runs its handler without the pack
+  it requires. A failure result used to exit 0
+- The conformance harness builds a fixture pack for a tool whose
+  capabilities require one and hands it to every run, so such a tool can
+  pass. It checks that the tool echoes the pack path and digest (TOOL-014,
+  TOOL-015) and leaves the pack unchanged (TOOL-060, TOOL-061), which it
+  used to skip
 
 ## [0.12.3] - 2026-11-13
 
